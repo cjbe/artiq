@@ -216,11 +216,9 @@ class _DeviceManager:
 class _MonInjDock(dockarea.Dock):
     def __init__(self, name):
         dockarea.Dock.__init__(self, name, size=(1500, 500))
-
         self.grid = QtGui.QGridLayout()
-        gridw = QtGui.QWidget()
-        gridw.setLayout(self.grid)
-        self.addWidget(gridw)
+        self.scrollArea = QtGui.QScrollArea()
+        self.addWidget(self.scrollArea)
 
     def layout_widgets(self, widgets):
         w = self.grid.itemAt(0)
@@ -228,8 +226,10 @@ class _MonInjDock(dockarea.Dock):
             self.grid.removeItem(w)
             w = self.grid.itemAt(0)
         for i, (_, w) in enumerate(sorted(widgets, key=itemgetter(0))):
-            self.grid.addWidget(w, i // 4, i % 4)
-            self.grid.setColumnStretch(i % 4, 1)
+            self.grid.addWidget(w, i // 8, i % 8)
+            self.scrollArea.setWidget(self.gridw)
+            self.scrollArea.show()
+            self.grid.setColumnStretch(i % 8, 1)
 
 
 class MonInj(TaskObject):
