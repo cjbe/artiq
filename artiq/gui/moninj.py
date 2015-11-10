@@ -230,9 +230,8 @@ class _MonInjDock(dockarea.Dock):
             w = self.grid.itemAt(0)
         for i, (_, w) in enumerate(sorted(widgets, key=itemgetter(0))):
             self.grid.addWidget(w, i // 8, i % 8)
-            self.scrollArea.setWidget(self.gridw)
-            self.scrollArea.show()
-            self.grid.setColumnStretch(i % 8, 1)
+        self.scrollArea.setWidget(self.gridw)
+        self.scrollArea.show()
 
 
 class MonInj(TaskObject):
