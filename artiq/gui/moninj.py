@@ -217,6 +217,9 @@ class _MonInjDock(dockarea.Dock):
     def __init__(self, name):
         dockarea.Dock.__init__(self, name, size=(1500, 500))
         self.grid = QtGui.QGridLayout()
+        self.gridw = QtGui.QWidget()
+        self.gridw.setLayout(self.grid)
+        
         self.scrollArea = QtGui.QScrollArea()
         self.addWidget(self.scrollArea)
 
