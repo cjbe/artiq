@@ -1,11 +1,10 @@
 import asyncio
 import logging
 import time
+from functools import partial
 
 from quamash import QtGui, QtCore
 from pyqtgraph import dockarea, LayoutWidget
-
-from artiq.protocols.sync_struct import Subscriber
 
 try:
     QSortFilterProxyModel = QtCore.QSortFilterProxyModel
@@ -25,9 +24,9 @@ def _level_to_name(level):
     return "DEBUG"
 
 
-class _LogModel(QtCore.QAbstractTableModel):
-    def __init__(self, parent, init):
-        QtCore.QAbstractTableModel.__init__(self, parent)
+class Model(QtCore.QAbstractTableModel):
+    def __init__(self, init):
+        QtCore.QAbstractTableModel.__init__(self)
 
         self.headers = ["Level", "Source", "Time", "Message"]
 
@@ -153,8 +152,8 @@ class _LogFilterProxyModel(QSortFilterProxyModel):
 
 
 class LogDock(dockarea.Dock):
-    def __init__(self):
-        dockarea.Dock.__init__(self, "Log", size=(1000, 300))
+    def __init__(self, manager, name, log_sub):
+        dockarea.Dock.__init__(self, name, label="Log", size=(1000, 300))
 
         grid = LayoutWidget()
         self.addWidget(grid)
@@ -182,13 +181,15 @@ class LogDock(dockarea.Dock):
         self.log.setTextElideMode(QtCore.Qt.ElideNone)
         grid.addWidget(self.log, 1, 0, colspan=4)
         self.scroll_at_bottom = False
+        self.scroll_value = 0
 
-    async def sub_connect(self, host, port):
-        self.subscriber = Subscriber("log", self.init_log_model)
-        await self.subscriber.connect(host, port)
+        self.log.setContextMenuPolicy(QtCore.Qt.ActionsContextMenu)
+        newlog_action = QtGui.QAction("Create new log dock", self.log)
+        # note the lambda, the default parameter is overriden otherwise
+        newlog_action.triggered.connect(lambda: manager.create_new_dock())
+        self.log.addAction(newlog_action)
 
-    async def sub_close(self):
-        await self.subscriber.close()
+        log_sub.add_setmodel_callback(self.set_model)
 
     def filter_level_changed(self):
         if not hasattr(self, "table_model_filter"):
@@ -223,8 +224,8 @@ class LogDock(dockarea.Dock):
             scrollbar = self.log.verticalScrollBar()
             scrollbar.setValue(self.scroll_value)
 
-    def init_log_model(self, init):
-        self.table_model = _LogModel(self.log, init)
+    def set_model(self, model):
+        self.table_model = model
         self.table_model_filter = _LogFilterProxyModel(
             getattr(logging, self.filter_level.currentText()),
             self.filter_freetext.text())
@@ -233,10 +234,12 @@ class LogDock(dockarea.Dock):
         self.table_model_filter.rowsAboutToBeInserted.connect(self.rows_inserted_before)
         self.table_model_filter.rowsInserted.connect(self.rows_inserted_after)
         self.table_model_filter.rowsRemoved.connect(self.rows_removed)
-        return self.table_model
 
     def save_state(self):
-        return {"min_level_idx": self.filter_level.currentIndex()}
+        return {
+            "min_level_idx": self.filter_level.currentIndex(),
+            "freetext_filter": self.filter_freetext.text()
+        }
 
     def restore_state(self, state):
         try:
@@ -245,3 +248,64 @@ class LogDock(dockarea.Dock):
             pass
         else:
             self.filter_level.setCurrentIndex(idx)
+
+        try:
+            freetext = state["freetext_filter"]
+        except KeyError:
+            pass
+        else:
+            self.filter_freetext.setText(freetext)
+            # Note that editingFinished is not emitted when calling setText,
+            # (unlike currentIndexChanged) so we need to call the callback
+            # manually here, unlike for the combobox.
+            self.filter_freetext_changed()
+
+
+class LogDockManager:
+    def __init__(self, dock_area, log_sub):
+        self.dock_area = dock_area
+        self.log_sub = log_sub
+        self.docks = dict()
+
+    def create_new_dock(self, add_to_area=True):
+        n = 0
+        name = "log0"
+        while name in self.docks:
+            n += 1
+            name = "log" + str(n)
+
+        dock = LogDock(self, name, self.log_sub)
+        self.docks[name] = dock
+        if add_to_area:
+            self.dock_area.addDock(dock)
+            self.dock_area.floatDock(dock)
+        dock.sigClosed.connect(partial(self.on_dock_closed, name))
+        self.update_closable()
+        return dock
+
+    def on_dock_closed(self, name):
+        del self.docks[name]
+        self.update_closable()
+
+    def update_closable(self):
+        closable = len(self.docks) > 1
+        for dock in self.docks.values():
+            dock.setClosable(closable)
+
+    def save_state(self):
+        return {name: dock.save_state() for name, dock in self.docks.items()}
+
+    def restore_state(self, state):
+        if self.docks:
+            raise NotImplementedError
+        for name, dock_state in state.items():
+            dock = LogDock(self, name, self.log_sub)
+            dock.restore_state(dock_state)
+            self.dock_area.addDock(dock)
+            self.docks[name] = dock
+
+    def first_log_dock(self):
+        if self.docks:
+            return None
+        dock = self.create_new_dock(False)
+        return dock
