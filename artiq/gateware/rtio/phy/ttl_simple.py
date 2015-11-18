@@ -5,9 +5,9 @@ from artiq.gateware.rtio import rtlink
 
 
 class Output(Module):
-    def __init__(self, pad):
+    def __init__(self, pad, invert=False):
         self.rtlink = rtlink.Interface(rtlink.OInterface(1))
-        self.probes = [pad]
+        self.probes = [padLogical]
         override_en = Signal()
         override_o = Signal()
         self.overrides = [override_en, override_o]
@@ -15,14 +15,20 @@ class Output(Module):
         # # #
 
         pad_k = Signal()
+        
+        if invert:
+            self.comb += pad.eq(~padLogical)
+        else:
+            self.comb += pad.eq(padLogical)
+        
         self.sync.rio_phy += [
             If(self.rtlink.o.stb,
                 pad_k.eq(self.rtlink.o.data)
             ),
             If(override_en,
-                pad.eq(override_o)
+                padLogical.eq(override_o)
             ).Else(
-                pad.eq(pad_k)
+                padLogical.eq(pad_k)
             )
         ]
 
