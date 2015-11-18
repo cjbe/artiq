@@ -18,7 +18,7 @@ from misoc.integration.builder import *
 from misoc.targets.kc705 import MiniSoC, soc_kc705_args, soc_kc705_argdict
 
 from artiq.gateware.soc import AMPSoC
-from artiq.gateware import rtio, nist_qc1, nist_qc2
+from artiq.gateware import rtio, nist_qc1, nist_qc2, oxford
 from artiq.gateware.rtio.phy import ttl_simple, ttl_serdes_7series, dds
 from artiq.tools import artiq_dir
 from artiq import __version__ as artiq_version
@@ -229,14 +229,66 @@ class NIST_QC2(_NIST_QCx):
         self.add_rtio(rtio_channels)
 
 
+        
+# The input and output 8-channel buffer boards scramble and invert the channels.
+# This list maps the logical index to the physical index
+descrambleList = [ 3, 2, 1, 0, 7, 6, 5, 4 ];
+        
+class oxford(_NIST_QCx):
+    def __init__(self, platform, cpu_type="or1k", **kwargs):
+        _NIST_QCx.__init__(self, platform, cpu_type, **kwargs)
+        
+        platform = self.platform
+        platform.add_extension(oxford.fmc_adapter_io)
+
+        rtio_channels = []
+
+        led = platform.request("ledFrontPanel", 0) 
+        self.comb += led.eq(1) # Front panel LED0 hard wired on
+        
+        for bank in ['a','b','c','d','e','f','g']:
+            for i in range(8):
+                phy = ttl_serdes_7series.Output_8X(platform.request(bank, descrambleList[i]), invert=True )
+                    
+                self.submodules += phy
+                rtio_channels.append(rtio.Channel.from_phy(phy))
+            
+        for i in range(8):
+            phy = ttl_serdes_7series.Inout_8X(platform.request("in", descrambleList[i]), invert=True)
+            self.submodules += phy
+            rtio_channels.append(rtio.Channel.from_phy(phy, ififo_depth=512))
+            
+        
+        phy = ttl_simple.Output(platform.request("ledFrontPanel", 1), invert=True)
+        self.submodules += phy
+        rtio_channels.append(rtio.Channel.from_phy(phy))
+        
+        
+        self.add_constant("RTIO_REGULAR_TTL_COUNT", len(rtio_channels))
+
+        self.add_constant("RTIO_DDS_CHANNEL", len(rtio_channels))
+        self.add_constant("DDS_CHANNEL_COUNT", 0)
+        self.add_constant("DDS_AD9914")
+
+        self.add_rtio(rtio_channels)
+
+        
+        
+        
+        
+        
+        
+        
+        
 def main():
     parser = argparse.ArgumentParser(
         description="ARTIQ core device builder / KC705 "
-                    "+ NIST Ions QC1/QC2 hardware adapters")
+                    "+ NIST Ions QC1/QC2 hardware adapters"
+                    "+ Oxford hardware adapter")
     builder_args(parser)
     soc_kc705_args(parser)
-    parser.add_argument("-H", "--hw-adapter", default="qc1",
-                        help="hardware adapter type: qc1/qc2 "
+    parser.add_argument("-H", "--hw-adapter", default="oxford",
+                        help="hardware adapter type: qc1/qc2/oxford "
                              "(default: %(default)s)")
     args = parser.parse_args()
 
@@ -245,9 +297,11 @@ def main():
         cls = NIST_QC1
     elif hw_adapter == "qc2":
         cls = NIST_QC2
+    elif hw_adapter == "oxford":
+        cls = Oxford
     else:
         print("Invalid hardware adapter string (-H/--hw-adapter), "
-              "choose from qc1 or qc2")
+              "choose from qc1, qc2, or oxford")
         sys.exit(1)
 
     soc = cls(**soc_kc705_argdict(args))

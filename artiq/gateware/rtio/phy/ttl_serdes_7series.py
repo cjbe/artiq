@@ -4,14 +4,17 @@ from artiq.gateware.rtio.phy import ttl_serdes_generic
 
 
 class _OSERDESE2_8X(Module):
-    def __init__(self, pad):
+    def __init__(self, pad, invert=False):
         self.o = Signal(8)
         self.t_in = Signal()
         self.t_out = Signal()
 
         # # #
 
-        o = self.o
+        if invert:
+            o = ~self.o
+        else:
+            o = self.o
         self.specials += Instance("OSERDESE2",
                                   p_DATA_RATE_OQ="DDR", p_DATA_RATE_TQ="BUF",
                                   p_DATA_WIDTH=8, p_TRISTATE_WIDTH=1,
@@ -25,7 +28,7 @@ class _OSERDESE2_8X(Module):
 
 
 class _IOSERDESE2_8X(Module):
-    def __init__(self, pad):
+    def __init__(self, pad, invert=False):
         self.o = Signal(8)
         self.i = Signal(8)
         self.oe = Signal()
@@ -35,7 +38,22 @@ class _IOSERDESE2_8X(Module):
         pad_i = Signal()
         pad_o = Signal()
         i = self.i
-        self.specials += Instance("ISERDESE2", p_DATA_RATE="DDR",
+        
+        if invert:
+            iInv = Signal(8)
+            self.comb += i.eq(~iInv)
+            self.specials += Instance("ISERDESE2", p_DATA_RATE="DDR",
+                                  p_DATA_WIDTH=8,
+                                  p_INTERFACE_TYPE="NETWORKING", p_NUM_CE=1,
+                                  o_Q1=iInv[7], o_Q2=iInv[6], o_Q3=iInv[5], o_Q4=iInv[4],
+                                  o_Q5=iInv[3], o_Q6=iInv[2], o_Q7=iInv[1], o_Q8=iInv[0],
+                                  i_D=pad_i,
+                                  i_CLK=ClockSignal("rtiox4"),
+                                  i_CLKB=~ClockSignal("rtiox4"),
+                                  i_CE1=1, i_RST=0,
+                                  i_CLKDIV=ClockSignal("rio_phy"))
+        else:
+            self.specials += Instance("ISERDESE2", p_DATA_RATE="DDR",
                                   p_DATA_WIDTH=8,
                                   p_INTERFACE_TYPE="NETWORKING", p_NUM_CE=1,
                                   o_Q1=i[7], o_Q2=i[6], o_Q3=i[5], o_Q4=i[4],
@@ -45,7 +63,8 @@ class _IOSERDESE2_8X(Module):
                                   i_CLKB=~ClockSignal("rtiox4"),
                                   i_CE1=1, i_RST=0,
                                   i_CLKDIV=ClockSignal("rio_phy"))
-        oserdes = _OSERDESE2_8X(pad_o)
+        
+        oserdes = _OSERDESE2_8X(pad_o, invert)
         self.submodules += oserdes
         self.specials += Instance("IOBUF",
                                   i_I=pad_o, o_O=pad_i, i_T=oserdes.t_out,
@@ -57,14 +76,14 @@ class _IOSERDESE2_8X(Module):
 
 
 class Output_8X(ttl_serdes_generic.Output):
-    def __init__(self, pad):
-        serdes = _OSERDESE2_8X(pad)
+    def __init__(self, pad, invert=False):
+        serdes = _OSERDESE2_8X(pad, invert)
         self.submodules += serdes
         ttl_serdes_generic.Output.__init__(self, serdes)
 
 
 class Inout_8X(ttl_serdes_generic.Inout):
-    def __init__(self, pad):
-        serdes = _IOSERDESE2_8X(pad)
+    def __init__(self, pad, invert=False):
+        serdes = _IOSERDESE2_8X(pad, invert)
         self.submodules += serdes
         ttl_serdes_generic.Inout.__init__(self, serdes)
