@@ -6,6 +6,8 @@ from artiq.gateware.rtio import rtlink
 
 class Output(Module):
     def __init__(self, pad, invert=False):
+        padLogical = Signal()
+
         self.rtlink = rtlink.Interface(rtlink.OInterface(1))
         self.probes = [padLogical]
         override_en = Signal()

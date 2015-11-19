@@ -234,9 +234,9 @@ class NIST_QC2(_NIST_QCx):
 # This list maps the logical index to the physical index
 descrambleList = [ 3, 2, 1, 0, 7, 6, 5, 4 ];
         
-class oxford(_NIST_QCx):
-    def __init__(self, platform, cpu_type="or1k", **kwargs):
-        _NIST_QCx.__init__(self, platform, cpu_type, **kwargs)
+class Oxford(_NIST_QCx):
+    def __init__(self, cpu_type="or1k", **kwargs):
+        _NIST_QCx.__init__(self, cpu_type, **kwargs)
         
         platform = self.platform
         platform.add_extension(oxford.fmc_adapter_io)
