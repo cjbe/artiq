@@ -48,6 +48,11 @@ scripts = [
     "pdq2_controller=artiq.frontend.pdq2_controller:main",
     "pxi6733_controller=artiq.frontend.pxi6733_controller:main",
     "thorlabs_tcube_controller=artiq.frontend.thorlabs_tcube_controller:main",
+    "coherentDds_controller=artiq.frontend.coherentDds_controller:main",
+    "dosDac_controller=artiq.frontend.dosDac_controller:main",
+    "arduinoDds_controller=artiq.frontend.arduinoDds_controller:main",
+    "trapDac_controller=artiq.frontend.trapDac_controller:main",
+    "thorlabsMDT693_controller=artiq.frontend.thorlabsMDT693_controller:main"
 ]
 
 cmdclass = {"push_doc": PushDocCommand}
