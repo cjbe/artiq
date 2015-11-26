@@ -4,8 +4,6 @@ import struct as st
 
 import serial
 
-from artiq.language.units import V
-
 
 logger = logging.getLogger(__name__)
 
@@ -113,22 +111,6 @@ class MGMSG(Enum):
     PZ_GET_TPZ_IOSETTINGS = 0x07D6
 
 
-def _write_exactly(f, data):
-    remaining = len(data)
-    pos = 0
-    while remaining:
-        written = f.write(data[pos:])
-        remaining -= written
-        pos += written
-
-
-def _read_exactly(f, n):
-    r = bytes()
-    while len(r) < n:
-        r += f.read(n - len(r))
-    return r
-
-
 class Direction:
     def __init__(self, direction):
         if direction not in (1, 2):
@@ -158,6 +140,12 @@ class Message:
         self.src = src
         self.data = data
 
+    def __str__(self):
+        return ("<Message {} p1=0x{:02x} p2=0x{:02x} "
+                "dest=0x{:02x} src=0x{:02x}>".format(
+                    self.id, self.param1, self.param2,
+                    self.dest, self.src))
+
     @staticmethod
     def unpack(data):
         id, param1, param2, dest, src = st.unpack("<HBBBB", data[:6])
@@ -179,16 +167,20 @@ class Message:
                            self.param1, self.param2, self.dest, self.src)
 
     def send(self, port):
-            _write_exactly(port, self.pack())
+        logger.debug("sending: %s", self)
+        port.write(self.pack())
 
     @classmethod
     def recv(cls, port):
-        (header, ) = st.unpack("6s", _read_exactly(port, 6))
+        header = port.read(6)
+        logger.debug("received header: %s", header)
         data = b""
         if header[4] & 0x80:
             (length, ) = st.unpack("<H", header[2:4])
-            data = _read_exactly(port, length)
-        return cls.unpack(header + data)
+            data = port.read(length)
+        r = cls.unpack(header + data)
+        logger.debug("receiving: %s", r)
+        return r
 
     @property
     def has_data(self):
@@ -202,9 +194,8 @@ class Message:
             raise ValueError
 
 
-class Tcube:
+class _Tcube:
     def __init__(self, serial_dev):
-        self.serial_dev = serial_dev
         self.port = serial.serial_for_url(serial_dev, baudrate=115200,
                                           rtscts=True)
         self.status_report_counter = 0
@@ -219,16 +210,15 @@ class Tcube:
         msg.send(self.port)
 
     def handle_message(self, msg):
-        pass
+        # derived classes must implement this
+        raise NotImplementedError
 
     def send_request(self, msgreq_id, wait_for_msgs, param1=0, param2=0, data=None):
         Message(msgreq_id, param1, param2, data=data).send(self.port)
-        msg = msg_id = None
-        while msg is None or msg_id not in wait_for_msgs:
+        msg = None
+        while msg is None or msg.id not in wait_for_msgs:
             msg = Message.recv(self.port)
             self.handle_message(msg)
-            msg_id = msg.id
-
         return msg
 
     def set_channel_enable_state(self, activated):
@@ -255,7 +245,7 @@ class Tcube:
             self.chan_enabled = False
         else:
             raise MsgError("Channel state response is invalid: neither "
-                           + "1 nor 2: {}".format(self.chan_enabled))
+                           "1 nor 2: {}".format(self.chan_enabled))
         return self.chan_enabled
 
     def module_identify(self):
@@ -264,7 +254,6 @@ class Tcube:
         Instruct hardware unit to identify itself by flashing its front panel
         led.
         """
-
         self.send(Message(MGMSG.MOD_IDENTIFY))
 
     def hardware_start_update_messages(self, update_rate):
@@ -275,13 +264,10 @@ class Tcube:
 
         :param update_rate: Rate at which you will receive status updates
         """
-
         self.send(Message(MGMSG.HW_START_UPDATEMSGS, param1=update_rate))
 
     def hardware_stop_update_messages(self):
-        """Stop status updates from the controller.
-        """
-
+        """Stop status updates from the controller."""
         self.send(Message(MGMSG.HW_STOP_UPDATEMSGS))
 
     def hardware_request_information(self):
@@ -299,9 +285,9 @@ class Tcube:
         return True
 
 
-class Tpz(Tcube):
+class Tpz(_Tcube):
     def __init__(self, serial_dev):
-        Tcube.__init__(self, serial_dev)
+        _Tcube.__init__(self, serial_dev)
         self.voltage_limit = self.get_tpz_io_settings()[0]
 
     def handle_message(self, msg):
@@ -311,8 +297,8 @@ class Tpz(Tcube):
         if msg_id == MGMSG.HW_DISCONNECT:
             raise MsgError("Error: Please disconnect the TPZ001")
         elif msg_id == MGMSG.HW_RESPONSE:
-            raise MsgError("Hardware error, please disconnect"
-                           + "and reconnect the TPZ001")
+            raise MsgError("Hardware error, please disconnect "
+                           "and reconnect the TPZ001")
         elif msg_id == MGMSG.HW_RICHRESPONSE:
             (code, ) = st.unpack("<H", data[2:4])
             raise MsgError("Hardware error {}: {}"
@@ -334,7 +320,6 @@ class Tpz(Tcube):
 
             0x04 for Closed Loop Smooth.
         """
-
         self.send(Message(MGMSG.PZ_SET_POSCONTROLMODE, param1=1,
                           param2=control_mode))
 
@@ -353,7 +338,6 @@ class Tpz(Tcube):
 
         :rtype: int
         """
-
         get_msg = self.send_request(MGMSG.PZ_REQ_POSCONTROLMODE,
                                     [MGMSG.PZ_GET_POSCONTROLMODE], 1)
         return get_msg.param2
@@ -371,7 +355,6 @@ class Tpz(Tcube):
             <artiq.devices.thorlabs.driver.Tpz.set_tpz_io_settings>` method
             between the three values 75 V, 100 V and 150 V.
         """
-
         if voltage < 0 or voltage > self.voltage_limit:
             raise ValueError("Voltage must be in range [0;{}]"
                              .format(self.voltage_limit))
@@ -385,7 +368,6 @@ class Tpz(Tcube):
         :return: The output voltage.
         :rtype: float
         """
-
         get_msg = self.send_request(MGMSG.PZ_REQ_OUTPUTVOLTS,
                                     [MGMSG.PZ_GET_OUTPUTVOLTS], 1)
         return st.unpack("<H", get_msg.data[2:])[0]*self.voltage_limit/32767
@@ -402,7 +384,6 @@ class Tpz(Tcube):
             [0; 65535] depending on the unit. This corresponds to 0 to 100% of
             the maximum piezo extension.
         """
-
         payload = st.pack("<HH", 1, position_sw)
         self.send(Message(MGMSG.PZ_SET_OUTPUTPOS, data=payload))
 
@@ -413,7 +394,6 @@ class Tpz(Tcube):
             position.
         :rtype: int
         """
-
         get_msg = self.send_request(MGMSG.PZ_REQ_OUTPUTPOS,
                                     [MGMSG.PZ_GET_OUTPUTPOS], 1)
         return st.unpack("<H", get_msg.data[2:])[0]
@@ -441,7 +421,6 @@ class Tpz(Tcube):
             The values can be bitwise or'ed to sum the software source with
             either or both of the other source options.
         """
-
         payload = st.pack("<HH", 1, volt_src)
         self.send(Message(MGMSG.PZ_SET_INPUTVOLTSSRC, data=payload))
 
@@ -455,7 +434,6 @@ class Tpz(Tcube):
             docstring for meaning of bits.
         :rtype: int
         """
-
         get_msg = self.send_request(MGMSG.PZ_REQ_INPUTVOLTSSRC,
                                     [MGMSG.PZ_GET_INPUTVOLTSSRC], 1)
         return st.unpack("<H", get_msg.data[2:])[0]
@@ -473,7 +451,6 @@ class Tpz(Tcube):
         :param prop_const: Value of the proportional term in range [0; 255].
         :param int_const: Value of the integral term in range [0; 255].
         """
-
         payload = st.pack("<HHH", 1, prop_const, int_const)
         self.send(Message(MGMSG.PZ_SET_PICONSTS, data=payload))
 
@@ -484,7 +461,6 @@ class Tpz(Tcube):
             term and the second element is the integral term.
         :rtype: a 2 int elements tuple : (int, int)
         """
-
         get_msg = self.send_request(MGMSG.PZ_REQ_PICONSTS,
                                     [MGMSG.PZ_GET_PICONSTS], 1)
         return st.unpack("<HH", get_msg.data[2:])
@@ -529,7 +505,6 @@ class Tpz(Tcube):
             :py:meth:`set_tpz_io_settings
             <artiq.devices.thorlabs.driver.Tpz.set_tpz_io_settings>` method.
         """
-
         volt = round(output*32767/self.voltage_limit)
         payload = st.pack("<HHH", 1, lut_index, volt)
         self.send(Message(MGMSG.PZ_SET_OUTPUTLUT, data=payload))
@@ -541,10 +516,9 @@ class Tpz(Tcube):
             the voltage output value.
         :rtype: a 2 elements tuple (int, float)
         """
-
         get_msg = self.send_request(MGMSG.PZ_REQ_OUTPUTLUT,
                                     [MGMSG.PZ_GET_OUTPUTLUT], 1)
-        (index, output) = st.unpack("<Hh", get_msg.data[2:])
+        index, output = st.unpack("<Hh", get_msg.data[2:])
         return index, output*self.voltage_limit/32767
 
     def set_output_lut_parameters(self, mode, cycle_length, num_cycles,
@@ -607,7 +581,6 @@ class Tpz(Tcube):
             and 2147483648 sample intervals. The system then outputs the last
             value in the cycle until the postcycle_rest time has expired.
         """
-
         # triggering is not supported by the TPZ device
         payload = st.pack("<HHHLLLLHLH", 1, mode, cycle_length, num_cycles,
                           delay_time, precycle_rest, postcycle_rest,
@@ -621,21 +594,16 @@ class Tpz(Tcube):
             num_cycles, delay_time, precycle_rest, postcycle_rest).
         :rtype: 6 int elements tuple
         """
-
         get_msg = self.send_request(MGMSG.PZ_REQ_OUTPUTLUTPARAMS,
                                     [MGMSG.PZ_GET_OUTPUTLUTPARAMS], 1)
         return st.unpack("<HHLLLL", get_msg.data[2:22])
 
     def start_lut_output(self):
-        """Start the voltage waveform (LUT) outputs.
-        """
-
+        """Start the voltage waveform (LUT) outputs."""
         self.send(Message(MGMSG.PZ_START_LUTOUTPUT, param1=1))
 
     def stop_lut_output(self):
-        """Stop the voltage waveform (LUT) outputs.
-        """
-
+        """Stop the voltage waveform (LUT) outputs."""
         self.send(Message(MGMSG.PZ_STOP_LUTOUTPUT, param1=1))
 
     def set_eeprom_parameters(self, msg_id):
@@ -644,7 +612,6 @@ class Tpz(Tcube):
         :param msg_id: The message ID of the message containing the parameters
             to be saved.
         """
-
         payload = st.pack("<HH", 1, msg_id)
         self.send(Message(MGMSG.PZ_SET_EEPROMPARAMS, data=payload))
 
@@ -654,7 +621,6 @@ class Tpz(Tcube):
         :param intensity: The intensity is set as a value from 0 (Off) to 255
             (brightest).
         """
-
         payload = st.pack("<H", intensity)
         self.send(Message(MGMSG.PZ_SET_TPZ_DISPSETTINGS, data=payload))
 
@@ -664,7 +630,6 @@ class Tpz(Tcube):
         :return: The intensity as a value from 0 (Off) to 255 (brightest).
         :rtype: int
         """
-
         get_msg = self.send_request(MGMSG.PZ_REQ_TPZ_DISPSETTINGS,
                                     [MGMSG.PZ_GET_TPZ_DISPSETTINGS], 1)
         return st.unpack("<H", get_msg.data)[0]
@@ -699,7 +664,6 @@ class Tpz(Tcube):
             0x03: the feedback signals run through the read panel SMA
             connectors.
         """
-
         self.voltage_limit = voltage_limit
 
         if self.voltage_limit == 75:
@@ -723,7 +687,6 @@ class Tpz(Tcube):
             meaning of those parameters.
         :rtype: a 2 elements tuple (int, int)
         """
-
         get_msg = self.send_request(MGMSG.PZ_REQ_TPZ_IOSETTINGS,
                                     [MGMSG.PZ_GET_TPZ_IOSETTINGS], 1)
         voltage_limit, hub_analog_input = st.unpack("<HH", get_msg.data[2:6])
@@ -739,7 +702,7 @@ class Tpz(Tcube):
         return voltage_limit, hub_analog_input
 
 
-class Tdc(Tcube):
+class Tdc(_Tcube):
     def send_status_ack(self):
         self.send(Message(MGMSG.MOT_ACK_DCSTATUSUPDATE))
 
@@ -750,8 +713,8 @@ class Tdc(Tcube):
         if msg_id == MGMSG.HW_DISCONNECT:
             raise MsgError("Error: Please disconnect the TDC001")
         elif msg_id == MGMSG.HW_RESPONSE:
-            raise MsgError("Hardware error, please disconnect"
-                           + "and reconnect the TDC001")
+            raise MsgError("Hardware error, please disconnect "
+                           "and reconnect the TDC001")
         elif msg_id == MGMSG.HW_RICHRESPONSE:
             (code, ) = st.unpack("<H", data[2:4])
             raise MsgError("Hardware error {}: {}"
@@ -766,7 +729,7 @@ class Tdc(Tcube):
             else:
                 self.status_report_counter += 1
             # 'r' is a currently unused and reserved field
-            (self.position, self.velocity, r, self.status) = st.unpack(
+            self.position, self.velocity, r, self.status = st.unpack(
                 "<LHHL", data[2:])
 
     def is_moving(self):
@@ -790,7 +753,6 @@ class Tdc(Tcube):
             wnd2 to 127) to apply vel3.
         :param vel4: The velocity to move when beyond wnd3.
         """
-
         payload = st.pack("<HHLHLHLHL", 1, zero_wnd, vel1, wnd1, vel2, wnd2,
                           vel3, wnd3, vel4)
         self.send(Message(MGMSG.MOT_SET_POTPARAMS, data=payload))
@@ -805,7 +767,6 @@ class Tdc(Tcube):
             description of each tuple element meaning.
         :rtype: An 8 int tuple
         """
-
         get_msg = self.send_request(MGMSG.MOT_REQ_POTPARAMS,
                                     [MGMSG.MOT_GET_POTPARAMS], 1)
         return st.unpack("<HLHLHLHL", get_msg.data[2:])
@@ -825,7 +786,6 @@ class Tdc(Tcube):
 
         :param position: The new value of the position counter.
         """
-
         payload = st.pack("<Hl", 1, position)
         self.send(Message(MGMSG.MOT_SET_POSCOUNTER, data=payload))
 
@@ -835,7 +795,6 @@ class Tdc(Tcube):
         :return: The value of the position counter.
         :rtype: int
         """
-
         get_msg = self.send_request(MGMSG.MOT_REQ_POSCOUNTER,
                                     [MGMSG.MOT_GET_POSCOUNTER], 1)
         return st.unpack("<l", get_msg.data[2:])[0]
@@ -849,7 +808,6 @@ class Tdc(Tcube):
 
         :param encoder_count: The new value of the encoder counter.
         """
-
         payload = st.pack("<Hl", 1, encoder_count)
         self.send(Message(MGMSG.MOT_SET_ENCCOUNTER, data=payload))
 
@@ -859,7 +817,6 @@ class Tdc(Tcube):
         :return: The value of the encoder counter.
         :rtype: int
         """
-
         get_msg = self.send_request(MGMSG.MOT_REQ_ENCCOUNTER,
                                     [MGMSG.MOT_GET_ENCCOUNTER], 1)
         return st.unpack("<l", get_msg.data[2:])[0]
@@ -870,7 +827,6 @@ class Tdc(Tcube):
         :param acceleration: The acceleration in encoder counts/sec/sec.
         :param max_velocity: The maximum (final) velocity in counts/sec.
         """
-
         payload = st.pack("<HLLL", 1, 0, acceleration, max_velocity)
         self.send(Message(MGMSG.MOT_SET_VELPARAMS, data=payload))
 
@@ -880,7 +836,6 @@ class Tdc(Tcube):
         :return: A 2 int tuple: (acceleration, max_velocity).
         :rtype: A 2 int tuple (int, int)
         """
-
         get_msg = self.send_request(MGMSG.MOT_REQ_VELPARAMS,
                                     [MGMSG.MOT_GET_VELPARAMS], 1)
         return st.unpack("<LL", get_msg.data[6:])
@@ -897,7 +852,6 @@ class Tdc(Tcube):
         :param stop_mode: 1 for immediate (abrupt) stop, 2 for profiled stop
             (with controlled deceleration).
         """
-
         payload = st.pack("<HHLLLLH", 1, mode, step_size, 0, acceleration,
                           max_velocity, stop_mode)
         self.send(Message(MGMSG.MOT_SET_JOGPARAMS, data=payload))
@@ -909,7 +863,6 @@ class Tdc(Tcube):
             step_size, acceleration, max_velocity, stop_mode
         :rtype: A 5 int tuple.
         """
-
         get_msg = self.send_request(MGMSG.MOT_REQ_JOGPARAMS,
                                     [MGMSG.MOT_GET_JOGPARAMS], 1)
         (jog_mode, step_size, _, acceleration, max_velocity,
@@ -922,7 +875,6 @@ class Tdc(Tcube):
         :param backlash_distance: The value of the backlash distance,
             which specifies the relative distance in position counts.
         """
-
         payload = st.pack("<Hl", 1, backlash_distance)
         self.send(Message(MGMSG.MOT_SET_GENMOVEPARAMS, data=payload))
 
@@ -932,7 +884,6 @@ class Tdc(Tcube):
         :return: The value of the backlash distance.
         :rtype: int
         """
-
         get_msg = self.send_request(MGMSG.MOT_REQ_GENMOVEPARAMS,
                                     [MGMSG.MOT_GET_GENMOVEPARAMS], 1)
         return st.unpack("<l", get_msg.data[2:])[0]
@@ -944,7 +895,6 @@ class Tdc(Tcube):
             integer that specifies the relative distance in position encoder
             counts.
         """
-
         payload = st.pack("<Hl", 1, relative_distance)
         self.send(Message(MGMSG.MOT_SET_MOVERELPARAMS, data=payload))
 
@@ -954,7 +904,6 @@ class Tdc(Tcube):
         :return: The relative distance move parameter.
         :rtype: int
         """
-
         get_msg = self.send_request(MGMSG.MOT_REQ_MOVERELPARAMS,
                                     [MGMSG.MOT_GET_MOVERELPARAMS], 1)
         return st.unpack("<l", get_msg.data[2:])[0]
@@ -966,7 +915,6 @@ class Tdc(Tcube):
             signed integer that specifies the absolute move position in encoder
             counts.
         """
-
         payload = st.pack("<Hl", 1, absolute_position)
         self.send(Message(MGMSG.MOT_SET_MOVEABSPARAMS, data=payload))
 
@@ -976,7 +924,6 @@ class Tdc(Tcube):
         :return: The absolute position to move.
         :rtype: int
         """
-
         get_msg = self.send_request(MGMSG.MOT_REQ_MOVEABSPARAMS,
                                     [MGMSG.MOT_GET_MOVEABSPARAMS], 1)
         return st.unpack("<l", get_msg.data[2:])[0]
@@ -986,7 +933,6 @@ class Tdc(Tcube):
 
         :param home_velocity: Homing velocity.
         """
-
         payload = st.pack("<HHHLL", 1, 0, 0, home_velocity, 0)
         self.send(Message(MGMSG.MOT_SET_HOMEPARAMS, data=payload))
 
@@ -996,7 +942,6 @@ class Tdc(Tcube):
         :return: The homing velocity.
         :rtype: int
         """
-
         get_msg = self.send_request(MGMSG.MOT_REQ_HOMEPARAMS,
                                     [MGMSG.MOT_GET_HOMEPARAMS], 1)
         return st.unpack("<L", get_msg.data[6:10])[0]
@@ -1006,7 +951,6 @@ class Tdc(Tcube):
 
         This call is blocking until device is homed or move is stopped.
         """
-
         self.send_request(MGMSG.MOT_MOVE_HOME,
                           [MGMSG.MOT_MOVE_HOMED, MGMSG.MOT_MOVE_STOPPED], 1)
 
@@ -1037,7 +981,6 @@ class Tdc(Tcube):
         :param ccw_hw_limit: The operation of counter clockwise hardware limit
             switch when contact is made.
         """
-
         payload = st.pack("<HHHLLH", 1, cw_hw_limit, ccw_hw_limit, 0, 0, 0)
         self.send(Message(MGMSG.MOT_SET_LIMSWITCHPARAMS, data=payload))
 
@@ -1051,7 +994,6 @@ class Tdc(Tcube):
          method.
         :rtype: A 2 int tuple.
         """
-
         get_msg = self.send_request(MGMSG.MOT_REQ_LIMSWITCHPARAMS,
                                     [MGMSG.MOT_GET_LIMSWITCHPARAMS], 1)
         return st.unpack("<HH", get_msg.data[2:6])
@@ -1064,7 +1006,6 @@ class Tdc(Tcube):
         <artiq.devices.thorlabs.driver.Tdc.set_move_relative_parameters>`
         command.
         """
-
         self.send_request(MGMSG.MOT_MOVE_RELATIVE,
                           [MGMSG.MOT_MOVE_COMPLETED, MGMSG.MOT_MOVE_STOPPED], 1)
 
@@ -1074,7 +1015,6 @@ class Tdc(Tcube):
         :param relative_distance: The distance to move in position encoder
             counts.
         """
-
         payload = st.pack("<Hl", 1, relative_distance)
         self.send_request(MGMSG.MOT_MOVE_RELATIVE,
                           [MGMSG.MOT_MOVE_COMPLETED, MGMSG.MOT_MOVE_STOPPED],
@@ -1088,7 +1028,6 @@ class Tdc(Tcube):
         <artiq.devices.thorlabs.driver.Tdc.set_move_absolute_parameters>`
         command.
         """
-
         self.send_request(MGMSG.MOT_MOVE_ABSOLUTE,
                           [MGMSG.MOT_MOVE_COMPLETED, MGMSG.MOT_MOVE_STOPPED],
                           param1=1)
@@ -1100,18 +1039,16 @@ class Tdc(Tcube):
             integer that specifies the absolute distance in position encoder
             counts.
         """
-
         payload = st.pack("<Hl", 1, absolute_distance)
         self.send_request(MGMSG.MOT_MOVE_ABSOLUTE,
                           [MGMSG.MOT_MOVE_COMPLETED, MGMSG.MOT_MOVE_STOPPED],
                           data=payload)
 
     def move_jog(self, direction):
-        """Start a job move.
+        """Start a jog move.
 
         :param direction: The direction to jog. 1 is forward, 2 is backward.
         """
-
         self.send_request(MGMSG.MOT_MOVE_JOG,
                           [MGMSG.MOT_MOVE_COMPLETED, MGMSG.MOT_MOVE_STOPPED],
                           param1=1, param2=direction)
@@ -1130,7 +1067,6 @@ class Tdc(Tcube):
         :param direction: The direction to jog: 1 to move forward, 2 to move
             backward.
         """
-
         self.send(Message(MGMSG.MOT_MOVE_VELOCITY, param1=1, param2=direction))
 
     def move_stop(self, stop_mode):
@@ -1143,7 +1079,6 @@ class Tdc(Tcube):
             or profiled stop. Set this byte to 1 to stop immediately, or to 2
             to stop in a controlled (profiled) manner.
         """
-
         if self.is_moving():
             self.send_request(MGMSG.MOT_MOVE_STOP,
                               [MGMSG.MOT_MOVE_STOPPED,
@@ -1165,7 +1100,6 @@ class Tdc(Tcube):
             setting the corresponding bit to 1. By default, all parameters are
             applied, and this parameter is set to 0x0F (1111).
         """
-
         payload = st.pack("<HLLLLH", 1, proportional, integral,
                           differential, integral_limit, filter_control)
         self.send(Message(MGMSG.MOT_SET_DCPIDPARAMS, data=payload))
@@ -1180,7 +1114,6 @@ class Tdc(Tcube):
             precise description.
         :rtype: A 5 int tuple.
         """
-
         get_msg = self.send_request(MGMSG.MOT_REQ_DCPIDPARAMS,
                                     [MGMSG.MOT_GET_DCPIDPARAMS], 1)
         return st.unpack("<LLLLH", get_msg.data[2:])
@@ -1197,7 +1130,6 @@ class Tdc(Tcube):
             forward or reverse limit switch.
             Set the bit 3 (value 8) will make the LED lit when motor is moving.
         """
-
         payload = st.pack("<HH", 1, mode_bits)
         self.send(Message(MGMSG.MOT_SET_AVMODES, data=payload))
 
@@ -1207,7 +1139,6 @@ class Tdc(Tcube):
         :return: The LED indicator mode bits.
         :rtype: int
         """
-
         get_msg = self.send_request(MGMSG.MOT_REQ_AVMODES,
                                     [MGMSG.MOT_GET_AVMODES], 1)
         return st.unpack("<H", get_msg.data[2:])[0]
@@ -1231,7 +1162,6 @@ class Tdc(Tcube):
         :param position2: The position (in encoder counts) to which the motor
             will move when the bottom button is pressed.
         """
-
         payload = st.pack("<HHllHH", 1, mode, position1, position2,
                           0, 0)
         self.send(Message(MGMSG.MOT_SET_BUTTONPARAMS, data=payload))
@@ -1245,7 +1175,6 @@ class Tdc(Tcube):
             description.
         :rtype: A 3 int tuple
         """
-
         get_msg = self.send_request(MGMSG.MOT_REQ_BUTTONPARAMS,
                                     [MGMSG.MOT_GET_BUTTONPARAMS], 1)
         return st.unpack("<Hll", get_msg.data[2:12])
@@ -1256,7 +1185,6 @@ class Tdc(Tcube):
         :param msg_id: The message ID of the message containing the parameters
             to be saved.
         """
-
         payload = st.pack("<HH", 1, msg_id)
         self.send(Message(MGMSG.MOT_SET_EEPROMPARAMS, data=payload))
 
@@ -1269,7 +1197,6 @@ class Tdc(Tcube):
             velocity, status bits.
         :rtype: A 3 int tuple
         """
-
         get_msg = self.send_request(MGMSG.MOT_REQ_DCSTATUSUPDATE,
                                     [MGMSG.MOT_GET_DCSTATUSUPDATE], 1)
         pos, vel, _, stat = st.unpack("<LHHL", get_msg.data[2:])
@@ -1281,7 +1208,6 @@ class Tdc(Tcube):
         :return: The motor status.
         :rtype:
         """
-
         get_msg = self.send_request(MGMSG.MOT_REQ_STATUSBITS,
                                     [MGMSG.MOT_GET_STATUSBITS], 1)
         return st.unpack("<L", get_msg.data[2:])[0]
@@ -1293,7 +1219,6 @@ class Tdc(Tcube):
         i.e., MGMSG.MOT_MOVE_STOPPED, MGMSG.MOT_MOVE_COMPLETED,
         MGMSGS_MOT_MOVE_HOMED
         """
-
         self.send(Message(MGMSG.MOT_SUSPEND_ENDOFMOVEMSGS))
 
     def resume_end_of_move_messages(self):
@@ -1308,7 +1233,6 @@ class Tdc(Tcube):
         MGMSG.HW_RESPONSE,
         MGMSG.HW_RICHRESPONSE
         """
-
         self.send(Message(MGMSG.MOT_RESUME_ENDOFMOVEMSGS))
 
 

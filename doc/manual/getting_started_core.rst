@@ -79,10 +79,10 @@ A number of Python algorithmic features can be used inside a kernel for compilat
 
 * Booleans
 * 32-bit signed integers (default size)
-* 64-bit signed integers (:class:`artiq.language.core.int64`)
+* 64-bit signed integers (use ``int(n, width=64)`` to convert)
 * Signed rational numbers with 64-bit numerator and 64-bit denominator
 * Double-precision floating point numbers
-* Lists of the above types. Lists of lists are not supported.
+* Lists of the above types. Lists can be arbitrarily nested.
 
 For a demonstration of some of these features, see the ``mandelbrot.py`` example.
 
