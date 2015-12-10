@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-from setuptools import setup, find_packages, Command
+from setuptools import setup, find_packages
 import sys
 import os
 
@@ -9,20 +9,6 @@ import versioneer
 
 if sys.version_info[:3] < (3, 5, 0):
     raise Exception("You need Python 3.5.0+")
-
-
-class PushDocCommand(Command):
-    description = "uploads the documentation to m-labs.hk"
-    user_options = []
-
-    def initialize_options(self):
-        pass
-
-    def finalize_options(self):
-        pass
-
-    def run(self):
-        os.system("rsync -avz doc/manual/_build/html/ shell.serverraum.org:~/web/m-labs.hk/artiq/manual")
 
 
 requirements = [
@@ -57,9 +43,6 @@ scripts = [
     "thorlabsMDT693_controller=artiq.frontend.thorlabsMDT693_controller:main"
 ]
 
-cmdclass = {"push_doc": PushDocCommand}
-cmdclass.update(versioneer.get_cmdclass())
-
 setup(
     name="artiq",
     version=versioneer.get_version(),
@@ -82,6 +65,5 @@ setup(
     ext_modules=[],
     entry_points={
         "console_scripts": scripts,
-    },
-    cmdclass=cmdclass
+    }
 )

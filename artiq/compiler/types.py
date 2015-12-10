@@ -60,8 +60,24 @@ class TVar(Type):
         if self.parent is self:
             return self
         else:
-            root = self.parent.find()
-            self.parent = root # path compression
+            # The recursive find() invocation is turned into a loop
+            # because paths resulting from unification of large arrays
+            # can easily cause a stack overflow.
+            root = self
+            while root.__class__ == TVar:
+                if root is root.parent:
+                    break
+                else:
+                    root = root.parent
+
+            # path compression
+            iter = self
+            while iter.__class__ == TVar:
+                if iter is iter.parent:
+                    break
+                else:
+                    iter, iter.parent = iter.parent, root
+
             return root
 
     def unify(self, other):
@@ -500,11 +516,11 @@ class TDelay(Type):
     def unify(self, other):
         other = other.find()
 
-        if self.is_fixed() and other.is_fixed() and \
+        if isinstance(other, TVar):
+            other.unify(self)
+        elif self.is_fixed() and other.is_fixed() and \
                 self.duration.fold() == other.duration.fold():
             pass
-        elif isinstance(other, TVar):
-            other.unify(self)
         else:
             raise UnificationError(self, other)
 
@@ -538,6 +554,18 @@ def TIndeterminateDelay(cause):
 def TFixedDelay(duration):
     return TDelay(duration, None)
 
+
+def instantiate(typ):
+    tvar_map = dict()
+    def mapper(typ):
+        typ = typ.find()
+        if is_var(typ):
+            if typ not in tvar_map:
+                tvar_map[typ] = TVar()
+            return tvar_map[typ]
+        return typ
+
+    return typ.map(mapper)
 
 def is_var(typ):
     return isinstance(typ.find(), TVar)
@@ -613,11 +641,11 @@ def is_method(typ):
 
 def get_method_self(typ):
     if is_method(typ):
-        return typ.find().params["self"]
+        return typ.find().params["self"].find()
 
 def get_method_function(typ):
     if is_method(typ):
-        return typ.find().params["fn"]
+        return typ.find().params["fn"].find()
 
 def is_value(typ):
     return isinstance(typ.find(), TValue)

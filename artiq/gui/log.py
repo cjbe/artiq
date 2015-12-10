@@ -6,22 +6,12 @@ from functools import partial
 from quamash import QtGui, QtCore
 from pyqtgraph import dockarea, LayoutWidget
 
+from artiq.gui.tools import log_level_to_name
+
 try:
     QSortFilterProxyModel = QtCore.QSortFilterProxyModel
 except AttributeError:
     QSortFilterProxyModel = QtGui.QSortFilterProxyModel
-
-
-def _level_to_name(level):
-    if level >= logging.CRITICAL:
-        return "CRITICAL"
-    if level >= logging.ERROR:
-        return "ERROR"
-    if level >= logging.WARNING:
-        return "WARNING"
-    if level >= logging.INFO:
-        return "INFO"
-    return "DEBUG"
 
 
 class Model(QtCore.QAbstractTableModel):
@@ -108,7 +98,7 @@ class Model(QtCore.QAbstractTableModel):
                 v = self.entries[index.row()]
                 column = index.column()
                 if column == 0:
-                    return _level_to_name(v[0])
+                    return log_level_to_name(v[0])
                 elif column == 1:
                     return v[1]
                 elif column == 2:
@@ -151,7 +141,7 @@ class _LogFilterProxyModel(QSortFilterProxyModel):
         self.invalidateFilter()
 
 
-class LogDock(dockarea.Dock):
+class _LogDock(dockarea.Dock):
     def __init__(self, manager, name, log_sub):
         dockarea.Dock.__init__(self, name, label="Log", size=(1000, 300))
 
@@ -171,6 +161,15 @@ class LogDock(dockarea.Dock):
             self.filter_freetext_changed)
         grid.addWidget(self.filter_freetext, 0, 2)
 
+        newdock = QtGui.QToolButton()
+        newdock.setToolTip("Create new log dock")
+        newdock.setIcon(QtGui.QApplication.style().standardIcon(
+            QtGui.QStyle.SP_FileDialogNewFolder))
+        # note the lambda, the default parameter is overriden otherwise
+        newdock.clicked.connect(lambda: manager.create_new_dock())
+        grid.addWidget(newdock, 0, 3)
+        grid.layout.setColumnStretch(2, 1)
+
         self.log = QtGui.QTableView()
         self.log.setSelectionMode(QtGui.QAbstractItemView.NoSelection)
         self.log.horizontalHeader().setResizeMode(
@@ -181,17 +180,13 @@ class LogDock(dockarea.Dock):
         self.log.verticalHeader().hide()
         self.log.setHorizontalScrollMode(
             QtGui.QAbstractItemView.ScrollPerPixel)
+        self.log.setVerticalScrollMode(
+            QtGui.QAbstractItemView.ScrollPerPixel)
         self.log.setShowGrid(False)
         self.log.setTextElideMode(QtCore.Qt.ElideNone)
         grid.addWidget(self.log, 1, 0, colspan=4)
         self.scroll_at_bottom = False
         self.scroll_value = 0
-
-        self.log.setContextMenuPolicy(QtCore.Qt.ActionsContextMenu)
-        newlog_action = QtGui.QAction("Create new log dock", self.log)
-        # note the lambda, the default parameter is overriden otherwise
-        newlog_action.triggered.connect(lambda: manager.create_new_dock())
-        self.log.addAction(newlog_action)
 
         log_sub.add_setmodel_callback(self.set_model)
 
@@ -278,7 +273,7 @@ class LogDockManager:
             n += 1
             name = "log" + str(n)
 
-        dock = LogDock(self, name, self.log_sub)
+        dock = _LogDock(self, name, self.log_sub)
         self.docks[name] = dock
         if add_to_area:
             self.dock_area.addDock(dock)
@@ -303,7 +298,7 @@ class LogDockManager:
         if self.docks:
             raise NotImplementedError
         for name, dock_state in state.items():
-            dock = LogDock(self, name, self.log_sub)
+            dock = _LogDock(self, name, self.log_sub)
             dock.restore_state(dock_state)
             self.dock_area.addDock(dock)
             self.docks[name] = dock

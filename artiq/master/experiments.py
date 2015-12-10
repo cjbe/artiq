@@ -3,10 +3,11 @@ import os
 import tempfile
 import shutil
 import logging
+from functools import partial
 
 from artiq.protocols.sync_struct import Notifier
 from artiq.master.worker import Worker
-from artiq.tools import exc_to_warning
+from artiq.tools import get_windows_drives, exc_to_warning
 
 
 logger = logging.getLogger(__name__)
@@ -16,7 +17,7 @@ async def _get_repository_entries(entry_dict,
                                   root, filename, get_device_db, log):
     worker = Worker({
         "get_device_db": get_device_db,
-        "log": lambda message: log("scan", message)
+        "log": partial(log, "scan")
     })
     try:
         description = await worker.examine(os.path.join(root, filename))
@@ -24,7 +25,7 @@ async def _get_repository_entries(entry_dict,
         await worker.close()
     for class_name, class_desc in description.items():
         name = class_desc["name"]
-        arguments = class_desc["arguments"]
+        arginfo = class_desc["arginfo"]
         if "/" in name:
             logger.warning("Character '/' is not allowed in experiment "
                            "name (%s)", name)
@@ -39,7 +40,7 @@ async def _get_repository_entries(entry_dict,
         entry = {
             "file": filename,
             "class_name": class_name,
-            "arguments": arguments
+            "arginfo": arginfo
         }
         entry_dict[name] = entry
 
@@ -74,31 +75,31 @@ def _sync_explist(target, source):
             target[k] = source[k]
 
 
-class Repository:
-    def __init__(self, backend, get_device_db_fn, log_fn):
-        self.backend = backend
+class ExperimentDB:
+    def __init__(self, repo_backend, get_device_db_fn, log_fn):
+        self.repo_backend = repo_backend
         self.get_device_db_fn = get_device_db_fn
         self.log_fn = log_fn
 
-        self.cur_rev = self.backend.get_head_rev()
-        self.backend.request_rev(self.cur_rev)
+        self.cur_rev = self.repo_backend.get_head_rev()
+        self.repo_backend.request_rev(self.cur_rev)
         self.explist = Notifier(dict())
 
         self._scanning = False
 
     def close(self):
         # The object cannot be used anymore after calling this method.
-        self.backend.release_rev(self.cur_rev)
+        self.repo_backend.release_rev(self.cur_rev)
 
-    async def scan(self, new_cur_rev=None):
+    async def scan_repository(self, new_cur_rev=None):
         if self._scanning:
             return
         self._scanning = True
         try:
             if new_cur_rev is None:
-                new_cur_rev = self.backend.get_head_rev()
-            wd, _ = self.backend.request_rev(new_cur_rev)
-            self.backend.release_rev(self.cur_rev)
+                new_cur_rev = self.repo_backend.get_head_rev()
+            wd, _ = self.repo_backend.request_rev(new_cur_rev)
+            self.repo_backend.release_rev(self.cur_rev)
             self.cur_rev = new_cur_rev
             new_explist = await _scan_experiments(wd, self.get_device_db_fn,
                                                   self.log_fn)
@@ -107,8 +108,43 @@ class Repository:
         finally:
             self._scanning = False
 
-    def scan_async(self, new_cur_rev=None):
-        asyncio.ensure_future(exc_to_warning(self.scan(new_cur_rev)))
+    def scan_repository_async(self, new_cur_rev=None):
+        asyncio.ensure_future(
+            exc_to_warning(self.scan_repository(new_cur_rev)))
+
+    async def examine(self, filename, use_repository=True):
+        if use_repository:
+            revision = self.cur_rev
+            wd, _ = self.repo_backend.request_rev(revision)
+            filename = os.path.join(wd, filename)
+        worker = Worker({
+            "get_device_db": self.get_device_db_fn,
+            "log": partial(self.log_fn, "examine")
+        })
+        try:
+            description = await worker.examine(filename)
+        finally:
+            await worker.close()
+        if use_repository:
+            self.repo_backend.release_rev(revision)
+        return description
+
+    def list_directory(self, directory):
+        r = []
+        prefix = ""
+        if not directory:
+            if os.name == "nt":
+                drives = get_windows_drives()
+                return [drive + ":\\" for drive in drives]
+            else:
+                directory = "/"
+                prefix = "/"
+        for de in os.scandir(directory):
+            if de.is_dir():
+                r.append(prefix + de.name + os.path.sep)
+            else:
+                r.append(prefix + de.name)
+        return r
 
 
 class FilesystemBackend:

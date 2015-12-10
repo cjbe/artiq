@@ -6,17 +6,17 @@
 #include "log.h"
 #include "dds.h"
 
-#define DURATION_WRITE (5 << RTIO_FINE_TS_WIDTH)
+#define DURATION_WRITE (5 << CONFIG_RTIO_FINE_TS_WIDTH)
 
-#if defined DDS_AD9858
+#if defined CONFIG_DDS_AD9858
 /* Assume 8-bit bus */
 #define DURATION_INIT (7*DURATION_WRITE) /* not counting FUD */
 #define DURATION_PROGRAM (8*DURATION_WRITE) /* not counting FUD */
 
-#elif defined DDS_AD9914
+#elif defined CONFIG_DDS_AD9914
 /* Assume 16-bit bus */
 /* DAC calibration takes max. 1ms as per datasheet */
-#define DURATION_DAC_CAL (147000 << RTIO_FINE_TS_WIDTH)
+#define DURATION_DAC_CAL (147000 << CONFIG_RTIO_FINE_TS_WIDTH)
 /* not counting final FUD */
 #define DURATION_INIT (8*DURATION_WRITE + DURATION_DAC_CAL)
 #define DURATION_PROGRAM (6*DURATION_WRITE) /* not counting FUD */
@@ -29,7 +29,7 @@
         rtio_o_address_write(addr); \
         rtio_o_data_write(data); \
         rtio_o_timestamp_write(now); \
-        rtio_write_and_process_status(now, RTIO_DDS_CHANNEL); \
+        rtio_write_and_process_status(now, CONFIG_RTIO_DDS_CHANNEL); \
         now += DURATION_WRITE; \
     } while(0)
 
@@ -37,7 +37,7 @@ void dds_init(long long int timestamp, int channel)
 {
     long long int now;
 
-    rtio_chan_sel_write(RTIO_DDS_CHANNEL);
+    rtio_chan_sel_write(CONFIG_RTIO_DDS_CHANNEL);
 
     now = timestamp - DURATION_INIT;
 
@@ -46,7 +46,7 @@ void dds_init(long long int timestamp, int channel)
 #endif
     channel <<= 1;
     DDS_WRITE(DDS_GPIO, channel);
-#ifndef DDS_AD9914
+#ifndef CONFIG_DDS_AD9914
     /*
      * Resetting a AD9914 intermittently crashes it. It does not produce any
      * output until power-cycled.
@@ -58,7 +58,7 @@ void dds_init(long long int timestamp, int channel)
     DDS_WRITE(DDS_GPIO, channel);
 #endif
 
-#ifdef DDS_AD9858
+#ifdef CONFIG_DDS_AD9858
     /*
      * 2GHz divider disable
      * SYNCLK disable
@@ -72,7 +72,7 @@ void dds_init(long long int timestamp, int channel)
     DDS_WRITE(DDS_FUD, 0);
 #endif
 
-#ifdef DDS_AD9914
+#ifdef CONFIG_DDS_AD9914
     DDS_WRITE(DDS_CFR1H, 0x0000); /* Enable cosine output */
     DDS_WRITE(DDS_CFR2L, 0x8900); /* Enable matched latency */
     DDS_WRITE(DDS_CFR2H, 0x0080); /* Enable profile mode */
@@ -87,14 +87,14 @@ void dds_init(long long int timestamp, int channel)
 
 /* Compensation to keep phase continuity when switching from absolute or tracking
  * to continuous phase mode. */
-static unsigned int continuous_phase_comp[DDS_CHANNEL_COUNT];
+static unsigned int continuous_phase_comp[CONFIG_DDS_CHANNEL_COUNT];
 
 static void dds_set_one(long long int now, long long int ref_time, unsigned int channel,
     unsigned int ftw, unsigned int pow, int phase_mode, unsigned int amplitude)
 {
     unsigned int channel_enc;
 
-	if(channel >= DDS_CHANNEL_COUNT) {
+	if(channel >= CONFIG_DDS_CHANNEL_COUNT) {
 		log("Attempted to set invalid DDS channel");
 		return;
 	}
@@ -105,27 +105,27 @@ static void dds_set_one(long long int now, long long int ref_time, unsigned int 
 #endif
     DDS_WRITE(DDS_GPIO, channel_enc << 1);
 
-#ifdef DDS_AD9858
+#ifdef CONFIG_DDS_AD9858
     DDS_WRITE(DDS_FTW0, ftw & 0xff);
     DDS_WRITE(DDS_FTW1, (ftw >> 8) & 0xff);
     DDS_WRITE(DDS_FTW2, (ftw >> 16) & 0xff);
     DDS_WRITE(DDS_FTW3, (ftw >> 24) & 0xff);
 #endif
 
-#ifdef DDS_AD9914
+#ifdef CONFIG_DDS_AD9914
     DDS_WRITE(DDS_FTWL, ftw & 0xffff);
     DDS_WRITE(DDS_FTWH, (ftw >> 16) & 0xffff);
 #endif
 
     /* We need the RTIO fine timestamp clock to be phase-locked
-     * to DDS SYSCLK, and divided by an integer DDS_RTIO_CLK_RATIO.
+     * to DDS SYSCLK, and divided by an integer CONFIG_DDS_RTIO_CLK_RATIO.
      */
     if(phase_mode == PHASE_MODE_CONTINUOUS) {
         /* Do not clear phase accumulator on FUD */
-#ifdef DDS_AD9858
+#ifdef CONFIG_DDS_AD9858
         DDS_WRITE(DDS_CFR2, 0x00);
 #endif
-#ifdef DDS_AD9914
+#ifdef CONFIG_DDS_AD9914
         /* Disable autoclear phase accumulator and enables OSK. */
         DDS_WRITE(DDS_CFR1L, 0x0108);
 #endif
@@ -134,28 +134,28 @@ static void dds_set_one(long long int now, long long int ref_time, unsigned int 
         long long int fud_time;
 
         /* Clear phase accumulator on FUD */
-#ifdef DDS_AD9858
+#ifdef CONFIG_DDS_AD9858
         DDS_WRITE(DDS_CFR2, 0x40);
 #endif
-#ifdef DDS_AD9914
+#ifdef CONFIG_DDS_AD9914
         /* Enable autoclear phase accumulator and enables OSK. */
         DDS_WRITE(DDS_CFR1L, 0x2108);
 #endif
         fud_time = now + 2*DURATION_WRITE;
-        pow -= (ref_time - fud_time)*DDS_RTIO_CLK_RATIO*ftw >> (32-DDS_POW_WIDTH);
+        pow -= (ref_time - fud_time)*CONFIG_DDS_RTIO_CLK_RATIO*ftw >> (32-DDS_POW_WIDTH);
         if(phase_mode == PHASE_MODE_TRACKING)
-            pow += ref_time*DDS_RTIO_CLK_RATIO*ftw >> (32-DDS_POW_WIDTH);
+            pow += ref_time*CONFIG_DDS_RTIO_CLK_RATIO*ftw >> (32-DDS_POW_WIDTH);
         continuous_phase_comp[channel] = pow;
     }
 
-#ifdef DDS_AD9858
+#ifdef CONFIG_DDS_AD9858
     DDS_WRITE(DDS_POW0, pow & 0xff);
     DDS_WRITE(DDS_POW1, (pow >> 8) & 0x3f);
 #endif
-#ifdef DDS_AD9914
+#ifdef CONFIG_DDS_AD9914
     DDS_WRITE(DDS_POW, pow);
 #endif
-#ifdef DDS_AD9914
+#ifdef CONFIG_DDS_AD9914
     DDS_WRITE(DDS_ASF, amplitude);
 #endif
     DDS_WRITE(DDS_FUD, 0);
@@ -190,7 +190,7 @@ void dds_batch_exit(void)
 
     if(!batch_mode)
         artiq_raise_from_c("DDSBatchError", "DDS batch error", 0, 0, 0);
-    rtio_chan_sel_write(RTIO_DDS_CHANNEL);
+    rtio_chan_sel_write(CONFIG_RTIO_DDS_CHANNEL);
     /* + FUD time */
     now = batch_ref_time - batch_count*(DURATION_PROGRAM + DURATION_WRITE);
     for(i=0;i<batch_count;i++) {
@@ -216,7 +216,7 @@ void dds_set(long long int timestamp, int channel,
         batch[batch_count].amplitude = amplitude;
         batch_count++;
     } else {
-        rtio_chan_sel_write(RTIO_DDS_CHANNEL);
+        rtio_chan_sel_write(CONFIG_RTIO_DDS_CHANNEL);
         dds_set_one(timestamp - DURATION_PROGRAM, timestamp, channel, ftw, pow, phase_mode,
                     amplitude);
     }

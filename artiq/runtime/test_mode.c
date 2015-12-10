@@ -166,10 +166,10 @@ static void ddsr(char *addr)
         return;
     }
 
-#ifdef DDS_AD9858
+#ifdef CONFIG_DDS_AD9858
     printf("0x%02x\n", brg_ddsread(addr2));
 #endif
-#ifdef DDS_AD9914
+#ifdef CONFIG_DDS_AD9914
     printf("0x%04x\n", brg_ddsread(addr2));
 #endif
 }
@@ -205,13 +205,13 @@ static void ddsftw(char *n, char *ftw)
 #endif
     brg_ddssel(n2);
 
-#ifdef DDS_AD9858
+#ifdef CONFIG_DDS_AD9858
     brg_ddswrite(DDS_FTW0, ftw2 & 0xff);
     brg_ddswrite(DDS_FTW1, (ftw2 >> 8) & 0xff);
     brg_ddswrite(DDS_FTW2, (ftw2 >> 16) & 0xff);
     brg_ddswrite(DDS_FTW3, (ftw2 >> 24) & 0xff);
 #endif
-#ifdef DDS_AD9914
+#ifdef CONFIG_DDS_AD9914
     brg_ddswrite(DDS_FTWL, ftw2 & 0xffff);
     brg_ddswrite(DDS_FTWH, (ftw2 >> 16) & 0xffff);
 #endif
@@ -224,7 +224,7 @@ static void ddsreset(void)
     brg_ddsreset();
 }
 
-#ifdef DDS_AD9858
+#ifdef CONFIG_DDS_AD9858
 static void ddsinit(void)
 {
     brg_ddsreset();
@@ -236,7 +236,7 @@ static void ddsinit(void)
 }
 #endif
 
-#ifdef DDS_AD9914
+#ifdef CONFIG_DDS_AD9914
 static void ddsinit(void)
 {
     long long int t;
@@ -273,24 +273,24 @@ static void do_ddstest_one(unsigned int i)
 
     for(j=0; j<12; j++) {
         f = v[j];
-#ifdef DDS_AD9858
+#ifdef CONFIG_DDS_AD9858
         brg_ddswrite(DDS_FTW0, f & 0xff);
         brg_ddswrite(DDS_FTW1, (f >> 8) & 0xff);
         brg_ddswrite(DDS_FTW2, (f >> 16) & 0xff);
         brg_ddswrite(DDS_FTW3, (f >> 24) & 0xff);
 #endif
-#ifdef DDS_AD9914
+#ifdef CONFIG_DDS_AD9914
         brg_ddswrite(DDS_FTWL, f & 0xffff);
         brg_ddswrite(DDS_FTWH, (f >> 16) & 0xffff);
 #endif
         brg_ddsfud();
-#ifdef DDS_AD9858
+#ifdef CONFIG_DDS_AD9858
         g = brg_ddsread(DDS_FTW0);
         g |= brg_ddsread(DDS_FTW1) << 8;
         g |= brg_ddsread(DDS_FTW2) << 16;
         g |= brg_ddsread(DDS_FTW3) << 24;
 #endif
-#ifdef DDS_AD9914
+#ifdef CONFIG_DDS_AD9914
         g = brg_ddsread(DDS_FTWL);
         g |= brg_ddsread(DDS_FTWH) << 16;
 #endif
@@ -330,15 +330,15 @@ static void ddstest(char *n, char *channel)
             do_ddstest_one(channel2);
     } else {
         for(i=0;i<n2;i++)
-            for(j=0;j<DDS_CHANNEL_COUNT;j++)
+            for(j=0;j<CONFIG_DDS_CHANNEL_COUNT;j++)
                 do_ddstest_one(j);
     }
 }
 
-#if (defined CSR_SPIFLASH_BASE && defined SPIFLASH_PAGE_SIZE)
+#if (defined CSR_SPIFLASH_BASE && defined CONFIG_SPIFLASH_PAGE_SIZE)
 static void fsread(char *key)
 {
-    char readbuf[SPIFLASH_SECTOR_SIZE];
+    char readbuf[CONFIG_SPIFLASH_SECTOR_SIZE];
     int r;
 
     r = fs_read(key, readbuf, sizeof(readbuf)-1, NULL);
@@ -361,13 +361,13 @@ static void fsfull(void)
     char value[4096];
     memset(value, '@', sizeof(value));
 
-    for(i = 0; i < SPIFLASH_SECTOR_SIZE/sizeof(value); i++)
+    for(i = 0; i < CONFIG_SPIFLASH_SECTOR_SIZE/sizeof(value); i++)
         fs_write("plip", value, sizeof(value));
 }
 
 static void check_read(char *key, char *expected, unsigned int length, unsigned int testnum)
 {
-    char readbuf[SPIFLASH_SECTOR_SIZE];
+    char readbuf[CONFIG_SPIFLASH_SECTOR_SIZE];
     unsigned int remain, readlength;
 
     memset(readbuf, '\0', sizeof(readbuf));
@@ -417,7 +417,7 @@ static inline void test_sector_is_full(void)
 
     fs_erase();
     memset(value, '@', sizeof(value));
-    for(c = 1; c <= SPIFLASH_SECTOR_SIZE/sizeof(value); c++) {
+    for(c = 1; c <= CONFIG_SPIFLASH_SECTOR_SIZE/sizeof(value); c++) {
         key[0] = c;
         check_write(fs_write(key, value, sizeof(value) - 6));
     }
@@ -427,7 +427,7 @@ static inline void test_sector_is_full(void)
 
 static void test_one_big_record(int testnum)
 {
-    char value[SPIFLASH_SECTOR_SIZE];
+    char value[CONFIG_SPIFLASH_SECTOR_SIZE];
     memset(value, '@', sizeof(value));
 
     fs_erase();
@@ -450,12 +450,12 @@ static void test_one_big_record(int testnum)
 
 static void test_flush_duplicate_rollback(int testnum)
 {
-    char value[SPIFLASH_SECTOR_SIZE];
+    char value[CONFIG_SPIFLASH_SECTOR_SIZE];
     memset(value, '@', sizeof(value));
 
     fs_erase();
     /* This makes the flash storage full with one big record */
-    check_write(fs_write("a", value, SPIFLASH_SECTOR_SIZE - 6));
+    check_write(fs_write("a", value, CONFIG_SPIFLASH_SECTOR_SIZE - 6));
     /* This should trigger the try_to_flush_duplicate code which
      * at first will not keep the old "a" record value because we are
      * overwriting it. But then it should roll back to the old value
@@ -465,12 +465,12 @@ static void test_flush_duplicate_rollback(int testnum)
     check_write(!fs_write("a", value, sizeof(value)));
     /* check we still have the old record value */
     value[0] = '@';
-    check_read("a", value, SPIFLASH_SECTOR_SIZE - 6, testnum);
+    check_read("a", value, CONFIG_SPIFLASH_SECTOR_SIZE - 6, testnum);
 }
 
 static void test_too_big_fails(int testnum)
 {
-    char value[SPIFLASH_SECTOR_SIZE];
+    char value[CONFIG_SPIFLASH_SECTOR_SIZE];
     memset(value, '@', sizeof(value));
 
     fs_erase();
@@ -551,7 +551,7 @@ static void help(void)
     puts("ddsftw <n> <d>  - write FTW");
     puts("ddstest <n> <c> - perform test sequence on DDS");
     puts("leds <n>        - set LEDs");
-#if (defined CSR_SPIFLASH_BASE && defined SPIFLASH_PAGE_SIZE)
+#if (defined CSR_SPIFLASH_BASE && defined CONFIG_SPIFLASH_PAGE_SIZE)
     puts("fserase         - erase flash storage");
     puts("fswrite <k> <v> - write to flash storage");
     puts("fsread <k>      - read flash storage");
@@ -633,7 +633,7 @@ static void do_command(char *c)
     else if(strcmp(token, "ddsftw") == 0) ddsftw(get_token(&c), get_token(&c));
     else if(strcmp(token, "ddstest") == 0) ddstest(get_token(&c), get_token(&c));
 
-#if (defined CSR_SPIFLASH_BASE && defined SPIFLASH_PAGE_SIZE)
+#if (defined CSR_SPIFLASH_BASE && defined CONFIG_SPIFLASH_PAGE_SIZE)
     else if(strcmp(token, "fserase") == 0) fs_erase();
     else if(strcmp(token, "fswrite") == 0) fswrite(get_token(&c), c, strlen(c));
     else if(strcmp(token, "fsread") == 0) fsread(get_token(&c));
