@@ -144,11 +144,14 @@ def fn_print():
 def fn_kernel():
     return types.TBuiltinFunction("kernel")
 
-def fn_parallel():
-    return types.TBuiltinFunction("parallel")
+def obj_parallel():
+    return types.TBuiltin("parallel")
 
-def fn_sequential():
-    return types.TBuiltinFunction("sequential")
+def obj_sequential():
+    return types.TBuiltin("sequential")
+
+def fn_watchdog():
+    return types.TBuiltinFunction("watchdog")
 
 def fn_now():
     return types.TBuiltinFunction("now")

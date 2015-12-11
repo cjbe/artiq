@@ -369,6 +369,10 @@ class LLVMIRGenerator:
             llty = ll.FunctionType(lli32, [llptr])
         elif name == "now":
             llty = lli64
+        elif name == "watchdog_set":
+            llty = ll.FunctionType(lli32, [lli32])
+        elif name == "watchdog_clear":
+            llty = ll.FunctionType(llvoid, [lli32])
         else:
             assert False
 
@@ -451,8 +455,8 @@ class LLVMIRGenerator:
                 # There is no 1:1 correspondence between ARTIQ and LLVM
                 # basic blocks, because sometimes we expand a single ARTIQ
                 # instruction so that the result spans several LLVM basic
-                # blocks. This only really matters for phis, which will
-                # use a different map.
+                # blocks. This only really matters for phis, which are thus
+                # using a different map (the following one).
                 llblock_map[block] = self.llbuilder.basic_block
 
             # Fourth, add incoming values to phis.
@@ -793,6 +797,12 @@ class LLVMIRGenerator:
             llnow = self.llbuilder.load(llnowptr)
             lladjusted = self.llbuilder.add(llnow, self.map(interval))
             return self.llbuilder.store(lladjusted, llnowptr)
+        elif insn.op == "watchdog_set":
+            interval, = insn.operands
+            return self.llbuilder.call(self.llbuiltin("watchdog_set"), [self.map(interval)])
+        elif insn.op == "watchdog_clear":
+            id, = insn.operands
+            return self.llbuilder.call(self.llbuiltin("watchdog_clear"), [self.map(id)])
         else:
             assert False
 
@@ -1093,30 +1103,29 @@ class LLVMIRGenerator:
     def process_Unreachable(self, insn):
         return self.llbuilder.unreachable()
 
-    def process_Raise(self, insn):
-        llexn = self.map(insn.value())
+    def _gen_raise(self, insn, func, args):
         if insn.exception_target() is not None:
             llnormalblock = self.llfunction.append_basic_block("unreachable")
             llnormalblock.terminator = ll.Unreachable(llnormalblock)
             llnormalblock.instructions.append(llnormalblock.terminator)
 
             llunwindblock = self.map(insn.exception_target())
-            llinsn = self.llbuilder.invoke(self.llbuiltin("__artiq_raise"), [llexn],
+            llinsn = self.llbuilder.invoke(func, args,
                                            llnormalblock, llunwindblock,
                                            name=insn.name)
         else:
-            llinsn = self.llbuilder.call(self.llbuiltin("__artiq_raise"), [llexn],
+            llinsn = self.llbuilder.call(func, args,
                                          name=insn.name)
             self.llbuilder.unreachable()
         llinsn.attributes.add('noreturn')
         return llinsn
 
+    def process_Raise(self, insn):
+        llexn = self.map(insn.value())
+        return self._gen_raise(insn, self.llbuiltin("__artiq_raise"), [llexn])
+
     def process_Reraise(self, insn):
-        llinsn = self.llbuilder.call(self.llbuiltin("__artiq_reraise"), [],
-                                     name=insn.name)
-        llinsn.attributes.add('noreturn')
-        self.llbuilder.unreachable()
-        return llinsn
+        return self._gen_raise(insn, self.llbuiltin("__artiq_reraise"), [])
 
     def process_LandingPad(self, insn):
         # Layout on return from landing pad: {%_Unwind_Exception*, %Exception*}
