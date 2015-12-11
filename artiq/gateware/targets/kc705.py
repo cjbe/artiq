@@ -264,11 +264,11 @@ class Oxford(_NIST_QCx):
         rtio_channels.append(rtio.Channel.from_phy(phy))
         
         
-        self.config("RTIO_REGULAR_TTL_COUNT", len(rtio_channels))
+        self.config["RTIO_REGULAR_TTL_COUNT"] = len(rtio_channels)
 
-        self.config("RTIO_DDS_CHANNEL", len(rtio_channels))
-        self.config("DDS_CHANNEL_COUNT", 0)
-        self.config("DDS_AD9914")
+        self.config["RTIO_DDS_CHANNEL"] = len(rtio_channels)
+        self.config["DDS_CHANNEL_COUNT"] = 0
+        self.config["DDS_AD9914"] = True
 
         self.add_rtio(rtio_channels)
 
