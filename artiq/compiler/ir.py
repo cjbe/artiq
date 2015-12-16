@@ -1294,31 +1294,31 @@ class Delay(Terminator):
     A delay operation. Ties an :class:`iodelay.Expr` to SSA values so that
     inlining could lead to the expression folding to a constant.
 
-    :ivar expr: (:class:`iodelay.Expr`) expression
+    :ivar interval: (:class:`iodelay.Expr`) expression
     :ivar var_names: (list of string)
-        iodelay variable names corresponding to operands
+        iodelay variable names corresponding to SSA values
     """
 
     """
-    :param expr: (:class:`iodelay.Expr`) expression
+    :param interval: (:class:`iodelay.Expr`) expression
     :param substs: (dict of str to :class:`Value`)
         SSA values corresponding to iodelay variable names
     :param call: (:class:`Call` or ``Constant(None, builtins.TNone())``)
         the call instruction that caused this delay, if any
     :param target: (:class:`BasicBlock`) branch target
     """
-    def __init__(self, expr, substs, decomposition, target, name=""):
+    def __init__(self, interval, substs, decomposition, target, name=""):
         for var_name in substs: assert isinstance(var_name, str)
         assert isinstance(decomposition, Call) or \
             isinstance(decomposition, Builtin) and decomposition.op in ("delay", "delay_mu")
         assert isinstance(target, BasicBlock)
         super().__init__([decomposition, target, *substs.values()], builtins.TNone(), name)
-        self.expr = expr
+        self.interval = interval
         self.var_names = list(substs.keys())
 
     def copy(self, mapper):
         self_copy = super().copy(mapper)
-        self_copy.expr = self.expr
+        self_copy.interval = self.interval
         self_copy.var_names = list(self.var_names)
         return self_copy
 
@@ -1352,7 +1352,69 @@ class Delay(Terminator):
         return result
 
     def opcode(self):
-        return "delay({})".format(self.expr)
+        return "delay({})".format(self.interval)
+
+class Loop(Terminator):
+    """
+    A terminator for loop headers that carries metadata useful
+    for unrolling. It includes an :class:`iodelay.Expr` specifying
+    the trip count, tied to SSA values so that inlining could lead
+    to the expression folding to a constant.
+
+    :ivar trip_count: (:class:`iodelay.Expr`)
+        expression for trip count
+    :ivar var_names: (list of string)
+        iodelay variable names corresponding to ``trip_count`` operands
+    """
+
+    """
+    :param trip_count: (:class:`iodelay.Expr`) expression
+    :param substs: (dict of str to :class:`Value`)
+        SSA values corresponding to iodelay variable names
+    :param cond: (:class:`Value`) branch condition
+    :param if_true: (:class:`BasicBlock`) branch target if condition is truthful
+    :param if_false: (:class:`BasicBlock`) branch target if condition is falseful
+    """
+    def __init__(self, trip_count, substs, cond, if_true, if_false, name=""):
+        for var_name in substs: assert isinstance(var_name, str)
+        assert isinstance(cond, Value)
+        assert builtins.is_bool(cond.type)
+        assert isinstance(if_true, BasicBlock)
+        assert isinstance(if_false, BasicBlock)
+        super().__init__([cond, if_true, if_false, *substs.values()], builtins.TNone(), name)
+        self.trip_count = trip_count
+        self.var_names = list(substs.keys())
+
+    def copy(self, mapper):
+        self_copy = super().copy(mapper)
+        self_copy.trip_count = self.trip_count
+        self_copy.var_names = list(self.var_names)
+        return self_copy
+
+    def condition(self):
+        return self.operands[0]
+
+    def if_true(self):
+        return self.operands[1]
+
+    def if_false(self):
+        return self.operands[2]
+
+    def substs(self):
+        return {key: value for key, value in zip(self.var_names, self.operands[3:])}
+
+    def _operands_as_string(self, type_printer):
+        substs = self.substs()
+        substs_as_strings = []
+        for var_name in substs:
+            substs_as_strings.append("{} = {}".format(var_name, substs[var_name]))
+        result = "[{}]".format(", ".join(substs_as_strings))
+        result += ", {}, {}, {}".format(*list(map(lambda value: value.as_operand(type_printer),
+                                                  self.operands[0:3])))
+        return result
+
+    def opcode(self):
+        return "loop({} times)".format(self.trip_count)
 
 class Parallel(Terminator):
     """
