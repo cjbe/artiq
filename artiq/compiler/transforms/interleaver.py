@@ -7,7 +7,7 @@ from pythonparser import diagnostic
 
 from .. import types, builtins, ir, iodelay
 from ..analyses import domination
-from ..algorithms import inline
+from ..algorithms import inline, unroll
 
 def delay_free_subgraph(root, limit):
     visited = set()
@@ -104,15 +104,23 @@ class Interleaver:
                 target_terminator = target_block.terminator()
                 if isinstance(target_terminator, ir.Parallel):
                     target_terminator.replace_with(ir.Branch(source_block))
-                else:
-                    assert isinstance(target_terminator, (ir.Delay, ir.Branch))
+                elif isinstance(target_terminator, (ir.Delay, ir.Branch)):
                     target_terminator.set_target(source_block)
+                else:
+                    assert False
 
                 source_terminator = source_block.terminator()
-
-                if not isinstance(source_terminator, ir.Delay):
+                if isinstance(source_terminator, ir.Parallel):
                     source_terminator.replace_with(ir.Branch(source_terminator.target()))
-                else:
+                elif isinstance(source_terminator, ir.Branch):
+                    pass
+                elif isinstance(source_terminator, ir.BranchIf):
+                    # Skip a delay-free loop/conditional
+                    source_block = postdom_tree.immediate_dominator(source_block)
+                    assert (source_block is not None)
+                elif isinstance(source_terminator, ir.Return):
+                    break
+                elif isinstance(source_terminator, ir.Delay):
                     old_decomp = source_terminator.decomposition()
                     if is_pure_delay(old_decomp):
                         if target_time_delta > 0:
@@ -144,6 +152,13 @@ class Interleaver:
                             source_terminator.interval = iodelay.Const(target_time_delta)
                         else:
                             source_terminator.replace_with(ir.Branch(source_terminator.target()))
+                elif isinstance(source_terminator, ir.Loop):
+                    unroll(source_terminator)
+
+                    postdom_tree = domination.PostDominatorTree(func)
+                    continue
+                else:
+                    assert False
 
                 target_block = source_block
                 target_time  = new_target_time

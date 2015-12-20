@@ -181,11 +181,12 @@ class ARTIQIRGenerator(algorithm.Visitor):
             entry = self.add_block("entry")
             old_block, self.current_block = self.current_block, entry
 
-            env = self.append(ir.Alloc([], ir.TEnvironment(node.typing_env), name="env"))
+            env_type = ir.TEnvironment(name=func.name, vars=node.typing_env)
+            env = self.append(ir.Alloc([], env_type, name="env"))
             old_env, self.current_env = self.current_env, env
 
-            priv_env = self.append(ir.Alloc([], ir.TEnvironment({ "$return": typ.ret }),
-                                            name="privenv"))
+            priv_env_type = ir.TEnvironment(name=func.name + ".priv", vars={ "$return": typ.ret })
+            priv_env = self.append(ir.Alloc([], priv_env_type, name="privenv"))
             old_priv_env, self.current_private_env = self.current_private_env, priv_env
 
             self.generic_visit(node)
@@ -264,13 +265,15 @@ class ARTIQIRGenerator(algorithm.Visitor):
                 {var: node.typing_env[var]
                  for var in node.typing_env
                   if var not in node.globals_in_scope}
-            env_type = ir.TEnvironment(env_without_globals, self.current_env.type)
+            env_type = ir.TEnvironment(name=func.name,
+                                       vars=env_without_globals, outer=self.current_env.type)
             env = self.append(ir.Alloc([], env_type, name="env"))
             old_env, self.current_env = self.current_env, env
 
             if not is_lambda:
-                priv_env = self.append(ir.Alloc([], ir.TEnvironment({ "$return": typ.ret }),
-                                                name="privenv"))
+                priv_env_type = ir.TEnvironment(name=func.name + ".priv",
+                                                vars={ "$return": typ.ret })
+                priv_env = self.append(ir.Alloc([], priv_env_type, name="privenv"))
                 old_priv_env, self.current_private_env = self.current_private_env, priv_env
 
             self.append(ir.SetLocal(env, "$outer", env_arg))
@@ -525,7 +528,7 @@ class ARTIQIRGenerator(algorithm.Visitor):
             if node.trip_count is not None:
                 substs = {var_name: self.current_args[var_name]
                           for var_name in node.trip_count.free_vars()}
-                head.append(ir.Loop(node.trip_count, substs, cond, body, else_tail))
+                head.append(ir.Loop(node.trip_count, substs, phi, cond, body, else_tail))
             else:
                 head.append(ir.BranchIf(cond, body, else_tail))
             if not post_body.is_terminated():
@@ -574,8 +577,11 @@ class ARTIQIRGenerator(algorithm.Visitor):
 
         if any(node.finalbody):
             # k for continuation
-            final_state = self.append(ir.Alloc([], ir.TEnvironment({ "$k": ir.TBasicBlock() })))
-            final_targets = []
+            final_suffix   = ".try@{}:{}".format(node.loc.line(), node.loc.column())
+            final_env_type = ir.TEnvironment(name=self.current_function.name + final_suffix,
+                                             vars={ "$k": ir.TBasicBlock() })
+            final_state    = self.append(ir.Alloc([], final_env_type))
+            final_targets  = []
 
             if self.break_target is not None:
                 break_proxy = self.add_block("try.break")
@@ -1092,7 +1098,9 @@ class ARTIQIRGenerator(algorithm.Visitor):
         result = self.append(ir.Alloc([length], node.type))
 
         try:
-            env_type = ir.TEnvironment(node.typing_env, self.current_env.type)
+            gen_suffix = ".gen@{}:{}".format(node.loc.line(), node.loc.column())
+            env_type = ir.TEnvironment(name=self.current_function.name + gen_suffix,
+                                       vars=node.typing_env, outer=self.current_env.type)
             env = self.append(ir.Alloc([], env_type, name="env.gen"))
             old_env, self.current_env = self.current_env, env
 
@@ -1692,8 +1700,11 @@ class ARTIQIRGenerator(algorithm.Visitor):
 
     def visit_Assert(self, node):
         try:
+            assert_suffix   = ".assert@{}:{}".format(node.loc.line(), node.loc.column())
+            assert_env_type = ir.TEnvironment(name=self.current_function.name + assert_suffix,
+                                              vars={})
             assert_env = self.current_assert_env = \
-                self.append(ir.Alloc([], ir.TEnvironment({}), name="assertenv"))
+                self.append(ir.Alloc([], assert_env_type, name="assertenv"))
             assert_subexprs = self.current_assert_subexprs = []
             init = self.current_block
 

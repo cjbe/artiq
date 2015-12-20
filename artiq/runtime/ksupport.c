@@ -17,6 +17,8 @@
 #include "dds.h"
 #include "rtio.h"
 
+double round(double x);
+
 void ksupport_abort(void);
 
 int64_t now;
@@ -28,7 +30,7 @@ extern void __divsi3, __modsi3, __ledf2, __gedf2, __unorddf2, __eqdf2, __ltdf2,
     __udivmoddi4, __floatsisf, __floatunsisf, __fixsfsi, __fixunssfsi,
     __adddf3, __subdf3, __muldf3, __divdf3, __floatsidf, __floatunsidf,
     __floatdidf, __fixdfsi, __fixdfdi, __fixunsdfsi, __clzsi2, __ctzsi2,
-    __udivdi3, __umoddi3, __moddi3;
+    __udivdi3, __umoddi3, __moddi3, __powidf2;
 
 /* artiq_personality symbols */
 extern void __artiq_personality;
@@ -80,6 +82,10 @@ static const struct symbol runtime_exports[] = {
     {"__udivdi3", &__udivdi3},
     {"__umoddi3", &__umoddi3},
     {"__moddi3", &__moddi3},
+    {"__powidf2", &__powidf2},
+
+    /* libm */
+    {"round", &round},
 
     /* exceptions */
     {"_Unwind_Resume", &_Unwind_Resume},
@@ -116,6 +122,34 @@ static const struct symbol runtime_exports[] = {
     /* end */
     {NULL, NULL}
 };
+
+double round(double x)
+{
+    union {double f; uint64_t i;} u = {x};
+    int e = u.i >> 52 & 0x7ff;
+    double y;
+
+    if (e >= 0x3ff+52)
+        return x;
+    if (u.i >> 63)
+        x = -x;
+    if (e < 0x3ff-1) {
+        /* we don't do it in ARTIQ */
+        /* raise inexact if x!=0 */
+        // FORCE_EVAL(x + 0x1p52);
+        return 0*u.f;
+    }
+    y = (double)(x + 0x1p52) - 0x1p52 - x;
+    if (y > 0.5)
+        y = y + x - 1;
+    else if (y <= -0.5)
+        y = y + x + 1;
+    else
+        y = y + x;
+    if (u.i >> 63)
+        y = -y;
+    return y;
+}
 
 /* called by libunwind */
 int fprintf(FILE *stream, const char *fmt, ...)

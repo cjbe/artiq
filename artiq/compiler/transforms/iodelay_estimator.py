@@ -200,10 +200,14 @@ class IODelayEstimator(algorithm.Visitor):
             self.abort("{} cannot be interleaved".format(kind), node.loc)
         self.current_delay = old_delay
 
-    visit_While  = lambda self, node: self.visit_control_flow("while statement", node)
     visit_If     = lambda self, node: self.visit_control_flow("if statement",    node)
     visit_IfExpT = lambda self, node: self.visit_control_flow("if expression",   node)
     visit_Try    = lambda self, node: self.visit_control_flow("try statement",   node)
+
+    def visit_While(self, node):
+        old_goto, self.current_goto = self.current_goto, None
+        self.visit_control_flow("while statement", node)
+        self.current_goto = old_goto
 
     def visit_Return(self, node):
         self.current_return = node
@@ -228,6 +232,23 @@ class IODelayEstimator(algorithm.Visitor):
                 # since there's no chance that the code will never actually execute
                 # inside a `with` statement after all.
                 self.engine.process(error.cause)
+
+            flow_stmt = None
+            if self.current_goto is not None:
+                flow_stmt = self.current_goto
+            elif self.current_return is not None:
+                flow_stmt = self.current_return
+
+            if flow_stmt is not None:
+                note = diagnostic.Diagnostic("note",
+                    "this '{kind}' statement transfers control out of "
+                    "the 'with parallel:' statement",
+                    {"kind": flow_stmt.keyword_loc.source()},
+                    flow_stmt.loc)
+                diag = diagnostic.Diagnostic("error",
+                    "cannot interleave this 'with parallel:' statement", {},
+                    node.keyword_loc.join(node.colon_loc), notes=[note])
+                self.engine.process(diag)
 
         elif len(node.items) == 1 and types.is_builtin(context_expr.type, "sequential"):
             self.visit(node.body)

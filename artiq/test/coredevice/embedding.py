@@ -1,9 +1,10 @@
 from artiq.language import *
 from artiq.test.hardware_testbench import ExperimentCase
 
+
 class Roundtrip(EnvExperiment):
     def build(self):
-        self.attr_device("core")
+        self.setattr_device("core")
 
     @kernel
     def roundtrip(self, obj, fn):
@@ -39,3 +40,20 @@ class RoundtripTest(ExperimentCase):
     def test_object(self):
         obj = object()
         self.assertRoundtrip(obj)
+
+
+class DefaultArg(EnvExperiment):
+    def build(self):
+        self.setattr_device("core")
+
+    def test(self, foo=42) -> TInt32:
+        return foo
+
+    @kernel
+    def run(self):
+        return self.test()
+
+class DefaultArgTest(ExperimentCase):
+    def test_default_arg(self):
+        exp = self.create(DefaultArg)
+        self.assertEqual(exp.run(), 42)

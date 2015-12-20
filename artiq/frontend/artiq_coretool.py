@@ -1,13 +1,11 @@
 #!/usr/bin/env python3.5
 
 import argparse
+import struct
 
 from artiq.master.databases import DeviceDB
 from artiq.master.worker_db import DeviceManager
-
-
-def to_bytes(string):
-    return bytes(string, encoding="ascii")
+from artiq.coredevice.analyzer import decode_dump, messages_to_vcd
 
 
 def get_argparser():
@@ -19,17 +17,14 @@ def get_argparser():
     subparsers = parser.add_subparsers(dest="action")
     subparsers.required = True
 
-    # Log Read command
     subparsers.add_parser("log",
                           help="read from the core device log ring buffer")
 
-    # Configuration Read command
     p_read = subparsers.add_parser("cfg-read",
                                    help="read key from core device config")
     p_read.add_argument("key", type=str,
                         help="key to be read from core device config")
 
-    # Configuration Write command
     p_write = subparsers.add_parser("cfg-write",
                                     help="write key-value records to core "
                                          "device config")
@@ -43,15 +38,20 @@ def get_argparser():
                          help="key and file whose content to be written to "
                               "core device config")
 
-    # Configuration Delete command
     p_delete = subparsers.add_parser("cfg-delete",
                                      help="delete key from core device config")
     p_delete.add_argument("key", nargs=argparse.REMAINDER,
                           default=[], type=str,
                           help="key to be deleted from core device config")
 
-    # Configuration Erase command
     subparsers.add_parser("cfg-erase", help="erase core device config")
+
+    p_analyzer = subparsers.add_parser("analyzer-dump",
+                                       help="dump analyzer contents")
+    p_analyzer.add_argument("-m", default=False, action="store_true",
+                            help="print raw messages")
+    p_analyzer.add_argument("-f", type=str, default="",
+                            help="format and write contents to VCD file")
 
     return parser
 
@@ -61,10 +61,11 @@ def main():
     device_mgr = DeviceManager(DeviceDB(args.device_db))
     try:
         comm = device_mgr.get("comm")
-        comm.check_ident()
+        if args.action != "analyzer-dump":
+            comm.check_ident()
 
         if args.action == "log":
-          print(comm.get_log(), end='')
+            print(comm.get_log(), end="")
         elif args.action == "cfg-read":
             value = comm.flash_storage_read(args.key)
             if not value:
@@ -81,7 +82,14 @@ def main():
             for key in args.key:
                 comm.flash_storage_remove(key)
         elif args.action == "cfg-erase":
-                comm.flash_storage_erase()
+            comm.flash_storage_erase()
+        elif args.action == "analyzer-dump":
+            messages = decode_dump(comm.get_analyzer_dump())
+            if args.m:
+                for message in messages:
+                    print(message)
+            if args.f:
+                messages_to_vcd(args.f, device_mgr.get_device_db(), messages)
     finally:
         device_mgr.close_devices()
 
