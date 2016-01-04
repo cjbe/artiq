@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python3.5
 
 from setuptools import setup, find_packages
 import sys
@@ -7,8 +7,8 @@ import os
 import versioneer
 
 
-if sys.version_info[:3] < (3, 5, 0):
-    raise Exception("You need Python 3.5.0+")
+if sys.version_info[:3] < (3, 5, 1):
+    raise Exception("You need Python 3.5.1+")
 
 
 requirements = [
@@ -22,7 +22,9 @@ requirements = [
 scripts = [
     "artiq_client=artiq.frontend.artiq_client:main",
     "artiq_compile=artiq.frontend.artiq_compile:main",
-    "artiq_coretool=artiq.frontend.artiq_coretool:main",
+    "artiq_coreanalyzer=artiq.frontend.artiq_coreanalyzer:main",
+    "artiq_coreconfig=artiq.frontend.artiq_coreconfig:main",
+    "artiq_corelog=artiq.frontend.artiq_corelog:main",
     "artiq_ctlmgr=artiq.frontend.artiq_ctlmgr:main",
     "artiq_gui=artiq.frontend.artiq_gui:main",
     "artiq_influxdb=artiq.frontend.artiq_influxdb:main",

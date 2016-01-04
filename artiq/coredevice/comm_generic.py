@@ -5,6 +5,7 @@ from enum import Enum
 from fractions import Fraction
 
 from artiq.language import core as core_language
+from artiq.coredevice import exceptions
 from artiq import __version__ as software_version
 
 
@@ -341,12 +342,14 @@ class CommGeneric:
 
     def _receive_rpc_args(self, object_map, defaults):
         args = []
+        default_arg_num = 0
         while True:
             value = self._receive_rpc_value(object_map)
             if value is self._rpc_sentinel:
                 return args
             elif value is self._rpc_undefined:
-                args.append(defaults[len(args)])
+                args.append(defaults[default_arg_num])
+                default_arg_num += 1
             else:
                 args.append(value)
 
@@ -432,7 +435,11 @@ class CommGeneric:
 
     def _serve_rpc(self, object_map):
         service_id  = self._read_int32()
-        service     = object_map.retrieve(service_id)
+        if service_id == 0:
+            service = lambda obj, attr, value: setattr(obj, attr, value)
+        else:
+            service = object_map.retrieve(service_id)
+
         arguments   = self._receive_rpc_args(object_map, service.__defaults__)
         return_tags = self._read_bytes()
         logger.debug("rpc service: [%d]%r %r -> %s", service_id, service, arguments, return_tags)
@@ -441,43 +448,49 @@ class CommGeneric:
             result = service(*arguments)
             logger.debug("rpc service: %d %r == %r", service_id, arguments, result)
 
-            self._write_header(_H2DMsgType.RPC_REPLY)
-            self._write_bytes(return_tags)
-            self._send_rpc_value(bytearray(return_tags), result, result, service)
-            self._write_flush()
-        except core_language.ARTIQException as exn:
-            logger.debug("rpc service: %d %r ! %r", service_id, arguments, exn)
-
-            self._write_header(_H2DMsgType.RPC_EXCEPTION)
-            self._write_string(exn.name)
-            self._write_string(exn.message)
-            for index in range(3):
-                self._write_int64(exn.param[index])
-
-            self._write_string(exn.filename)
-            self._write_int32(exn.line)
-            self._write_int32(exn.column)
-            self._write_string(exn.function)
-
-            self._write_flush()
+            if service_id != 0:
+                self._write_header(_H2DMsgType.RPC_REPLY)
+                self._write_bytes(return_tags)
+                self._send_rpc_value(bytearray(return_tags), result, result, service)
+                self._write_flush()
         except Exception as exn:
             logger.debug("rpc service: %d %r ! %r", service_id, arguments, exn)
 
             self._write_header(_H2DMsgType.RPC_EXCEPTION)
-            self._write_string(type(exn).__name__)
-            self._write_string(str(exn))
-            for index in range(3):
-                self._write_int64(0)
 
-            (_, (filename, line, function, _), ) = traceback.extract_tb(exn.__traceback__, 2)
-            self._write_string(filename)
-            self._write_int32(line)
-            self._write_int32(-1) # column not known
-            self._write_string(function)
+            if hasattr(exn, 'artiq_exception'):
+                exn = exn.artiq_exception
+                self._write_string(exn.name)
+                self._write_string(exn.message)
+                for index in range(3):
+                    self._write_int64(exn.param[index])
+
+                filename, line, column, function = exn.traceback[-1]
+                self._write_string(filename)
+                self._write_int32(line)
+                self._write_int32(column)
+                self._write_string(function)
+            else:
+                exn_type = type(exn)
+                if exn_type in (ZeroDivisionError, ValueError, IndexError):
+                    self._write_string("0:{}".format(exn_type.__name__))
+                else:
+                    exn_id = object_map.store(exn_type)
+                    self._write_string("{}:{}.{}".format(exn_id,
+                                                         exn_type.__module__, exn_type.__qualname__))
+                self._write_string(str(exn))
+                for index in range(3):
+                    self._write_int64(0)
+
+                (_, (filename, line, function, _), ) = traceback.extract_tb(exn.__traceback__, 2)
+                self._write_string(filename)
+                self._write_int32(line)
+                self._write_int32(-1) # column not known
+                self._write_string(function)
 
             self._write_flush()
 
-    def _serve_exception(self, symbolizer):
+    def _serve_exception(self, object_map, symbolizer):
         name      = self._read_string()
         message   = self._read_string()
         params    = [self._read_int64() for _ in range(3)]
@@ -491,7 +504,17 @@ class CommGeneric:
 
         traceback = list(reversed(symbolizer(backtrace))) + \
                     [(filename, line, column, function, None)]
-        raise core_language.ARTIQException(name, message, params, traceback)
+        exception = core_language.ARTIQException(name, message, params, traceback)
+
+        if hasattr(exceptions, exception.name):
+            python_exn_type = getattr(exceptions, exception.name)
+        else:
+            assert exception.id != 0
+            python_exn_type = object_map.retrieve(exception.id)
+
+        python_exn = python_exn_type(message)
+        python_exn.artiq_exception = exception
+        raise python_exn
 
     def serve(self, object_map, symbolizer):
         while True:
@@ -499,7 +522,7 @@ class CommGeneric:
             if self._read_type == _D2HMsgType.RPC_REQUEST:
                 self._serve_rpc(object_map)
             elif self._read_type == _D2HMsgType.KERNEL_EXCEPTION:
-                self._serve_exception(symbolizer)
+                self._serve_exception(object_map, symbolizer)
             else:
                 self._read_expect(_D2HMsgType.KERNEL_FINISHED)
                 return

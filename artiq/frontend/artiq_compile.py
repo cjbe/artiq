@@ -1,6 +1,6 @@
 #!/usr/bin/env python3.5
 
-import sys, logging, argparse
+import os, sys, logging, argparse
 
 from artiq.master.databases import DeviceDB, DatasetDB
 from artiq.master.worker_db import DeviceManager, DatasetManager
@@ -54,7 +54,6 @@ def main():
             core.compile(exp.run, [exp_inst], {},
                          with_attr_writeback=False)
     except CompileError as error:
-        print(error.render_string(colored=True), file=sys.stderr)
         return
     finally:
         device_mgr.close_devices()

@@ -5,16 +5,14 @@ from math import sqrt
 
 from artiq.language import *
 from artiq.test.hardware_testbench import ExperimentCase
-from artiq.coredevice.exceptions import RTIOUnderflow, RTIOSequenceError
+from artiq.coredevice.exceptions import (RTIOUnderflow, RTIOSequenceError,
+                                         RTIOCollisionError)
 
 
 class RTT(EnvExperiment):
     def build(self):
         self.setattr_device("core")
         self.setattr_device("ttl_inout")
-
-    def set_rtt(self, rtt):
-        self.set_dataset("rtt", rtt)
 
     @kernel
     def run(self):
@@ -37,9 +35,6 @@ class Loopback(EnvExperiment):
         self.setattr_device("loop_in")
         self.setattr_device("loop_out")
 
-    def set_rtt(self, rtt):
-        self.set_dataset("rtt", rtt)
-
     @kernel
     def run(self):
         self.loop_in.input()
@@ -59,9 +54,6 @@ class ClockGeneratorLoopback(EnvExperiment):
         self.setattr_device("loop_clock_in")
         self.setattr_device("loop_clock_out")
 
-    def set_count(self, count):
-        self.set_dataset("count", count)
-
     @kernel
     def run(self):
         self.loop_clock_in.input()
@@ -79,9 +71,6 @@ class PulseRate(EnvExperiment):
     def build(self):
         self.setattr_device("core")
         self.setattr_device("ttl_out")
-
-    def set_pulse_rate(self, pulse_rate):
-        self.set_dataset("pulse_rate", pulse_rate)
 
     @kernel
     def run(self):
@@ -235,7 +224,7 @@ class CoredeviceTest(ExperimentCase):
             self.execute(SequenceError)
 
     def test_collision_error(self):
-        with self.assertRaises(runtime_exceptions.RTIOCollisionError):
+        with self.assertRaises(RTIOCollisionError):
             self.execute(CollisionError)
 
     def test_watchdog(self):
@@ -251,7 +240,7 @@ class CoredeviceTest(ExperimentCase):
         dead_time = mu_to_seconds(t2 - t1, self.device_mgr.get("core"))
         print(dead_time)
         self.assertGreater(dead_time, 1*ms)
-        self.assertLess(dead_time, 500*ms)
+        self.assertLess(dead_time, 2500*ms)
 
     def test_handover(self):
         self.execute(Handover)

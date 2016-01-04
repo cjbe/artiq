@@ -41,11 +41,14 @@ class ObjectMap:
         return any(filter(lambda x: inspect.isfunction(x) or inspect.ismethod(x),
                           self.forward_map.values()))
 
+    def __iter__(self):
+        return iter(self.forward_map.keys())
+
 class ASTSynthesizer:
-    def __init__(self, type_map, value_map, quote_function=None, expanded_from=None):
+    def __init__(self, object_map, type_map, value_map, quote_function=None, expanded_from=None):
         self.source = ""
         self.source_buffer = source.Buffer(self.source, "<synthesized>")
-        self.type_map, self.value_map = type_map, value_map
+        self.object_map, self.type_map, self.value_map = object_map, type_map, value_map
         self.quote_function = quote_function
         self.expanded_from = expanded_from
 
@@ -120,11 +123,16 @@ class ASTSynthesizer:
             if typ in self.type_map:
                 instance_type, constructor_type = self.type_map[typ]
             else:
-                instance_type = types.TInstance("{}.{}".format(typ.__module__, typ.__qualname__),
-                                                OrderedDict())
-                instance_type.attributes['__objectid__'] = builtins.TInt32()
+                if issubclass(typ, BaseException):
+                    instance_type = builtins.TException("{}.{}".format(typ.__module__, typ.__qualname__),
+                                                        id=self.object_map.store(typ))
+                    constructor_type = types.TExceptionConstructor(instance_type)
+                else:
+                    instance_type = types.TInstance("{}.{}".format(typ.__module__, typ.__qualname__),
+                                                    OrderedDict())
+                    instance_type.attributes['__objectid__'] = builtins.TInt32()
 
-                constructor_type = types.TConstructor(instance_type)
+                    constructor_type = types.TConstructor(instance_type)
                 constructor_type.attributes['__objectid__'] = builtins.TInt32()
                 instance_type.constructor = constructor_type
 
@@ -183,7 +191,7 @@ class ASTSynthesizer:
                       for kw, value, (arg_loc, equals_loc)
                        in zip(kwargs, kwarg_nodes, kwarg_locs)],
             starargs=None, kwargs=None,
-            type=types.TVar(), iodelay=None,
+            type=types.TVar(), iodelay=None, arg_exprs={},
             begin_loc=begin_loc, end_loc=end_loc, star_loc=None, dstar_loc=None,
             loc=name_loc.join(end_loc))
 
@@ -191,7 +199,7 @@ class ASTSynthesizer:
             node = asttyped.CallT(
                 func=callback_node,
                 args=[node], keywords=[], starargs=None, kwargs=None,
-                type=builtins.TNone(), iodelay=None,
+                type=builtins.TNone(), iodelay=None, arg_exprs={},
                 begin_loc=cb_begin_loc, end_loc=cb_end_loc, star_loc=None, dstar_loc=None,
                 loc=callback_node.loc.join(cb_end_loc))
 
@@ -278,10 +286,7 @@ class StitchingInferencer(Inferencer):
         self.value_map = value_map
         self.quote = quote
 
-    def visit_AttributeT(self, node):
-        self.generic_visit(node)
-        object_type = node.value.type.find()
-
+    def _unify_attribute(self, result_type, value_node, attr_name, attr_loc, loc):
         # The inferencer can only observe types, not values; however,
         # when we work with host objects, we have to get the values
         # somewhere, since host interpreter does not have types.
@@ -296,28 +301,31 @@ class StitchingInferencer(Inferencer):
         #   * a previously unknown attribute is encountered,
         #   * a previously unknown host object is encountered;
         # which would be the optimal solution.
+
+        object_type = value_node.type.find()
         for object_value, object_loc in self.value_map[object_type]:
-            if not hasattr(object_value, node.attr):
-                if node.attr.startswith('_'):
+            attr_value_type = None
+            if not hasattr(object_value, attr_name):
+                if attr_name.startswith('_'):
                     names = set(filter(lambda name: not name.startswith('_'),
                                        dir(object_value)))
                 else:
                     names = set(dir(object_value))
-                suggestion = suggest_identifier(node.attr, names)
+                suggestion = suggest_identifier(attr_name, names)
 
                 note = diagnostic.Diagnostic("note",
                     "attribute accessed here", {},
-                    node.loc)
+                    loc)
                 if suggestion is not None:
                     diag = diagnostic.Diagnostic("error",
                         "host object does not have an attribute '{attr}'; "
                         "did you mean '{suggestion}'?",
-                        {"attr": node.attr, "suggestion": suggestion},
+                        {"attr": attr_name, "suggestion": suggestion},
                         object_loc, notes=[note])
                 else:
                     diag = diagnostic.Diagnostic("error",
                         "host object does not have an attribute '{attr}'",
-                        {"attr": node.attr},
+                        {"attr": attr_name},
                         object_loc, notes=[note])
                 self.engine.process(diag)
                 return
@@ -327,9 +335,8 @@ class StitchingInferencer(Inferencer):
             # overhead (i.e. synthesizing a source buffer), but has the advantage
             # of having the host-to-ARTIQ mapping code in only one place and
             # also immediately getting proper diagnostics on type errors.
-            attr_value = getattr(object_value, node.attr)
-            if (inspect.ismethod(attr_value) and hasattr(attr_value.__func__, 'artiq_embedded')
-                    and types.is_instance(object_type)):
+            attr_value = getattr(object_value, attr_name)
+            if inspect.ismethod(attr_value) and types.is_instance(object_type):
                 # In cases like:
                 #     class c:
                 #         @kernel
@@ -337,10 +344,10 @@ class StitchingInferencer(Inferencer):
                 # we want f to be defined on the class, not on the instance.
                 attributes = object_type.constructor.attributes
                 attr_value = attr_value.__func__
+                is_method  = True
             else:
                 attributes = object_type.attributes
-
-            attr_value_type = None
+                is_method  = False
 
             if isinstance(attr_value, list):
                 # Fast path for lists of scalars.
@@ -378,8 +385,8 @@ class StitchingInferencer(Inferencer):
                 def proxy_diagnostic(diag):
                     note = diagnostic.Diagnostic("note",
                         "while inferring a type for an attribute '{attr}' of a host object",
-                        {"attr": node.attr},
-                        node.loc)
+                        {"attr": attr_name},
+                        loc)
                     diag.notes.append(note)
 
                     self.engine.process(diag)
@@ -390,23 +397,26 @@ class StitchingInferencer(Inferencer):
                 IntMonomorphizer(engine=proxy_engine).visit(ast)
                 attr_value_type = ast.type
 
-            if node.attr not in attributes:
+            if attr_name not in attributes:
                 # We just figured out what the type should be. Add it.
-                attributes[node.attr] = attr_value_type
-            elif attributes[node.attr] != attr_value_type and not types.is_rpc_function(attr_value_type):
+                attributes[attr_name] = attr_value_type
+            elif not types.is_rpc_function(attr_value_type):
                 # Does this conflict with an earlier guess?
                 # RPC function types are exempt because RPCs are dynamically typed.
-                printer = types.TypePrinter()
-                diag = diagnostic.Diagnostic("error",
-                    "host object has an attribute '{attr}' of type {typea}, which is"
-                    " different from previously inferred type {typeb} for the same attribute",
-                    {"typea": printer.name(attr_value_type),
-                     "typeb": printer.name(attributes[node.attr]),
-                     "attr": node.attr},
-                    object_loc)
-                self.engine.process(diag)
+                try:
+                    attributes[attr_name].unify(attr_value_type)
+                except types.UnificationError as e:
+                    printer = types.TypePrinter()
+                    diag = diagnostic.Diagnostic("error",
+                        "host object has an attribute '{attr}' of type {typea}, which is"
+                        " different from previously inferred type {typeb} for the same attribute",
+                        {"typea": printer.name(attr_value_type),
+                         "typeb": printer.name(attributes[attr_name]),
+                         "attr": attr_name},
+                        object_loc)
+                    self.engine.process(diag)
 
-        super().visit_AttributeT(node)
+        super()._unify_attribute(result_type, value_node, attr_name, attr_loc, loc)
 
 class TypedtreeHasher(algorithm.Visitor):
     def generic_visit(self, node):
@@ -510,6 +520,7 @@ class Stitcher:
 
     def _synthesizer(self, expanded_from=None):
         return ASTSynthesizer(expanded_from=expanded_from,
+                              object_map=self.object_map,
                               type_map=self.type_map,
                               value_map=self.value_map,
                               quote_function=self._quote_function)

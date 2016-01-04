@@ -20,6 +20,7 @@
 double round(double x);
 
 void ksupport_abort(void);
+static void attribute_writeback(void *);
 
 int64_t now;
 
@@ -92,6 +93,7 @@ static const struct symbol runtime_exports[] = {
     {"__artiq_personality", &__artiq_personality},
     {"__artiq_raise", &__artiq_raise},
     {"__artiq_reraise", &__artiq_reraise},
+    {"strcmp", &strcmp},
     {"abort", &ksupport_abort},
 
     /* proxified syscalls */
@@ -107,6 +109,7 @@ static const struct symbol runtime_exports[] = {
 
     /* direct syscalls */
     {"rtio_get_counter", &rtio_get_counter},
+    {"rtio_log", &rtio_log},
 
     {"ttl_set_o", &ttl_set_o},
     {"ttl_set_oe", &ttl_set_oe},
@@ -167,13 +170,15 @@ int fprintf(FILE *stream, const char *fmt, ...)
 }
 
 /* called by libunwind */
-int dladdr (const void *address, Dl_info *info) {
+int dladdr (const void *address, Dl_info *info)
+{
     /* we don't try to resolve names */
     return 0;
 }
 
 /* called by libunwind */
-int dl_iterate_phdr (int (*callback) (struct dl_phdr_info *, size_t, void *), void *data) {
+int dl_iterate_phdr (int (*callback)(struct dl_phdr_info *, size_t, void *), void *data)
+{
     Elf32_Ehdr *ehdr;
     struct dl_phdr_info phdr_info;
     int retval;
@@ -200,7 +205,8 @@ int dl_iterate_phdr (int (*callback) (struct dl_phdr_info *, size_t, void *), vo
     return retval;
 }
 
-static Elf32_Addr resolve_runtime_export(const char *name) {
+static Elf32_Addr resolve_runtime_export(const char *name)
+{
     const struct symbol *sym = runtime_exports;
     while(sym->name) {
         if(!strcmp(sym->name, name))
@@ -241,16 +247,23 @@ int main(void)
             mailbox_send(&load_reply);
             while(1);
         }
+
+        void *__bss_start = dyld_lookup("__bss_start", request->library_info);
+        void *_end = dyld_lookup("_end", request->library_info);
+        memset(__bss_start, 0, _end - __bss_start);
     }
 
     if(request->run_kernel) {
-        void (*kernel_init)() = request->library_info->init;
+        void (*kernel_run)() = request->library_info->init;
+        void *typeinfo = dyld_lookup("typeinfo", request->library_info);
 
         mailbox_send_and_wait(&load_reply);
 
         now = now_init();
-        kernel_init();
+        kernel_run();
         now_save(now);
+
+        attribute_writeback(typeinfo);
 
         struct msg_base finished_reply;
         finished_reply.type = MESSAGE_TYPE_FINISHED;
@@ -352,7 +365,10 @@ void send_rpc(int service, const char *tag, ...)
 {
     struct msg_rpc_send request;
 
-    request.type = MESSAGE_TYPE_RPC_SEND;
+    if(service != 0)
+        request.type = MESSAGE_TYPE_RPC_SEND;
+    else
+        request.type = MESSAGE_TYPE_RPC_BATCH;
     request.service = service;
     request.tag = tag;
     va_start(request.args, tag);
@@ -385,6 +401,46 @@ int recv_rpc(void *slot) {
         int alloc_size = reply->alloc_size;
         mailbox_acknowledge();
         return alloc_size;
+    }
+}
+
+struct attr_desc {
+    uint32_t size;
+    const char *tag;
+    const char *name;
+};
+
+struct type_desc {
+    struct attr_desc **attributes;
+    void **objects;
+};
+
+void attribute_writeback(void *utypes) {
+    struct type_desc **types = (struct type_desc **)utypes;
+    while(*types) {
+        struct type_desc *type = *types++;
+
+        size_t attr_count = 0;
+        for(struct attr_desc **attr = type->attributes; *attr; attr++)
+            attr_count++;
+
+        void **objects = type->objects;
+        while(*objects) {
+            void *object = *objects++;
+
+            size_t offset = 0;
+            struct attr_desc **attrs = type->attributes;
+            while(*attrs) {
+                struct attr_desc *attr = *attrs++;
+
+                if(attr->tag) {
+                    uintptr_t value = (uintptr_t)object + offset;
+                    send_rpc(0, attr->tag, &object, &attr->name, value);
+                }
+
+                offset += attr->size;
+            }
+        }
     }
 }
 

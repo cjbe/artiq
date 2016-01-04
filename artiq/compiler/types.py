@@ -234,8 +234,8 @@ class TFunction(Type):
     """
 
     attributes = OrderedDict([
-        ('__code__',    _TPointer()),
         ('__closure__', _TPointer()),
+        ('__code__',    _TPointer()),
     ])
 
     def __init__(self, args, optargs, ret):
@@ -247,6 +247,9 @@ class TFunction(Type):
 
     def arity(self):
         return len(self.args) + len(self.optargs)
+
+    def arg_names(self):
+        return list(self.args.keys()) + list(self.optargs.keys())
 
     def find(self):
         return self
@@ -575,14 +578,17 @@ def is_var(typ):
 
 def is_mono(typ, name=None, **params):
     typ = typ.find()
+
+    if not isinstance(typ, TMono):
+        return False
+
     params_match = True
     for param in params:
         if param not in typ.params:
             return False
         params_match = params_match and \
             typ.params[param].find() == params[param].find()
-    return isinstance(typ, TMono) and \
-        (name is None or (typ.name == name and params_match))
+    return name is None or (typ.name == name and params_match)
 
 def is_polymorphic(typ):
     return typ.fold(False, lambda accum, typ: accum or is_var(typ))
@@ -721,9 +727,9 @@ class TypePrinter(object):
                 signature += " " + self.name(delay)
 
             if isinstance(typ, TRPCFunction):
-                return "rpc({}) {}".format(typ.service, signature)
+                return "[rpc #{}]{}".format(typ.service, signature)
             if isinstance(typ, TCFunction):
-                return "ffi({}) {}".format(repr(typ.name), signature)
+                return "[ffi {}]{}".format(repr(typ.name), signature)
             elif isinstance(typ, TFunction):
                 return signature
         elif isinstance(typ, TBuiltinFunction):

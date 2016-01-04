@@ -426,7 +426,7 @@ class ASTTypedRewriter(algorithm.Transformer):
 
     def visit_Call(self, node):
         node = self.generic_visit(node)
-        node = asttyped.CallT(type=types.TVar(), iodelay=None,
+        node = asttyped.CallT(type=types.TVar(), iodelay=None, arg_exprs={},
                               func=node.func, args=node.args, keywords=node.keywords,
                               starargs=node.starargs, kwargs=node.kwargs,
                               star_loc=node.star_loc, dstar_loc=node.dstar_loc,
@@ -478,6 +478,14 @@ class ASTTypedRewriter(algorithm.Transformer):
             trip_count=None, trip_interval=None,
             keyword_loc=node.keyword_loc, in_loc=node.in_loc, for_colon_loc=node.for_colon_loc,
             else_loc=node.else_loc, else_colon_loc=node.else_colon_loc)
+        return node
+
+    def visit_withitem(self, node):
+        node = self.generic_visit(node)
+        node = asttyped.withitemT(
+            context_expr=node.context_expr, optional_vars=node.optional_vars,
+            enter_type=types.TVar(), exit_type=types.TVar(),
+            as_loc=node.as_loc, loc=node.loc)
         return node
 
     # Unsupported visitors

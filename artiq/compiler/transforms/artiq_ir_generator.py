@@ -66,6 +66,10 @@ class ARTIQIRGenerator(algorithm.Visitor):
         the basic block to which ``return`` will transfer control
     :ivar unwind_target: (:class:`ir.BasicBlock` or None)
         the basic block to which unwinding will transfer control
+    :ivar final_branch: (function (target: :class:`ir.BasicBlock`, block: :class:`ir.BasicBlock)
+                         or None)
+        the function that appends to ``block`` a jump through the ``finally`` statement
+        to ``target``
 
     There is, additionally, some global state that is used to translate
     the results of analyses on AST level to IR level:
@@ -102,6 +106,7 @@ class ARTIQIRGenerator(algorithm.Visitor):
         self.continue_target = None
         self.return_target = None
         self.unwind_target = None
+        self.final_branch = None
         self.function_map = dict()
         self.variable_map = dict()
         self.method_map = defaultdict(lambda: [])
@@ -150,14 +155,21 @@ class ARTIQIRGenerator(algorithm.Visitor):
         else:
             insn.drop_references()
 
+    def warn_unreachable(self, node):
+        diag = diagnostic.Diagnostic("warning",
+            "unreachable code", {},
+            node.loc.begin())
+        self.engine.process(diag)
+
     # Visitors
 
     def visit(self, obj):
         if isinstance(obj, list):
             for elt in obj:
-                self.visit(elt)
                 if self.current_block.is_terminated():
+                    self.warn_unreachable(elt)
                     break
+                self.visit(elt)
         elif isinstance(obj, ast.AST):
             try:
                 old_loc, self.current_loc = self.current_loc, _extract_loc(obj)
@@ -417,6 +429,7 @@ class ARTIQIRGenerator(algorithm.Visitor):
             self.current_block = head
             old_continue, self.continue_target = self.continue_target, head
             cond = self.visit(node.test)
+            post_head = self.current_block
 
             break_block = self.add_block("while.break")
             old_break, self.break_target = self.break_target, break_block
@@ -441,7 +454,7 @@ class ARTIQIRGenerator(algorithm.Visitor):
             else:
                 else_tail = tail
 
-            head.append(ir.BranchIf(cond, body, else_tail))
+            post_head.append(ir.BranchIf(cond, body, else_tail))
             if not post_body.is_terminated():
                 post_body.append(ir.Branch(head))
             break_block.append(ir.Branch(tail))
@@ -526,9 +539,7 @@ class ARTIQIRGenerator(algorithm.Visitor):
                 else_tail = tail
 
             if node.trip_count is not None:
-                substs = {var_name: self.current_args[var_name]
-                          for var_name in node.trip_count.free_vars()}
-                head.append(ir.Loop(node.trip_count, substs, phi, cond, body, else_tail))
+                head.append(ir.Loop(node.trip_count, phi, cond, body, else_tail))
             else:
                 head.append(ir.BranchIf(cond, body, else_tail))
             if not post_body.is_terminated():
@@ -545,6 +556,11 @@ class ARTIQIRGenerator(algorithm.Visitor):
         self.append(ir.Branch(self.continue_target))
 
     def raise_exn(self, exn, loc=None):
+        if self.final_branch is not None:
+            raise_proxy = self.add_block("try.raise")
+            self.final_branch(raise_proxy, self.current_block)
+            self.current_block = raise_proxy
+
         if exn is not None:
             if loc is None:
                 loc = self.current_loc
@@ -582,29 +598,32 @@ class ARTIQIRGenerator(algorithm.Visitor):
                                              vars={ "$k": ir.TBasicBlock() })
             final_state    = self.append(ir.Alloc([], final_env_type))
             final_targets  = []
+            final_paths    = []
+
+            def final_branch(target, block):
+                block.append(ir.SetLocal(final_state, "$k", target))
+                final_targets.append(target)
+                final_paths.append(block)
 
             if self.break_target is not None:
                 break_proxy = self.add_block("try.break")
                 old_break, self.break_target = self.break_target, break_proxy
-                break_proxy.append(ir.SetLocal(final_state, "$k", old_break))
-                final_targets.append(old_break)
+                final_branch(old_break, break_proxy)
+
             if self.continue_target is not None:
                 continue_proxy = self.add_block("try.continue")
                 old_continue, self.continue_target = self.continue_target, continue_proxy
-                continue_proxy.append(ir.SetLocal(final_state, "$k", old_continue))
-                final_targets.append(old_continue)
+                final_branch(old_continue, continue_proxy)
 
             return_proxy = self.add_block("try.return")
             old_return, self.return_target = self.return_target, return_proxy
             if old_return is not None:
-                return_proxy.append(ir.SetLocal(final_state, "$k", old_return))
-                final_targets.append(old_return)
+                final_branch(old_return, return_proxy)
             else:
                 return_action = self.add_block("try.doreturn")
                 value = return_action.append(ir.GetLocal(self.current_private_env, "$return"))
                 return_action.append(ir.Return(value))
-                return_proxy.append(ir.SetLocal(final_state, "$k", return_action))
-                final_targets.append(return_action)
+                final_branch(return_action, return_proxy)
 
         body = self.add_block("try.body")
         self.append(ir.Branch(body))
@@ -616,7 +635,10 @@ class ARTIQIRGenerator(algorithm.Visitor):
         finally:
             self.unwind_target = old_unwind
 
-        self.visit(node.orelse)
+        if not self.current_block.is_terminated():
+            self.visit(node.orelse)
+        elif any(node.orelse):
+            self.warn_unreachable(node.orelse[0])
         body = self.current_block
 
         if any(node.finalbody):
@@ -625,6 +647,8 @@ class ARTIQIRGenerator(algorithm.Visitor):
             if self.continue_target:
                 self.continue_target = old_continue
             self.return_target = old_return
+
+            old_final_branch, self.final_branch = self.final_branch, final_branch
 
         cleanup = self.add_block('handler.cleanup')
         landingpad = dispatcher.append(ir.LandingPad(cleanup))
@@ -650,6 +674,8 @@ class ARTIQIRGenerator(algorithm.Visitor):
             handlers.append((handler, post_handler))
 
         if any(node.finalbody):
+            self.final_branch = old_final_branch
+
             finalizer = self.add_block("finally")
             self.current_block = finalizer
 
@@ -664,11 +690,8 @@ class ARTIQIRGenerator(algorithm.Visitor):
             final_targets.append(tail)
             final_targets.append(reraise)
 
-            if self.break_target:
-                break_proxy.append(ir.Branch(finalizer))
-            if self.continue_target:
-                continue_proxy.append(ir.Branch(finalizer))
-            return_proxy.append(ir.Branch(finalizer))
+            for block in final_paths:
+                block.append(ir.Branch(finalizer))
 
             if not body.is_terminated():
                 body.append(ir.SetLocal(final_state, "$k", tail))
@@ -852,8 +875,11 @@ class ARTIQIRGenerator(algorithm.Visitor):
         if self.current_assign is None:
             return self.append(ir.GetAttr(obj, node.attr,
                                           name="{}.{}".format(_readable_name(obj), node.attr)))
+        elif types.is_rpc_function(self.current_assign.type):
+            # RPC functions are just type-level markers
+            return self.append(ir.Builtin("nop", [], builtins.TNone()))
         else:
-            self.append(ir.SetAttr(obj, node.attr, self.current_assign))
+            return self.append(ir.SetAttr(obj, node.attr, self.current_assign))
 
     def _map_index(self, length, index, one_past_the_end=False, loc=None):
         lt_0          = self.append(ir.Compare(ast.Lt(loc=None),
@@ -1433,18 +1459,20 @@ class ARTIQIRGenerator(algorithm.Visitor):
 
     # Keep this function with builtins.TException.attributes.
     def alloc_exn(self, typ, message=None, param0=None, param1=None, param2=None):
+        typ = typ.find()
         attributes = [
-            ir.Constant(typ.find().name, ir.TExceptionTypeInfo()),  # typeinfo
-            ir.Constant("<not thrown>", builtins.TStr()),           # file
-            ir.Constant(0, builtins.TInt32()),                      # line
-            ir.Constant(0, builtins.TInt32()),                      # column
-            ir.Constant("<not thrown>", builtins.TStr()),           # function
+            ir.Constant("{}:{}".format(typ.id, typ.name),
+                        ir.TExceptionTypeInfo()),         # typeinfo
+            ir.Constant("<not thrown>", builtins.TStr()), # file
+            ir.Constant(0, builtins.TInt32()),            # line
+            ir.Constant(0, builtins.TInt32()),            # column
+            ir.Constant("<not thrown>", builtins.TStr()), # function
         ]
 
         if message is None:
-            attributes.append(ir.Constant(typ.find().name, builtins.TStr()))
+            attributes.append(ir.Constant(typ.name, builtins.TStr()))
         else:
-            attributes.append(message)                              # message
+            attributes.append(message)                    # message
 
         param_type = builtins.TInt64()
         for param in [param0, param1, param2]:
@@ -1453,7 +1481,7 @@ class ARTIQIRGenerator(algorithm.Visitor):
             else:
                 if param.type != param_type:
                     param = self.append(ir.Coerce(param, param_type))
-                attributes.append(param)                            # paramN, N=0:2
+                attributes.append(param)                  # paramN, N=0:2
 
         return self.append(ir.Alloc(attributes, typ))
 
@@ -1626,7 +1654,7 @@ class ARTIQIRGenerator(algorithm.Visitor):
 
             for index, arg_node in enumerate(node.args):
                 arg = self.visit(arg_node)
-                if index < len(fn_typ.args):
+                if index + offset < len(fn_typ.args):
                     args[index + offset] = arg
                 else:
                     args[index + offset] = self.append(ir.Alloc([arg], ir.TOption(arg.type)))
@@ -1659,10 +1687,11 @@ class ARTIQIRGenerator(algorithm.Visitor):
             assert None not in args
 
             if self.unwind_target is None:
-                insn = self.append(ir.Call(func, args))
+                insn = self.append(ir.Call(func, args, node.arg_exprs))
             else:
                 after_invoke = self.add_block()
-                insn = self.append(ir.Invoke(func, args, after_invoke, self.unwind_target))
+                insn = self.append(ir.Invoke(func, args, node.arg_exprs,
+                                             after_invoke, self.unwind_target))
                 self.current_block = after_invoke
 
             method_key = None
@@ -1672,9 +1701,7 @@ class ARTIQIRGenerator(algorithm.Visitor):
 
         if node.iodelay is not None and not iodelay.is_const(node.iodelay, 0):
             after_delay = self.add_block()
-            substs = {var_name: self.current_args[var_name]
-                      for var_name in node.iodelay.free_vars()}
-            self.append(ir.Delay(node.iodelay, substs, insn, after_delay))
+            self.append(ir.Delay(node.iodelay, insn, after_delay))
             self.current_block = after_delay
 
         return insn

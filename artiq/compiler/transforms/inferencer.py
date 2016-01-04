@@ -88,9 +88,14 @@ class Inferencer(algorithm.Visitor):
 
     def visit_AttributeT(self, node):
         self.generic_visit(node)
-        object_type = node.value.type.find()
+        self._unify_attribute(result_type=node.type, value_node=node.value,
+                              attr_name=node.attr, attr_loc=node.attr_loc,
+                              loc=node.loc)
+
+    def _unify_attribute(self, result_type, value_node, attr_name, attr_loc, loc):
+        object_type = value_node.type.find()
         if not types.is_var(object_type):
-            if node.attr in object_type.attributes:
+            if attr_name in object_type.attributes:
                 def makenotes(printer, typea, typeb, loca, locb):
                     return [
                         diagnostic.Diagnostic("note",
@@ -100,18 +105,18 @@ class Inferencer(algorithm.Visitor):
                         diagnostic.Diagnostic("note",
                             "expression of type {typeb}",
                             {"typeb": printer.name(object_type)},
-                            node.value.loc)
+                            value_node.loc)
                     ]
 
-                attr_type = object_type.attributes[node.attr]
+                attr_type = object_type.attributes[attr_name]
                 if types.is_rpc_function(attr_type):
                     attr_type = types.instantiate(attr_type)
 
-                self._unify(node.type, attr_type, node.loc, None,
-                            makenotes=makenotes, when=" for attribute '{}'".format(node.attr))
+                self._unify(result_type, attr_type, loc, None,
+                            makenotes=makenotes, when=" for attribute '{}'".format(attr_name))
             elif types.is_instance(object_type) and \
-                    node.attr in object_type.constructor.attributes:
-                attr_type = object_type.constructor.attributes[node.attr].find()
+                    attr_name in object_type.constructor.attributes:
+                attr_type = object_type.constructor.attributes[attr_name].find()
                 if types.is_rpc_function(attr_type):
                     attr_type = types.instantiate(attr_type)
 
@@ -120,49 +125,55 @@ class Inferencer(algorithm.Visitor):
                     if len(attr_type.args) < 1:
                         diag = diagnostic.Diagnostic("error",
                             "function '{attr}{type}' of class '{class}' cannot accept a self argument",
-                            {"attr": node.attr, "type": types.TypePrinter().name(attr_type),
+                            {"attr": attr_name, "type": types.TypePrinter().name(attr_type),
                              "class": object_type.name},
-                            node.loc)
+                            loc)
                         self.engine.process(diag)
                         return
                     else:
                         def makenotes(printer, typea, typeb, loca, locb):
+                            if attr_loc is None:
+                                msgb = "reference to an instance with a method '{attr}{typeb}'"
+                            else:
+                                msgb = "reference to a method '{attr}{typeb}'"
+
                             return [
                                 diagnostic.Diagnostic("note",
                                     "expression of type {typea}",
                                     {"typea": printer.name(typea)},
                                     loca),
                                 diagnostic.Diagnostic("note",
-                                    "reference to a class function of type {typeb}",
-                                    {"typeb": printer.name(attr_type)},
+                                    msgb,
+                                    {"attr": attr_name,
+                                     "typeb": printer.name(attr_type)},
                                     locb)
                             ]
 
                         self._unify(object_type, list(attr_type.args.values())[0],
-                                    node.value.loc, node.loc,
+                                    value_node.loc, loc,
                                     makenotes=makenotes,
                                     when=" while inferring the type for self argument")
 
                     attr_type = types.TMethod(object_type, attr_type)
 
                 if not types.is_var(attr_type):
-                    self._unify(node.type, attr_type,
-                                node.loc, None)
+                    self._unify(result_type, attr_type,
+                                loc, None)
             else:
-                if node.attr_loc.source_buffer == node.value.loc.source_buffer:
-                    highlights, notes = [node.value.loc], []
+                if attr_loc.source_buffer == value_node.loc.source_buffer:
+                    highlights, notes = [value_node.loc], []
                 else:
                     # This happens when the object being accessed is embedded
                     # from the host program.
                     note = diagnostic.Diagnostic("note",
                         "object being accessed", {},
-                        node.value.loc)
+                        value_node.loc)
                     highlights, notes = [], [note]
 
                 diag = diagnostic.Diagnostic("error",
                     "type {type} does not have an attribute '{attr}'",
-                    {"type": types.TypePrinter().name(object_type), "attr": node.attr},
-                    node.attr_loc, highlights, notes)
+                    {"type": types.TypePrinter().name(object_type), "attr": attr_name},
+                    attr_loc, highlights, notes)
                 self.engine.process(diag)
 
     def _unify_iterable(self, element, collection):
@@ -348,6 +359,10 @@ class Inferencer(algorithm.Visitor):
                     pred, kind = builtins.is_list, "list"
                 else:
                     assert False
+
+                if types.is_var(other.type):
+                    return
+
                 if not pred(other.type):
                     printer = types.TypePrinter()
                     note1 = diagnostic.Diagnostic("note",
@@ -955,23 +970,116 @@ class Inferencer(algorithm.Visitor):
                 node.keyword_loc)
             self.engine.process(diag)
 
-    def visit_withitem(self, node):
+    def visit_withitemT(self, node):
         self.generic_visit(node)
 
         typ = node.context_expr.type
-        if not (types.is_builtin(typ, "parallel") or
-                types.is_builtin(typ, "sequential") or
+        if (types.is_builtin(typ, "parallel") or types.is_builtin(typ, "sequential") or
                 (isinstance(node.context_expr, asttyped.CallT) and
                  types.is_builtin(node.context_expr.func.type, "watchdog"))):
+            # builtin context managers
+            if node.optional_vars is not None:
+                self._unify(node.optional_vars.type, builtins.TNone(),
+                            node.optional_vars.loc, None)
+        elif types.is_instance(typ) or types.is_constructor(typ):
+            # user-defined context managers
+            self._unify_attribute(result_type=node.enter_type, value_node=node.context_expr,
+                                  attr_name='__enter__', attr_loc=None, loc=node.loc)
+            self._unify_attribute(result_type=node.exit_type, value_node=node.context_expr,
+                                  attr_name='__exit__', attr_loc=None, loc=node.loc)
+
+            printer = types.TypePrinter()
+
+            def check_callback(attr_name, typ, arity):
+                if types.is_var(typ):
+                    return
+
+                if not (types.is_method(typ) or types.is_function(typ)):
+                    diag = diagnostic.Diagnostic("error",
+                        "attribute '{attr}' of type {manager_type} must be a function",
+                        {"attr": attr_name,
+                         "manager_type": printer.name(node.context_expr.type)},
+                        node.context_expr.loc)
+                    self.engine.process(diag)
+                    return
+
+                if types.is_method(typ):
+                    typ = types.get_method_function(typ).find()
+                else:
+                    typ = typ.find()
+
+                if not (len(typ.args) == arity and len(typ.optargs) == 0):
+                    diag = diagnostic.Diagnostic("error",
+                        "function '{attr}{attr_type}' must accept "
+                        "{arity} positional argument{s} and no optional arguments",
+                        {"attr": attr_name,
+                         "attr_type": printer.name(typ),
+                         "arity": arity, "s": "s" if arity > 1 else ""},
+                        node.context_expr.loc)
+                    self.engine.process(diag)
+
+                for formal_arg_name in list(typ.args)[1:]:
+                    formal_arg_type = typ.args[formal_arg_name]
+                    def makenotes(printer, typea, typeb, loca, locb):
+                        return [
+                            diagnostic.Diagnostic("note",
+                                "exception handling via context managers is not supported; "
+                                "the argument '{arg}' of function '{attr}{attr_type}' "
+                                "will always be None",
+                                {"arg": formal_arg_name,
+                                 "attr": attr_name,
+                                 "attr_type": printer.name(typ)},
+                                loca),
+                        ]
+
+                    self._unify(formal_arg_type, builtins.TNone(),
+                                node.context_expr.loc, None,
+                                makenotes=makenotes)
+
+            check_callback('__enter__', node.enter_type, 1)
+            check_callback('__exit__', node.exit_type, 4)
+
+            if node.optional_vars is not None:
+                if types.is_method(node.exit_type):
+                    var_type = types.get_method_function(node.exit_type).find().ret
+                else:
+                    var_type = node.exit_type.find().ret
+
+                def makenotes(printer, typea, typeb, loca, locb):
+                    return [
+                        diagnostic.Diagnostic("note",
+                            "expression of type {typea}",
+                            {"typea": printer.name(typea)},
+                            loca),
+                        diagnostic.Diagnostic("note",
+                            "context manager with an '__enter__' method returning {typeb}",
+                            {"typeb": printer.name(typeb)},
+                            locb)
+                    ]
+
+                self._unify(node.optional_vars.type, var_type,
+                            node.optional_vars.loc, node.context_expr.loc,
+                            makenotes=makenotes)
+
+        else:
             diag = diagnostic.Diagnostic("error",
                 "value of type {type} cannot act as a context manager",
                 {"type": types.TypePrinter().name(typ)},
                 node.context_expr.loc)
             self.engine.process(diag)
 
-        if node.optional_vars is not None:
-            self._unify(node.optional_vars.type, node.context_expr.type,
-                        node.optional_vars.loc, node.context_expr.loc)
+    def visit_With(self, node):
+        self.generic_visit(node)
+
+        for item_node in node.items:
+            typ = item_node.context_expr.type.find()
+            if (types.is_builtin(typ, "parallel") or types.is_builtin(typ, "sequential")) and \
+                    len(node.items) != 1:
+                diag = diagnostic.Diagnostic("error",
+                    "the '{kind}' context manager must be the only one in a 'with' statement",
+                    {"kind": typ.name},
+                    node.keyword_loc.join(node.colon_loc))
+                self.engine.process(diag)
 
     def visit_ExceptHandlerT(self, node):
         self.generic_visit(node)
@@ -995,7 +1103,7 @@ class Inferencer(algorithm.Visitor):
                             {"typeb": printer.name(typeb)},
                             locb)
                     ]
-                self._unify(node.name_type, builtins.TException(node.filter.type.name),
+                self._unify(node.name_type, node.filter.type.instance,
                             node.name_loc, node.filter.loc, makenotes)
 
     def _type_from_arguments(self, node, ret):

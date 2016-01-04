@@ -20,6 +20,9 @@ class _Primes(EnvExperiment):
         self.setattr_argument("output_list")
         self.setattr_argument("maximum")
 
+    def _add_output(self, x):
+        self.output_list.append(x)
+
     @kernel
     def run(self):
         for x in range(1, self.maximum):
@@ -31,7 +34,7 @@ class _Primes(EnvExperiment):
                     break
                 d += 1
             if prime:
-                self.output_list.append(x)
+                self._add_output(x)
 
 
 class _Misc(EnvExperiment):
@@ -42,10 +45,13 @@ class _Misc(EnvExperiment):
         self.al = [1, 2, 3, 4, 5]
         self.list_copy_in = [2*Hz, 10*MHz]
 
+        self.half_input = 0
+        self.acc = 0
+        self.list_copy_out = []
+
     @kernel
     def run(self):
         self.half_input = self.input//2
-        self.decimal_fraction = Fraction("1.2")
         self.acc = 0
         for i in range(len(self.al)):
             self.acc += self.al[i]
@@ -55,13 +61,14 @@ class _Misc(EnvExperiment):
 class _PulseLogger(EnvExperiment):
     def build(self):
         self.setattr_device("core")
-        self.setattr_argument("output_list")
+        self.setattr_argument("parent_test")
         self.setattr_argument("name")
 
     def _append(self, t, l, f):
-        if not hasattr(self, "first_timestamp"):
-            self.first_timestamp = t
-        self.output_list.append((self.name, t-self.first_timestamp, l, f))
+        if not hasattr(self.parent_test, "first_timestamp"):
+            self.parent_test.first_timestamp = t
+        self.parent_test.output_list.append(
+            (self.name, t-self.parent_test.first_timestamp, l, f))
 
     def int_usec(self, mu):
         return round(mu_to_seconds(mu, self.core)*1000000)
@@ -86,7 +93,7 @@ class _Pulses(EnvExperiment):
 
         for name in "a", "b", "c", "d":
             pl = _PulseLogger(*self.managers(),
-                              output_list=self.output_list,
+                              parent_test=self,
                               name=name)
             setattr(self, name, pl)
 
@@ -111,43 +118,46 @@ class _Exceptions(EnvExperiment):
         self.setattr_device("core")
         self.setattr_argument("trace")
 
+    def _trace(self, i):
+        self.trace.append(i)
+
     @kernel
     def run(self):
         for i in range(10):
-            self.trace.append(i)
+            self._trace(i)
             if i == 4:
                 try:
-                    self.trace.append(10)
+                    self._trace(10)
                     try:
-                        self.trace.append(11)
+                        self._trace(11)
                         break
                     except:
                         pass
                     else:
-                        self.trace.append(12)
+                        self._trace(12)
                     try:
-                        self.trace.append(13)
+                        self._trace(13)
                     except:
                         pass
                 except _MyException:
-                    self.trace.append(14)
+                    self._trace(14)
 
         for i in range(4):
             try:
-                self.trace.append(100)
+                self._trace(100)
                 if i == 1:
-                    raise _MyException
+                    raise _MyException()
                 elif i == 2:
-                    raise IndexError
-            except (TypeError, IndexError):
-                self.trace.append(101)
+                    raise IndexError()
+            except IndexError:
+                self._trace(101)
                 raise
             except:
-                self.trace.append(102)
+                self._trace(102)
             else:
-                self.trace.append(103)
+                self._trace(103)
             finally:
-                self.trace.append(104)
+                self._trace(104)
 
 
 class _RPCExceptions(EnvExperiment):
@@ -190,7 +200,6 @@ class HostVsDeviceCase(ExperimentCase):
         for f in self.execute, _run_on_host:
             uut = f(_Misc)
             self.assertEqual(uut.half_input, 42)
-            self.assertEqual(uut.decimal_fraction, Fraction("1.2"))
             self.assertEqual(uut.acc, sum(uut.al))
             self.assertEqual(uut.list_copy_in, uut.list_copy_out)
 

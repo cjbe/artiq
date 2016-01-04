@@ -3,9 +3,10 @@
 into LLVM intermediate representation.
 """
 
-import os
+import os, re, types as pytypes
+from collections import defaultdict
 from pythonparser import ast, diagnostic
-from llvmlite_artiq import ir as ll
+from llvmlite_artiq import ir as ll, binding as llvm
 from ...language import core as language_core
 from .. import types, builtins, ir
 
@@ -161,10 +162,11 @@ class DebugInfoEmitter:
 
 
 class LLVMIRGenerator:
-    def __init__(self, engine, module_name, target, object_map):
+    def __init__(self, engine, module_name, target, object_map, type_map):
         self.engine = engine
         self.target = target
         self.object_map = object_map
+        self.type_map = type_map
         self.llcontext = target.llcontext
         self.llmodule = ll.Module(context=self.llcontext, name=module_name)
         self.llmodule.triple = target.triple
@@ -285,8 +287,7 @@ class LLVMIRGenerator:
             else:
                 return llty.as_pointer()
 
-    def llstr_of_str(self, value, name=None,
-                        linkage="private", unnamed_addr=True):
+    def llstr_of_str(self, value, name=None, linkage="private", unnamed_addr=True):
         if isinstance(value, str):
             assert "\0" not in value
             as_bytes = (value + "\0").encode("utf-8")
@@ -294,7 +295,8 @@ class LLVMIRGenerator:
             as_bytes = value
 
         if name is None:
-            name = self.llmodule.get_unique_name("str")
+            sanitized_str = re.sub(rb"[^a-zA-Z0-9_.]", b"", as_bytes[:20]).decode('ascii')
+            name = self.llmodule.get_unique_name("str.{}".format(sanitized_str))
 
         llstr = self.llmodule.get_global(name)
         if llstr is None:
@@ -364,6 +366,8 @@ class LLVMIRGenerator:
             llty = ll.FunctionType(llvoid, [self.llty_of_type(builtins.TException())])
         elif name == "__artiq_reraise":
             llty = ll.FunctionType(llvoid, [])
+        elif name == "strcmp":
+            llty = ll.FunctionType(lli32, [llptr, llptr])
         elif name == "send_rpc":
             llty = ll.FunctionType(llvoid, [lli32, llptr],
                                    var_arg=True)
@@ -401,14 +405,113 @@ class LLVMIRGenerator:
         else:
             assert False
 
-    def process(self, functions):
+    def process(self, functions, attribute_writeback):
         for func in functions:
             self.process_function(func)
 
         if any(functions):
             self.debug_info_emitter.finalize(functions[0].loc.source_buffer)
 
+        if attribute_writeback and self.object_map is not None:
+            self.emit_attribute_writeback()
+
         return self.llmodule
+
+    def emit_attribute_writeback(self):
+        llobjects = defaultdict(lambda: [])
+
+        for obj_id in self.object_map:
+            obj_ref = self.object_map.retrieve(obj_id)
+            if isinstance(obj_ref, (pytypes.FunctionType, pytypes.MethodType)):
+                continue
+            elif isinstance(obj_ref, type):
+                _, typ = self.type_map[obj_ref]
+            else:
+                typ, _ = self.type_map[type(obj_ref)]
+
+            llobject = self.llmodule.get_global("object.{}".format(obj_id))
+            if llobject is not None:
+                llobjects[typ].append(llobject.bitcast(llptr))
+
+        lldatalayout = llvm.create_target_data(self.llmodule.data_layout)
+
+        llrpcattrty = self.llcontext.get_identified_type("attr_desc")
+        llrpcattrty.elements = [lli32, llptr, llptr]
+
+        lldescty = self.llcontext.get_identified_type("type_desc")
+        lldescty.elements = [llrpcattrty.as_pointer().as_pointer(), llptr.as_pointer()]
+
+        lldescs = []
+        for typ in llobjects:
+            if "__objectid__" not in typ.attributes:
+                continue
+
+            if types.is_constructor(typ):
+                type_name = "class.{}".format(typ.name)
+            else:
+                type_name = "instance.{}".format(typ.name)
+
+            def llrpcattr_of_attr(name, typ):
+                size = self.llty_of_type(typ).get_abi_size(lldatalayout, context=self.llcontext)
+
+                def rpc_tag_error(typ):
+                    print(typ)
+                    assert False
+
+                if not (types.is_function(typ) or types.is_method(typ) or
+                        name == "__objectid__"):
+                    rpctag   = b"Os" + self._rpc_tag(typ, error_handler=rpc_tag_error) + b":n\x00"
+                    llrpctag = self.llstr_of_str(rpctag)
+                else:
+                    llrpctag = ll.Constant(llptr, None)
+
+                llrpcattr = ll.GlobalVariable(self.llmodule, llrpcattrty,
+                                              name="attr.{}.{}".format(type_name, name))
+                llrpcattr.initializer = ll.Constant(llrpcattrty, [
+                    ll.Constant(lli32, size),
+                    llrpctag,
+                    self.llstr_of_str(name)
+                ])
+                llrpcattr.global_constant = True
+                llrpcattr.unnamed_addr = True
+                llrpcattr.linkage = 'internal'
+
+                return llrpcattr
+
+            llrpcattrs = [llrpcattr_of_attr(attr, typ.attributes[attr])
+                          for attr in typ.attributes]
+
+            llrpcattraryty = ll.ArrayType(llrpcattrty.as_pointer(), len(llrpcattrs) + 1)
+            llrpcattrary = ll.GlobalVariable(self.llmodule, llrpcattraryty,
+                                             name="attrs.{}".format(type_name))
+            llrpcattrary.initializer = ll.Constant(llrpcattraryty,
+                llrpcattrs + [ll.Constant(llrpcattrty.as_pointer(), None)])
+            llrpcattrary.global_constant = True
+            llrpcattrary.unnamed_addr = True
+            llrpcattrary.linkage = 'internal'
+
+            llobjectaryty = ll.ArrayType(llptr, len(llobjects[typ]) + 1)
+            llobjectary = ll.GlobalVariable(self.llmodule, llobjectaryty,
+                                            name="objects.{}".format(type_name))
+            llobjectary.initializer = ll.Constant(llobjectaryty,
+                llobjects[typ] + [ll.Constant(llptr, None)])
+            llobjectary.linkage = 'internal'
+
+            lldesc = ll.GlobalVariable(self.llmodule, lldescty,
+                                       name="desc.{}".format(type_name))
+            lldesc.initializer = ll.Constant(lldescty, [
+                llrpcattrary.bitcast(llrpcattrty.as_pointer().as_pointer()),
+                llobjectary.bitcast(llptr.as_pointer())
+            ])
+            lldesc.global_constant = True
+            lldesc.linkage = 'internal'
+            lldescs.append(lldesc)
+
+        llglobaldescty = ll.ArrayType(lldescty.as_pointer(), len(lldescs) + 1)
+        llglobaldesc = ll.GlobalVariable(self.llmodule, llglobaldescty,
+                                         name="typeinfo")
+        llglobaldesc.initializer = ll.Constant(llglobaldescty,
+            lldescs + [ll.Constant(lldescty.as_pointer(), None)])
 
     def process_function(self, func):
         try:
@@ -836,6 +939,7 @@ class LLVMIRGenerator:
 
     # See session.c:{send,receive}_rpc_value and comm_generic.py:_{send,receive}_rpc_value.
     def _rpc_tag(self, typ, error_handler):
+        typ = typ.find()
         if types.is_tuple(typ):
             assert len(typ.elts) < 256
             return b"t" + bytes([len(typ.elts)]) + \
@@ -1055,9 +1159,11 @@ class LLVMIRGenerator:
             elt_type  = builtins.get_iterable_elt(typ)
             llelts    = [self._quote(value[i], elt_type, lambda: path() + [str(i)])
                          for i in range(len(value))]
-            lleltsary = ll.Constant(ll.ArrayType(llelts[0].type, len(llelts)), llelts)
+            lleltsary = ll.Constant(ll.ArrayType(self.llty_of_type(elt_type), len(llelts)),
+                                    llelts)
 
-            llglobal  = ll.GlobalVariable(self.llmodule, lleltsary.type, "quoted.list")
+            llglobal  = ll.GlobalVariable(self.llmodule, lleltsary.type,
+                                          self.llmodule.scope.deduplicate("quoted.list"))
             llglobal.initializer = lleltsary
             llglobal.linkage = "private"
 
@@ -1088,6 +1194,8 @@ class LLVMIRGenerator:
     def process_BranchIf(self, insn):
         return self.llbuilder.cbranch(self.map(insn.condition()),
                                       self.map(insn.if_true()), self.map(insn.if_false()))
+
+    process_Loop = process_BranchIf
 
     def process_IndirectBranch(self, insn):
         llinsn = self.llbuilder.branch_indirect(self.map(insn.target()))
@@ -1149,13 +1257,17 @@ class LLVMIRGenerator:
                     self.llty_of_type(ir.TExceptionTypeInfo()), None)
             else:
                 llclauseexnname = self.llconst_of_const(
-                    ir.Constant(typ.name, ir.TExceptionTypeInfo()))
+                    ir.Constant("{}:{}".format(typ.id, typ.name),
+                                ir.TExceptionTypeInfo()))
             lllandingpad.add_clause(ll.CatchClause(llclauseexnname))
 
             if typ is None:
                 self.llbuilder.branch(self.map(target))
             else:
-                llmatchingclause = self.llbuilder.icmp_unsigned('==', llexnname, llclauseexnname)
+                llexnmatch = self.llbuilder.call(self.llbuiltin("strcmp"),
+                                                 [llexnname, llclauseexnname])
+                llmatchingclause = self.llbuilder.icmp_unsigned('==',
+                                                                llexnmatch, ll.Constant(lli32, 0))
                 with self.llbuilder.if_then(llmatchingclause):
                     self.llbuilder.branch(self.map(target))
 

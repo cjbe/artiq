@@ -5,7 +5,7 @@ of the ARTIQ compiler.
 
 from collections import OrderedDict
 from pythonparser import ast
-from . import types, builtins
+from . import types, builtins, iodelay
 
 # Generic SSA IR classes
 
@@ -167,6 +167,7 @@ class Instruction(User):
         self_copy = self.__class__.__new__(self.__class__)
         Instruction.__init__(self_copy, list(map(mapper, self.operands)),
                              self.type, self.name)
+        self_copy.loc = self.loc
         return self_copy
 
     def set_basic_block(self, new_basic_block):
@@ -235,16 +236,19 @@ class Phi(Instruction):
     def incoming(self):
         operand_iter = iter(self.operands)
         while True:
-            yield next(operand_iter), next(operand_iter)
+            try:
+                yield next(operand_iter), next(operand_iter)
+            except StopIteration:
+                return
 
     def incoming_blocks(self):
-        return (block for (block, value) in self.incoming())
+        return (block for (value, block) in self.incoming())
 
     def incoming_values(self):
-        return (value for (block, value) in self.incoming())
+        return (value for (value, block) in self.incoming())
 
     def incoming_value_for_block(self, target_block):
-        for (block, value) in self.incoming():
+        for (value, block) in self.incoming():
             if block == target_block:
                 return value
         assert False
@@ -258,12 +262,14 @@ class Phi(Instruction):
 
     def remove_incoming_value(self, value):
         index = self.operands.index(value)
+        assert index % 2 == 0
         self.operands[index].uses.remove(self)
         self.operands[index + 1].uses.remove(self)
         del self.operands[index:index + 2]
 
     def remove_incoming_block(self, block):
         index = self.operands.index(block)
+        assert index % 2 == 1
         self.operands[index - 1].uses.remove(self)
         self.operands[index].uses.remove(self)
         del self.operands[index - 1:index + 1]
@@ -938,6 +944,8 @@ class Call(Instruction):
     """
     A function call operation.
 
+    :ivar arg_exprs: (dict of str to `iodelay.Expr`)
+        iodelay expressions for values of arguments
     :ivar static_target_function: (:class:`Function` or None)
         statically resolved callee
     """
@@ -945,15 +953,21 @@ class Call(Instruction):
     """
     :param func: (:class:`Value`) function to call
     :param args: (list of :class:`Value`) function arguments
+    :param arg_exprs: (dict of str to `iodelay.Expr`)
     """
-    def __init__(self, func, args, name=""):
+    def __init__(self, func, args, arg_exprs, name=""):
         assert isinstance(func, Value)
         for arg in args: assert isinstance(arg, Value)
+        for arg in arg_exprs:
+            assert isinstance(arg, str)
+            assert isinstance(arg_exprs[arg], iodelay.Expr)
         super().__init__([func] + args, func.type.ret, name)
+        self.arg_exprs = arg_exprs
         self.static_target_function = None
 
     def copy(self, mapper):
         self_copy = super().copy(mapper)
+        self_copy.arg_exprs = self.arg_exprs
         self_copy.static_target_function = self.static_target_function
         return self_copy
 
@@ -1194,6 +1208,8 @@ class Invoke(Terminator):
     """
     A function call operation that supports exception handling.
 
+    :ivar arg_exprs: (dict of str to `iodelay.Expr`)
+        iodelay expressions for values of arguments
     :ivar static_target_function: (:class:`Function` or None)
         statically resolved callee
     """
@@ -1203,17 +1219,23 @@ class Invoke(Terminator):
     :param args: (list of :class:`Value`) function arguments
     :param normal: (:class:`BasicBlock`) normal target
     :param exn: (:class:`BasicBlock`) exceptional target
+    :param arg_exprs: (dict of str to `iodelay.Expr`)
     """
-    def __init__(self, func, args, normal, exn, name=""):
+    def __init__(self, func, args, arg_exprs, normal, exn, name=""):
         assert isinstance(func, Value)
         for arg in args: assert isinstance(arg, Value)
         assert isinstance(normal, BasicBlock)
         assert isinstance(exn, BasicBlock)
+        for arg in arg_exprs:
+            assert isinstance(arg, str)
+            assert isinstance(arg_exprs[arg], iodelay.Expr)
         super().__init__([func] + args + [normal, exn], func.type.ret, name)
+        self.arg_exprs = arg_exprs
         self.static_target_function = None
 
     def copy(self, mapper):
         self_copy = super().copy(mapper)
+        self_copy.arg_exprs = self.arg_exprs
         self_copy.static_target_function = self.static_target_function
         return self_copy
 
@@ -1298,31 +1320,24 @@ class Delay(Terminator):
     inlining could lead to the expression folding to a constant.
 
     :ivar interval: (:class:`iodelay.Expr`) expression
-    :ivar var_names: (list of string)
-        iodelay variable names corresponding to SSA values
     """
 
     """
     :param interval: (:class:`iodelay.Expr`) expression
-    :param substs: (dict of str to :class:`Value`)
-        SSA values corresponding to iodelay variable names
     :param call: (:class:`Call` or ``Constant(None, builtins.TNone())``)
         the call instruction that caused this delay, if any
     :param target: (:class:`BasicBlock`) branch target
     """
-    def __init__(self, interval, substs, decomposition, target, name=""):
-        for var_name in substs: assert isinstance(var_name, str)
+    def __init__(self, interval, decomposition, target, name=""):
         assert isinstance(decomposition, Call) or \
             isinstance(decomposition, Builtin) and decomposition.op in ("delay", "delay_mu")
         assert isinstance(target, BasicBlock)
-        super().__init__([decomposition, target, *substs.values()], builtins.TNone(), name)
+        super().__init__([decomposition, target], builtins.TNone(), name)
         self.interval = interval
-        self.var_names = list(substs.keys())
 
     def copy(self, mapper):
         self_copy = super().copy(mapper)
         self_copy.interval = self.interval
-        self_copy.var_names = list(self.var_names)
         return self_copy
 
     def decomposition(self):
@@ -1341,17 +1356,9 @@ class Delay(Terminator):
         self.operands[1] = new_target
         self.operands[1].uses.add(self)
 
-    def substs(self):
-        return {key: value for key, value in zip(self.var_names, self.operands[2:])}
-
     def _operands_as_string(self, type_printer):
-        substs = self.substs()
-        substs_as_strings = []
-        for var_name in substs:
-            substs_as_strings.append("{} = {}".format(var_name, substs[var_name]))
-        result = "[{}]".format(", ".join(substs_as_strings))
-        result += ", decomp {}, to {}".format(self.decomposition().as_operand(type_printer),
-                                              self.target().as_operand(type_printer))
+        result = "decomp {}, to {}".format(self.decomposition().as_operand(type_printer),
+                                           self.target().as_operand(type_printer))
         return result
 
     def opcode(self):
@@ -1366,14 +1373,10 @@ class Loop(Terminator):
 
     :ivar trip_count: (:class:`iodelay.Expr`)
         expression for trip count
-    :ivar var_names: (list of string)
-        iodelay variable names corresponding to ``trip_count`` operands
     """
 
     """
     :param trip_count: (:class:`iodelay.Expr`) expression
-    :param substs: (dict of str to :class:`Value`)
-        SSA values corresponding to iodelay variable names
     :param indvar: (:class:`Phi`)
         phi node corresponding to the induction SSA value,
         which advances from ``0`` to ``trip_count - 1``
@@ -1381,21 +1384,18 @@ class Loop(Terminator):
     :param if_true: (:class:`BasicBlock`) branch target if condition is truthful
     :param if_false: (:class:`BasicBlock`) branch target if condition is falseful
     """
-    def __init__(self, trip_count, substs, indvar, cond, if_true, if_false, name=""):
-        for var_name in substs: assert isinstance(var_name, str)
+    def __init__(self, trip_count, indvar, cond, if_true, if_false, name=""):
         assert isinstance(indvar, Phi)
         assert isinstance(cond, Value)
         assert builtins.is_bool(cond.type)
         assert isinstance(if_true, BasicBlock)
         assert isinstance(if_false, BasicBlock)
-        super().__init__([indvar, cond, if_true, if_false, *substs.values()], builtins.TNone(), name)
+        super().__init__([indvar, cond, if_true, if_false], builtins.TNone(), name)
         self.trip_count = trip_count
-        self.var_names = list(substs.keys())
 
     def copy(self, mapper):
         self_copy = super().copy(mapper)
         self_copy.trip_count = self.trip_count
-        self_copy.var_names = list(self.var_names)
         return self_copy
 
     def induction_variable(self):
@@ -1410,17 +1410,9 @@ class Loop(Terminator):
     def if_false(self):
         return self.operands[3]
 
-    def substs(self):
-        return {key: value for key, value in zip(self.var_names, self.operands[4:])}
-
     def _operands_as_string(self, type_printer):
-        substs = self.substs()
-        substs_as_strings = []
-        for var_name in substs:
-            substs_as_strings.append("{} = {}".format(var_name, substs[var_name]))
-        result = "[{}]".format(", ".join(substs_as_strings))
-        result += ", indvar {}, if {}, {}, {}".format(
-            *list(map(lambda value: value.as_operand(type_printer), self.operands[0:4])))
+        result = "indvar {}, if {}, {}, {}".format(
+            *list(map(lambda value: value.as_operand(type_printer), self.operands)))
         return result
 
     def opcode(self):
