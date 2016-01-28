@@ -12,7 +12,7 @@ import h5py
 from artiq.language.environment import EnvExperiment
 from artiq.master.databases import DeviceDB, DatasetDB
 from artiq.master.worker_db import DeviceManager, DatasetManager
-from artiq.coredevice.core import CompileError
+from artiq.coredevice.core import CompileError, host_only
 from artiq.compiler.embedding import ObjectMap
 from artiq.compiler.targets import OR1KTarget
 from artiq.tools import *
@@ -60,6 +60,7 @@ class DummyScheduler:
     def get_status(self):
         return dict()
 
+    @host_only
     def pause(self):
         pass
 
@@ -131,8 +132,8 @@ def run(with_file=False):
     except CompileError as error:
         return
     except Exception as exn:
-        if hasattr(exn, 'artiq_exception'):
-            print(exn.artiq_exception, file=sys.stderr)
+        if hasattr(exn, 'artiq_core_exception'):
+            print(exn.artiq_core_exception, file=sys.stderr)
         raise exn
     finally:
         device_mgr.close_devices()

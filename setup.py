@@ -32,6 +32,7 @@ scripts = [
     "artiq_mkfs=artiq.frontend.artiq_mkfs:main",
     "artiq_rpctool=artiq.frontend.artiq_rpctool:main",
     "artiq_run=artiq.frontend.artiq_run:main",
+    "artiq_flash=artiq.frontend.artiq_flash:main",
     "lda_controller=artiq.frontend.lda_controller:main",
     "novatech409b_controller=artiq.frontend.novatech409b_controller:main",
     "pdq2_client=artiq.frontend.pdq2_client:main",
@@ -48,6 +49,7 @@ scripts = [
 setup(
     name="artiq",
     version=versioneer.get_version(),
+    cmdclass=versioneer.get_cmdclass(),
     author="M-Labs / NIST Ion Storage Group",
     author_email="sb@m-labs.hk",
     url="http://m-labs.hk/artiq",

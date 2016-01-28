@@ -7,14 +7,7 @@ INCLUDE generated/regions.ld
  * ld does not allow this expression here.
  */
 MEMORY {
-	runtime : ORIGIN = 0x40000000, LENGTH = 0x400000 /* 4M */
-}
-
-/* First 4M of main memory are reserved for runtime code/data
- * then comes kernel memory. First 32K of kernel memory are for support code.
- */
-MEMORY {
-  kernel : ORIGIN = 0x40400000, LENGTH = 0x8000
+	runtime : ORIGIN = 0x40000000, LENGTH = 0x2000000 /* 32M */
 }
 
 /* Kernel memory space start right after the runtime,
@@ -23,11 +16,6 @@ MEMORY {
  * This stack is shared with the kernel on UP systems.
  */
 PROVIDE(_fstack = 0x40000000 + LENGTH(main_ram) - 4);
-
-/* On AMP systems, kernel stack is at the end of main RAM,
- * before the runtime stack. Leave 1M for runtime stack.
- */
-PROVIDE(_kernel_fstack = 0x40000000 + LENGTH(main_ram) - 1024*1024 - 4);
 
 SECTIONS
 {
@@ -77,5 +65,7 @@ SECTIONS
 		*(.eh_frame)
 	}
 
-	_heapstart = .;
+	_fheap = .;
+	. += 0x1800000;
+	_eheap = .;
 }

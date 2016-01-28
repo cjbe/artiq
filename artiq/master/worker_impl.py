@@ -2,34 +2,36 @@ import sys
 import time
 import os
 import logging
+import traceback
 from collections import OrderedDict
 
-from artiq.protocols import pyon
-from artiq.tools import file_import
+import artiq
+from artiq.protocols import pipe_ipc, pyon
+from artiq.tools import multiline_log_config, file_import
 from artiq.master.worker_db import DeviceManager, DatasetManager, get_hdf5_output
 from artiq.language.environment import is_experiment
 from artiq.language.core import set_watchdog_factory, TerminationRequested
-from artiq.coredevice.core import CompileError
+from artiq.coredevice.core import CompileError, host_only, _render_diagnostic
 from artiq import __version__ as artiq_version
 
 
+ipc = None
+
 def get_object():
-    line = sys.__stdin__.readline()
+    line = ipc.readline().decode()
     return pyon.decode(line)
 
 
 def put_object(obj):
     ds = pyon.encode(obj)
-    sys.__stdout__.write(ds)
-    sys.__stdout__.write("\n")
-    sys.__stdout__.flush()
+    ipc.write((ds + "\n").encode())
 
 
 class ParentActionError(Exception):
     pass
 
 
-def make_parent_action(action, exception=ParentActionError):
+def make_parent_action(action, exception=None):
     def parent_action(*args, **kwargs):
         request = {"action": action, "args": args, "kwargs": kwargs}
         put_object(request)
@@ -42,25 +44,13 @@ def make_parent_action(action, exception=ParentActionError):
         if reply["status"] == "ok":
             return reply["data"]
         else:
-            raise exception(reply["message"])
+            if exception is None:
+                exn = ParentActionError(reply["exception"])
+            else:
+                exn = exception(reply["message"])
+            exn.parent_traceback = reply["traceback"]
+            raise exn
     return parent_action
-
-
-class LogForwarder:
-    def __init__(self):
-        self.buffer = ""
-
-    to_parent = staticmethod(make_parent_action("log"))
-
-    def write(self, data):
-        self.buffer += data
-        while "\n" in self.buffer:
-            i = self.buffer.index("\n")
-            self.to_parent(self.buffer[:i])
-            self.buffer = self.buffer[i+1:]
-
-    def flush(self):
-        pass
 
 
 class ParentDeviceDB:
@@ -93,6 +83,7 @@ set_watchdog_factory(Watchdog)
 class Scheduler:
     pause_noexc = staticmethod(make_parent_action("pause"))
 
+    @host_only
     def pause(self):
         if self.pause_noexc():
             raise TerminationRequested
@@ -168,10 +159,36 @@ def string_to_hdf5(f, key, value):
     dataset[()] = value.encode()
 
 
+def setup_diagnostics(experiment_file, repository_path):
+    def render_diagnostic(self, diagnostic):
+        message = "While compiling {}\n".format(experiment_file) + \
+                    _render_diagnostic(diagnostic, colored=False)
+        if repository_path is not None:
+            message = message.replace(repository_path, "<repository>")
+
+        if diagnostic.level == "warning":
+            logging.warn(message)
+        else:
+            logging.error(message)
+
+    # This is kind of gross, but 1) we do not have any explicit connection
+    # between the worker and a coredevice.core.Core instance at all,
+    # and 2) the diagnostic engine really ought to be per-Core, since
+    # that's what uses it and the repository path is per-Core.
+    # So I don't know how to implement this properly for now.
+    #
+    # This hack is as good or bad as any other solution that involves
+    # putting inherently local objects (the diagnostic engine) into
+    # global slots, and there isn't any point in making it prettier by
+    # wrapping it in layers of indirection.
+    artiq.coredevice.core._DiagnosticEngine.render_diagnostic = render_diagnostic
+
+
 def main():
-    sys.stdout = LogForwarder()
-    sys.stderr = LogForwarder()
-    logging.basicConfig(level=int(sys.argv[1]))
+    global ipc
+
+    multiline_log_config(level=int(sys.argv[2]))
+    ipc = pipe_ipc.ChildComm(sys.argv[1])
 
     start_time = None
     rid = None
@@ -198,6 +215,8 @@ def main():
                     repository_path = obj["wd"]
                 else:
                     experiment_file = expid["file"]
+                    repository_path = None
+                setup_diagnostics(experiment_file, repository_path)
                 exp = get_exp(experiment_file, expid["class_name"])
                 device_mgr.virtual_devices["scheduler"].set_run_info(
                     rid, obj["pipeline_name"], expid, obj["priority"])
@@ -229,21 +248,24 @@ def main():
                 put_object({"action": "completed"})
             elif action == "terminate":
                 break
-    except CompileError as exc:
-        # TODO: This should be replaced with a proper DiagnosticEngine.
-        message = "Cannot compile {}\n".format(experiment_file) + exc.render_string()
-        if repository_path is not None:
-            message = message.replace(repository_path, "<repository>")
-        logging.error(message)
     except Exception as exc:
-        short_exc_info = type(exc).__name__
-        exc_str = str(exc)
-        if exc_str:
-            short_exc_info += ": " + exc_str
-        logging.error("Terminating with exception (%s)",
-                      short_exc_info, exc_info=True)
+        # When we get CompileError, a more suitable diagnostic has already
+        # been printed.
+        if not isinstance(exc, CompileError):
+            short_exc_info = type(exc).__name__
+            exc_str = str(exc)
+            if exc_str:
+                short_exc_info += ": " + exc_str
+            lines = ["Terminating with exception ("+short_exc_info+")\n"]
+            lines += traceback.format_exception_only(type(exc), exc)
+            if hasattr(exc, "parent_traceback"):
+                lines += exc.parent_traceback
+            logging.error("".join(lines).rstrip(),
+                          exc_info=not hasattr(exc, "parent_traceback"))
+        put_object({"action": "exception"})
     finally:
         device_mgr.close_devices()
+        ipc.close()
 
 
 if __name__ == "__main__":

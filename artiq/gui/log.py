@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import time
+import re
 from functools import partial
 
 from quamash import QtGui, QtCore
@@ -14,13 +15,19 @@ except AttributeError:
     QSortFilterProxyModel = QtGui.QSortFilterProxyModel
 
 
+def _make_wrappable(row, width=30):
+    level, source, time, msg = row
+    msg = re.sub("(\\S{{{}}})".format(width), "\\1\u200b", msg)
+    return [level, source, time, msg]
+
+
 class Model(QtCore.QAbstractTableModel):
     def __init__(self, init):
         QtCore.QAbstractTableModel.__init__(self)
 
-        self.headers = ["Level", "Source", "Time", "Message"]
+        self.headers = ["Source", "Message"]
 
-        self.entries = init
+        self.entries = list(map(_make_wrappable, init))
         self.pending_entries = []
         self.depth = 1000
         timer = QtCore.QTimer(self)
@@ -52,7 +59,7 @@ class Model(QtCore.QAbstractTableModel):
         pass
 
     def append(self, v):
-        self.pending_entries.append(v)
+        self.pending_entries.append(_make_wrappable(v))
 
     def insertRows(self, position, rows=1, index=QtCore.QModelIndex()):
         self.beginInsertRows(QtCore.QModelIndex(), position, position+rows-1)
@@ -78,7 +85,7 @@ class Model(QtCore.QAbstractTableModel):
     def data(self, index, role):
         if index.isValid():
             if (role == QtCore.Qt.FontRole
-                    and index.column() == 3):
+                    and index.column() == 1):
                 return self.fixed_font
             elif role == QtCore.Qt.BackgroundRole:
                 level = self.entries[index.row()][0]
@@ -98,13 +105,13 @@ class Model(QtCore.QAbstractTableModel):
                 v = self.entries[index.row()]
                 column = index.column()
                 if column == 0:
-                    return log_level_to_name(v[0])
-                elif column == 1:
                     return v[1]
-                elif column == 2:
-                    return time.strftime("%m/%d %H:%M:%S", time.localtime(v[2]))
                 else:
                     return v[3]
+            elif role == QtCore.Qt.ToolTipRole:
+                v = self.entries[index.row()]
+                return (log_level_to_name(v[0]) + ", " +
+                    time.strftime("%m/%d %H:%M:%S", time.localtime(v[2])))
 
 
 class _LogFilterProxyModel(QSortFilterProxyModel):
@@ -116,15 +123,11 @@ class _LogFilterProxyModel(QSortFilterProxyModel):
     def filterAcceptsRow(self, sourceRow, sourceParent):
         model = self.sourceModel()
 
-        index = model.index(sourceRow, 0, sourceParent)
-        data = model.data(index, QtCore.Qt.DisplayRole)
-        accepted_level = getattr(logging, data) >= self.min_level
+        accepted_level = model.entries[sourceRow][0] >= self.min_level
 
         if self.freetext:
-            index = model.index(sourceRow, 1, sourceParent)
-            data_source = model.data(index, QtCore.Qt.DisplayRole)
-            index = model.index(sourceRow, 3, sourceParent)
-            data_message = model.data(index, QtCore.Qt.DisplayRole)
+            data_source = model.entries[sourceRow][1]
+            data_message = model.entries[sourceRow][3]
             accepted_freetext = (self.freetext in data_source
                 or self.freetext in data_message)
         else:
@@ -144,7 +147,7 @@ class _LogFilterProxyModel(QSortFilterProxyModel):
 class _LogDock(dockarea.Dock):
     def __init__(self, manager, name, log_sub):
         dockarea.Dock.__init__(self, name, label="Log")
-        self.setMinimumSize(QtCore.QSize(850, 450))
+        self.setMinimumSize(QtCore.QSize(720, 250))
 
         grid = LayoutWidget()
         self.addWidget(grid)
@@ -162,13 +165,19 @@ class _LogDock(dockarea.Dock):
             self.filter_freetext_changed)
         grid.addWidget(self.filter_freetext, 0, 2)
 
+        scrollbottom = QtGui.QToolButton()
+        scrollbottom.setToolTip("Scroll to bottom")
+        scrollbottom.setIcon(QtGui.QApplication.style().standardIcon(
+            QtGui.QStyle.SP_ArrowDown))
+        grid.addWidget(scrollbottom, 0, 3)
+        scrollbottom.clicked.connect(self.scroll_to_bottom)
         newdock = QtGui.QToolButton()
         newdock.setToolTip("Create new log dock")
         newdock.setIcon(QtGui.QApplication.style().standardIcon(
             QtGui.QStyle.SP_FileDialogNewFolder))
         # note the lambda, the default parameter is overriden otherwise
         newdock.clicked.connect(lambda: manager.create_new_dock())
-        grid.addWidget(newdock, 0, 3)
+        grid.addWidget(newdock, 0, 4)
         grid.layout.setColumnStretch(2, 1)
 
         self.log = QtGui.QTableView()
@@ -185,7 +194,7 @@ class _LogDock(dockarea.Dock):
             QtGui.QAbstractItemView.ScrollPerPixel)
         self.log.setShowGrid(False)
         self.log.setTextElideMode(QtCore.Qt.ElideNone)
-        grid.addWidget(self.log, 1, 0, colspan=4)
+        grid.addWidget(self.log, 1, 0, colspan=5)
         self.scroll_at_bottom = False
         self.scroll_value = 0
 
@@ -202,6 +211,9 @@ class _LogDock(dockarea.Dock):
             return
         self.table_model_filter.set_freetext(self.filter_freetext.text())
 
+    def scroll_to_bottom(self):
+        self.log.scrollToBottom()
+
     def rows_inserted_before(self):
         scrollbar = self.log.verticalScrollBar()
         self.scroll_value = scrollbar.value()
@@ -210,6 +222,15 @@ class _LogDock(dockarea.Dock):
     def rows_inserted_after(self):
         if self.scroll_at_bottom:
             self.log.scrollToBottom()
+
+        # HACK:
+        # If we don't do this, after we first add some rows, the "Time"
+        # column gets undersized and the text in it gets wrapped.
+        # We can call self.log.resizeColumnsToContents(), which fixes
+        # that problem, but now the message column is too large and
+        # a horizontal scrollbar appears.
+        # This is almost certainly a Qt layout bug.
+        self.log.horizontalHeader().reset()
 
     # HACK:
     # Qt intermittently likes to scroll back to the top when rows are removed.

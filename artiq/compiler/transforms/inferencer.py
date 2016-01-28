@@ -202,12 +202,16 @@ class Inferencer(algorithm.Visitor):
                         value.loc, None)
 
     def visit_SliceT(self, node):
-        self._unify(node.type, builtins.TInt(),
-                    node.loc, None)
-        for operand in (node.lower, node.upper, node.step):
-            if operand is not None:
-                self._unify(operand.type, node.type,
-                            operand.loc, None)
+        if (node.lower, node.upper, node.step) == (None, None, None):
+            self._unify(node.type, builtins.TInt32(),
+                        node.loc, None)
+        else:
+            self._unify(node.type, builtins.TInt(),
+                        node.loc, None)
+            for operand in (node.lower, node.upper, node.step):
+                if operand is not None:
+                    self._unify(operand.type, node.type,
+                                operand.loc, None)
 
     def visit_ExtSlice(self, node):
         diag = diagnostic.Diagnostic("error",
@@ -1061,7 +1065,7 @@ class Inferencer(algorithm.Visitor):
                             node.optional_vars.loc, node.context_expr.loc,
                             makenotes=makenotes)
 
-        else:
+        elif not types.is_var(typ):
             diag = diagnostic.Diagnostic("error",
                 "value of type {type} cannot act as a context manager",
                 {"type": types.TypePrinter().name(typ)},
@@ -1217,10 +1221,19 @@ class Inferencer(algorithm.Visitor):
         if node.exc is not None:
             exc_type = node.exc.type
             if not types.is_var(exc_type) and not builtins.is_exception(exc_type):
+                if types.is_exn_constructor(exc_type):
+                    notes = [diagnostic.Diagnostic("note",
+                        "this value is an exception constructor; use {suggestion} instead",
+                        {"suggestion": node.exc.loc.source() + "()"},
+                        node.exc.loc)]
+                else:
+                    notes = []
+
                 diag = diagnostic.Diagnostic("error",
                     "cannot raise a value of type {type}, which is not an exception",
                     {"type": types.TypePrinter().name(exc_type)},
-                    node.exc.loc)
+                    node.loc,
+                    notes=notes)
                 self.engine.process(diag)
 
     def visit_Assert(self, node):

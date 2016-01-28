@@ -3,7 +3,7 @@
 
 def f():
     r = range(10)
-    # CHECK-L: ${LINE:+2}: error: for statement cannot be interleaved because trip count is indeterminate
+    # CHECK-L: ${LINE:+2}: error: for statement cannot be interleaved because iteration count is indeterminate
     # CHECK-L: ${LINE:+1}: note: this value is not a constant range literal
     for _ in r:
         delay_mu(1)

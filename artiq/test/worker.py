@@ -5,7 +5,7 @@ import sys
 import os
 from time import sleep
 
-from artiq import *
+from artiq.experiment import *
 from artiq.master.worker import *
 
 
@@ -71,7 +71,7 @@ def _run_experiment(class_name):
         "arguments": dict()
     }
     loop = asyncio.get_event_loop()
-    worker = Worker(handlers={"log": lambda message: None})
+    worker = Worker({})
     loop.run_until_complete(_call_worker(worker, expid))
 
 
@@ -87,7 +87,7 @@ class WorkerCase(unittest.TestCase):
         _run_experiment("SimpleExperiment")
 
     def test_exception(self):
-        with self.assertRaises(WorkerError):
+        with self.assertRaises(WorkerInternalException):
             _run_experiment("ExceptionTermination")
 
     def test_watchdog_no_timeout(self):

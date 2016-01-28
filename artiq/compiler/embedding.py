@@ -124,8 +124,13 @@ class ASTSynthesizer:
                 instance_type, constructor_type = self.type_map[typ]
             else:
                 if issubclass(typ, BaseException):
-                    instance_type = builtins.TException("{}.{}".format(typ.__module__, typ.__qualname__),
-                                                        id=self.object_map.store(typ))
+                    if hasattr(typ, 'artiq_builtin'):
+                        exception_id = 0
+                    else:
+                        exception_id = self.object_map.store(typ)
+                    instance_type = builtins.TException("{}.{}".format(typ.__module__,
+                                                                       typ.__qualname__),
+                                                        id=exception_id)
                     constructor_type = types.TExceptionConstructor(instance_type)
                 else:
                     instance_type = types.TInstance("{}.{}".format(typ.__module__, typ.__qualname__),
@@ -739,6 +744,12 @@ class Stitcher:
                     # to perform a system call instead of a regular call.
                     result = self._quote_foreign_function(function, loc,
                                                           syscall=function.artiq_embedded.syscall)
+                elif function.artiq_embedded.forbidden is not None:
+                    diag = diagnostic.Diagnostic("fatal",
+                        "this function cannot be called as an RPC", {},
+                        self._function_loc(function),
+                        notes=self._call_site_note(loc, is_syscall=True))
+                    self.engine.process(diag)
                 else:
                     assert False
             else:

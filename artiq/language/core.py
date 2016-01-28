@@ -2,18 +2,13 @@
 Core ARTIQ extensions to the Python language.
 """
 
-import os, linecache, re
 from collections import namedtuple
 from functools import wraps
 
-# for runtime files in backtraces
-from artiq.coredevice.runtime import source_loader
-
 
 __all__ = ["host_int", "int", "host_round", "round",
-           "kernel", "portable", "syscall",
+           "kernel", "portable", "syscall", "host_only",
            "set_time_manager", "set_watchdog_factory",
-           "ARTIQException",
            "TerminationRequested"]
 
 # global namespace for kernels
@@ -168,7 +163,7 @@ def round(value, width=32):
 
 
 _ARTIQEmbeddedInfo = namedtuple("_ARTIQEmbeddedInfo",
-                                "core_name function syscall")
+                                "core_name function syscall forbidden")
 
 def kernel(arg):
     """
@@ -196,7 +191,8 @@ def kernel(arg):
             def run_on_core(self, *k_args, **k_kwargs):
                 return getattr(self, arg).run(run_on_core, ((self,) + k_args), k_kwargs)
             run_on_core.artiq_embedded = _ARTIQEmbeddedInfo(
-                core_name=arg, function=function, syscall=None)
+                core_name=arg, function=function, syscall=None,
+                forbidden=False)
             return run_on_core
         return inner_decorator
     else:
@@ -213,7 +209,8 @@ def portable(function):
     on the core device (no RPC).
     """
     function.artiq_embedded = \
-        _ARTIQEmbeddedInfo(core_name=None, function=function, syscall=None)
+        _ARTIQEmbeddedInfo(core_name=None, function=function, syscall=None,
+                           forbidden=False)
     return function
 
 def syscall(arg):
@@ -231,11 +228,21 @@ def syscall(arg):
         def inner_decorator(function):
             function.artiq_embedded = \
                 _ARTIQEmbeddedInfo(core_name=None, function=None,
-                                   syscall=function.__name__)
+                                   syscall=function.__name__, forbidden=False)
             return function
         return inner_decorator
     else:
         return syscall(arg.__name__)(arg)
+
+def host_only(function):
+    """
+    This decorator marks a function so that it can only be executed
+    in the host Python interpreter.
+    """
+    function.artiq_embedded = \
+        _ARTIQEmbeddedInfo(core_name=None, function=None, syscall=None,
+                           forbidden=True)
+    return function
 
 
 class _DummyTimeManager:
@@ -363,48 +370,3 @@ def watchdog(timeout):
 class TerminationRequested(Exception):
     """Raised by ``pause`` when the user has requested termination."""
     pass
-
-
-class ARTIQException:
-    """Information about an exception raised or passed through the core device."""
-
-    def __init__(self, name, message, params, traceback):
-        if ':' in name:
-            exn_id, self.name = name.split(':', 2)
-            self.id = host_int(exn_id)
-        else:
-            self.id, self.name = 0, name
-        self.message, self.params = message, params
-        self.traceback = list(traceback)
-
-    def __str__(self):
-        lines = []
-        lines.append("Core Device Traceback (most recent call last):")
-        for (filename, line, column, function, address) in self.traceback:
-            stub_globals = {"__name__": filename, "__loader__": source_loader}
-            source_line = linecache.getline(filename, line, stub_globals)
-            indentation = re.search(r"^\s*", source_line).end()
-
-            if address is None:
-                formatted_address = ""
-            else:
-                formatted_address = " (RA=0x{:x})".format(address)
-
-            filename = filename.replace(os.path.normpath(os.path.join(os.path.dirname(__file__),
-                                                                      "..")), "<artiq>")
-            if column == -1:
-                lines.append("  File \"{file}\", line {line}, in {function}{address}".
-                             format(file=filename, line=line, function=function,
-                                    address=formatted_address))
-                lines.append("    {}".format(source_line.strip() if source_line else "<unknown>"))
-            else:
-                lines.append("  File \"{file}\", line {line}, column {column},"
-                             " in {function}{address}".
-                             format(file=filename, line=line, column=column + 1,
-                                    function=function, address=formatted_address))
-                lines.append("    {}".format(source_line.strip() if source_line else "<unknown>"))
-                lines.append("    {}^".format(" " * (column - indentation)))
-
-        lines.append("{}({}): {}".format(self.name, self.id,
-                                         self.message.format(*self.params)))
-        return "\n".join(lines)

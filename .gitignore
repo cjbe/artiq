@@ -1,25 +1,32 @@
-__pycache__
+__pycache__/
 *.o
 *.d
 *.a
+*.so
 *.bin
 *.elf
 *.fbi
-*.pyc
-doc/manual/_build
+/doc/manual/_build
 /build
 /dist
 /*.egg-info
 /.coverage
-artiq/test/results
-artiq/test/h5types.h5
-examples/master/results
-examples/master/dataset_db.pyon
-examples/sim/dataset_db.pyon
-Output/
-/lit-test/libartiq_support/libartiq_support.so
+/artiq/test/lit/*/Output/
+/artiq/binaries
+/misoc_*/
 
-# for developer convenience
-/test*.py
+/artiq/test/results
+/artiq/test/h5types.h5
+/examples/master/results
+/examples/master/dataset_db.pyon
+/examples/sim/results
+/examples/sim/dataset_db.pyon
+
+# recommended location for testbed
+/run
+# alternatively, when testing ad-hoc experiments at the root:
 /device_db.pyon
 /dataset_db.pyon
+/results
+/h5types.h5
+/test*.py

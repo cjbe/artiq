@@ -20,7 +20,7 @@ from misoc.targets.pipistrello import *
 from artiq.gateware.soc import AMPSoC
 from artiq.gateware import rtio, nist_qc1
 from artiq.gateware.rtio.phy import ttl_simple, ttl_serdes_spartan6, dds
-from artiq.tools import artiq_dir
+from artiq import __artiq_dir__ as artiq_dir
 from artiq import __version__ as artiq_version
 
 
@@ -106,7 +106,8 @@ class NIST_QC1(BaseSoC, AMPSoC):
         "rtio": None,  # mapped on Wishbone instead
         "rtio_crg": 10,
         "kernel_cpu": 11,
-        "rtio_moninj": 12
+        "rtio_moninj": 12,
+        "rtio_analyzer": 13
     }
     csr_map.update(BaseSoC.csr_map)
     mem_map = {
@@ -126,6 +127,7 @@ class NIST_QC1(BaseSoC, AMPSoC):
 
         platform = self.platform
 
+        platform.toolchain.bitgen_opt += " -g compress"
         platform.toolchain.ise_commands += """
 trce -v 12 -fastpaths -tsi {build_name}.tsi -o {build_name}.twr {build_name}.ncd {build_name}.pcf
 """
@@ -206,6 +208,9 @@ trce -v 12 -fastpaths -tsi {build_name}.tsi -o {build_name}.twr {build_name}.ncd
                                      self.rtiowb.bus)
         self.add_csr_region("rtio", self.mem_map["rtio"] | 0x80000000, 32,
                             rtio_csrs)
+
+        self.submodules.rtio_analyzer = rtio.Analyzer(self.rtio,
+            self.get_native_sdram_if())
 
 
 def main():

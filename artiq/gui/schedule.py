@@ -58,7 +58,7 @@ class Model(DictSyncModel):
 class ScheduleDock(dockarea.Dock):
     def __init__(self, status_bar, schedule_ctl, schedule_sub):
         dockarea.Dock.__init__(self, "Schedule")
-        self.setMinimumSize(QtCore.QSize(850, 300))
+        self.setMinimumSize(QtCore.QSize(740, 200))
 
         self.status_bar = status_bar
         self.schedule_ctl = schedule_ctl
@@ -70,16 +70,19 @@ class ScheduleDock(dockarea.Dock):
             QtGui.QHeaderView.ResizeToContents)
         self.table.verticalHeader().setResizeMode(
             QtGui.QHeaderView.ResizeToContents)
+        self.table.verticalHeader().hide()
         self.addWidget(self.table)
 
         self.table.setContextMenuPolicy(QtCore.Qt.ActionsContextMenu)
         request_termination_action = QtGui.QAction("Request termination", self.table)
         request_termination_action.triggered.connect(partial(self.delete_clicked, True))
         request_termination_action.setShortcut("DELETE")
+        request_termination_action.setShortcutContext(QtCore.Qt.WidgetShortcut)
         self.table.addAction(request_termination_action)
         delete_action = QtGui.QAction("Delete", self.table)
         delete_action.triggered.connect(partial(self.delete_clicked, False))
         delete_action.setShortcut("SHIFT+DELETE")
+        delete_action.setShortcutContext(QtCore.Qt.WidgetShortcut)
         self.table.addAction(delete_action)
 
         self.table_model = Model(dict())
