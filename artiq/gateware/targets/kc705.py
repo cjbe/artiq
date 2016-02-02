@@ -372,7 +372,79 @@ class Oxford(_NIST_Ions):
         self.config["DDS_RTIO_CLK_RATIO"] = 24        
         
         
+     
+
+class TransparentOverride(Module):
+    """Connects outputs to internal logic when input low, otherwise connects them to an external input, connected to the old LCU"""
+    def __init__(self, pad, logicOutput, externalInput, inputOverride):
+        self.comb += If(inputOverride,
+            pad.eq(externalInput)
+        ).Else(
+            pad.eq(logicOutput)
+        )
+
+class OxfordOverride(_NIST_Ions):
+    def __init__(self, cpu_type="or1k", **kwargs):
+        _NIST_Ions.__init__(self, cpu_type, **kwargs)
         
+        platform = self.platform
+        platform.add_extension(oxford.fmc_adapter_io)
+
+        rtio_channels = []
+
+        led = platform.request("ledFrontPanel", 0) 
+        self.comb += led.eq(1) # Front panel LED0 hard wired on
+        
+        # The 5 'override inputs'
+        overrideInputs = [ platform.request("in", descrambleList[i]) for i in range(2,7) ]
+
+        inputOverride = Signal()
+
+        for bank in ['a','b','c','d','e','f','g']:
+            for i in range(8):
+                if bank=='g' and i<5:
+                    pad = platform.request(bank, descrambleList[i])
+                    internalOutput = Signal()
+                    phy = ttl_simple.Output(internalOutput)
+                    overrideMod = TransparentOverride( pad, internalOutput, overrideInputs[i], inputOverride )
+                    self.submodules += overrideMod
+                elif: bank=='g' and i==7:
+                    pad = platform.request(bank, descrambleList[i])
+                    phy = ttl_simple.Output(pad)
+                    self.comb += inputOverride.eq(~pad)
+                else:
+                    phy = ttl_serdes_7series.Output_8X(platform.request(bank, descrambleList[i]), invert=True )
+                self.submodules += phy
+                rtio_channels.append(rtio.Channel.from_phy(phy))
+            
+        for i in range(2):
+            phy = ttl_serdes_7series.Inout_8X(platform.request("in", descrambleList[i]), invert=True)
+            self.submodules += phy
+            rtio_channels.append(rtio.Channel.from_phy(phy, ififo_depth=512))
+        for i in range(2,8):
+            phy = ttl_simple.Inout(platform.request("in", descrambleList[i]), invert=True)
+            self.submodules += phy
+            rtio_channels.append(rtio.Channel.from_phy(phy))            
+            
+        
+        phy = ttl_simple.Output(platform.request("ledFrontPanel", 1), invert=True)
+        self.submodules += phy
+        rtio_channels.append(rtio.Channel.from_phy(phy))
+        
+        
+        self.config["RTIO_REGULAR_TTL_COUNT"] = len(rtio_channels)
+
+        self.config["RTIO_DDS_CHANNEL"] = len(rtio_channels)
+        self.config["DDS_CHANNEL_COUNT"] = 0
+        self.config["DDS_AD9914"] = True
+
+        self.config["RTIO_LOG_CHANNEL"] = len(rtio_channels)
+        rtio_channels.append(rtio.LogChannel())
+
+        self.add_rtio(rtio_channels)
+
+        self.config["DDS_RTIO_CLK_RATIO"] = 24   
+
         
         
         
@@ -397,6 +469,8 @@ def main():
         cls = NIST_QC2
     elif hw_adapter == "oxford":
         cls = Oxford
+    elif hw_adapter == "oxfordOverride":
+        cls = OxfordOverride
     else:
         print("Invalid hardware adapter string (-H/--hw-adapter), "
               "choose from qc1, clock, qc2, oxford")
