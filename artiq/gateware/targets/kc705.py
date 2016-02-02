@@ -408,7 +408,7 @@ class OxfordOverride(_NIST_Ions):
                     phy = ttl_simple.Output(internalOutput)
                     overrideMod = TransparentOverride( pad, internalOutput, overrideInputs[i], inputOverride )
                     self.submodules += overrideMod
-                elif: bank=='g' and i==7:
+                elif bank=='g' and i==7:
                     pad = platform.request(bank, descrambleList[i])
                     phy = ttl_simple.Output(pad)
                     self.comb += inputOverride.eq(~pad)
@@ -421,8 +421,8 @@ class OxfordOverride(_NIST_Ions):
             phy = ttl_serdes_7series.Inout_8X(platform.request("in", descrambleList[i]), invert=True)
             self.submodules += phy
             rtio_channels.append(rtio.Channel.from_phy(phy, ififo_depth=512))
-        for i in range(2,8):
-            phy = ttl_simple.Inout(platform.request("in", descrambleList[i]), invert=True)
+        for i in range(5):
+            phy = ttl_simple.Inout( overrideInputs[i], invert=True)
             self.submodules += phy
             rtio_channels.append(rtio.Channel.from_phy(phy))            
             
@@ -469,11 +469,11 @@ def main():
         cls = NIST_QC2
     elif hw_adapter == "oxford":
         cls = Oxford
-    elif hw_adapter == "oxfordOverride":
+    elif hw_adapter == "oxfordoverride":
         cls = OxfordOverride
     else:
         print("Invalid hardware adapter string (-H/--hw-adapter), "
-              "choose from qc1, clock, qc2, oxford")
+              "choose from qc1, clock, qc2, oxford, oxfordOverride")
 
         sys.exit(1)
 
