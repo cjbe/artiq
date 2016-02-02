@@ -328,9 +328,9 @@ class NIST_QC2(_NIST_Ions):
 # This list maps the logical index to the physical index
 descrambleList = [ 3, 2, 1, 0, 7, 6, 5, 4 ];
         
-class Oxford(_NIST_QCx):
+class Oxford(_NIST_Ions):
     def __init__(self, cpu_type="or1k", **kwargs):
-        _NIST_QCx.__init__(self, cpu_type, **kwargs)
+        _NIST_Ions.__init__(self, cpu_type, **kwargs)
         
         platform = self.platform
         platform.add_extension(oxford.fmc_adapter_io)
@@ -364,9 +364,12 @@ class Oxford(_NIST_QCx):
         self.config["DDS_CHANNEL_COUNT"] = 0
         self.config["DDS_AD9914"] = True
 
+        self.config["RTIO_LOG_CHANNEL"] = len(rtio_channels)
+        rtio_channels.append(rtio.LogChannel())
+
         self.add_rtio(rtio_channels)
 
-        
+        self.config["DDS_RTIO_CLK_RATIO"] = 24        
         
         
         
@@ -396,7 +399,6 @@ def main():
         cls = Oxford
     else:
         print("Invalid hardware adapter string (-H/--hw-adapter), "
-              "choose from qc1, qc2, or ")
               "choose from qc1, clock, qc2, oxford")
 
         sys.exit(1)
