@@ -36,7 +36,7 @@ class Output(Module):
 
 
 class Inout(Module):
-    def __init__(self, pad):
+    def __init__(self, pad, invert=False):
         self.rtlink = rtlink.Interface(
             rtlink.OInterface(2, 2),
             rtlink.IInterface(1))
@@ -52,6 +52,9 @@ class Inout(Module):
         self.specials += ts.get_tristate(pad)
         sensitivity = Signal(2)
 
+        outputLogical = Signal()
+        self.comb += ts.o.eq(~outputLogical)
+
         o_k = Signal()
         oe_k = Signal()
         self.sync.rio_phy += [
@@ -60,19 +63,22 @@ class Inout(Module):
                 If(self.rtlink.o.address == 1, oe_k.eq(self.rtlink.o.data[0])),
             ),
             If(override_en,
-                ts.o.eq(override_o),
+                outputLogical.eq(override_o),
                 ts.oe.eq(override_oe)
             ).Else(
-                ts.o.eq(o_k),
+                outputLogical.eq(o_k),
                 ts.oe.eq(oe_k)
             )
         ]
         self.sync.rio += If(self.rtlink.o.stb & (self.rtlink.o.address == 2),
             sensitivity.eq(self.rtlink.o.data))
         
+        inputLogical = Signal()
+        self.comb += inputLogical.eq(~ts.i)
+
         i = Signal()
         i_d = Signal()
-        self.specials += MultiReg(ts.i, i, "rio_phy")
+        self.specials += MultiReg(inputLogical, i, "rio_phy")
         self.sync.rio_phy += i_d.eq(i)
         self.comb += [
             self.rtlink.i.stb.eq(
