@@ -353,7 +353,7 @@ class Oxford(_NIST_Ions):
             rtio_channels.append(rtio.Channel.from_phy(phy, ififo_depth=512))
             
         
-        phy = ttl_simple.Output(platform.request("ledFrontPanel", 1), invert=True)
+        phy = ttl_simple.Output(platform.request("ledFrontPanel", 1)) # No invert for the LEDs
         self.submodules += phy
         rtio_channels.append(rtio.Channel.from_phy(phy))
         
@@ -394,23 +394,23 @@ class OxfordOverride(_NIST_Ions):
 
         led = platform.request("ledFrontPanel", 0) 
         self.comb += led.eq(1) # Front panel LED0 hard wired on
-        
-        # The 5 'override inputs'
-        overrideInputs = [ platform.request("in", descrambleList[i]) for i in range(2,7) ]
+                
+        # The 6 'override inputs'
+        overrideInputs = [ platform.request("in", descrambleList[i]) for i in range(2,8) ]
 
         inputOverride = Signal()
 
         for bank in ['a','b','c','d','e','f','g']:
             for i in range(8):
-                if bank=='g' and i<5:
+                if bank=='g' and i<6:
                     pad = platform.request(bank, descrambleList[i])
                     internalOutput = Signal()
-                    phy = ttl_simple.Output(internalOutput)
+                    phy = ttl_simple.Output(internalOutput, invert=True)
                     overrideMod = TransparentOverride( pad, internalOutput, overrideInputs[i], inputOverride )
                     self.submodules += overrideMod
                 elif bank=='g' and i==7:
                     pad = platform.request(bank, descrambleList[i])
-                    phy = ttl_simple.Output(pad)
+                    phy = ttl_simple.Output(pad, invert=True)
                     self.comb += inputOverride.eq(~pad)
                 else:
                     phy = ttl_serdes_7series.Output_8X(platform.request(bank, descrambleList[i]), invert=True )
@@ -421,13 +421,13 @@ class OxfordOverride(_NIST_Ions):
             phy = ttl_serdes_7series.Inout_8X(platform.request("in", descrambleList[i]), invert=True)
             self.submodules += phy
             rtio_channels.append(rtio.Channel.from_phy(phy, ififo_depth=512))
-        for i in range(5):
+        for i in range(6):
             phy = ttl_simple.Inout( overrideInputs[i], invert=True)
             self.submodules += phy
             rtio_channels.append(rtio.Channel.from_phy(phy))            
             
         
-        phy = ttl_simple.Output(platform.request("ledFrontPanel", 1), invert=True)
+        phy = ttl_simple.Output(platform.request("ledFrontPanel", 1)) # No invert for the LEDs
         self.submodules += phy
         rtio_channels.append(rtio.Channel.from_phy(phy))
         
