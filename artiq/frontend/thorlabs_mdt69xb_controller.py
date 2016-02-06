@@ -3,13 +3,13 @@
 import argparse
 import sys
 
-from artiq.devices.thorlabsMDT693.driver import PiezoController, PiezoControllerSim
+from artiq.devices.thorlabs_mdt69xb.driver import PiezoController
 from artiq.protocols.pc_rpc import simple_server_loop
 from artiq.tools import verbosity_args, simple_network_args, init_logger
 
 
 def get_argparser():
-    parser = argparse.ArgumentParser(description="ARTIQ controller for the Thorlabs MDT693B 3 channel open-loop piezo controller")
+    parser = argparse.ArgumentParser(description="ARTIQ controller for the Thorlabs MDT693B or MDT694B 3 (1) channel open-loop piezo controller")
     simple_network_args(parser, 4002)
     parser.add_argument("-d", "--device", default=None,
                         help="serial device. See documentation for how to "

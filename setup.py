@@ -43,7 +43,7 @@ scripts = [
     "dosDac_controller=artiq.frontend.dosDac_controller:main",
     "arduinoDds_controller=artiq.frontend.arduinoDds_controller:main",
     "trapDac_controller=artiq.frontend.trapDac_controller:main",
-    "thorlabsMDT693_controller=artiq.frontend.thorlabsMDT693_controller:main"
+    "thorlabs_mdt69xb_controller=artiq.frontend.thorlabs_mdt69xb_controller:main"
 ]
 
 setup(
