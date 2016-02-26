@@ -1,12 +1,10 @@
-from artiq.language.core import *
-from artiq.language.units import *
+from artiq.language import *
 
 
 frame_setup = 20*ns
 trigger_duration = 50*ns
 sample_period = 10*ns
-delay_margin_factor = 1.0001
-channels_per_pdq2 = 9
+delay_margin_factor = 1 + 1e-4
 
 
 class FrameActiveError(Exception):
@@ -39,6 +37,7 @@ class _Segment:
         self.segment_number = segment_number
 
         self.lines = []
+        self.duration = 0*s
 
         # for @kernel
         self.core = frame.pdq.core
@@ -49,12 +48,10 @@ class _Segment:
         if self.frame.pdq.armed:
             raise ArmError()
         self.lines.append((dac_divider, duration, channel_data))
+        self.duration += duration*sample_period/dac_divider
 
     def get_duration(self):
-        r = 0*s
-        for dac_divider, duration, _ in self.lines:
-            r += duration*sample_period/dac_divider
-        return r
+        return self.duration
 
     @kernel
     def advance(self):
@@ -63,8 +60,8 @@ class _Segment:
         if not self.frame.pdq.armed:
             raise ArmError()
         # If a frame is currently being played, check that we are next.
-        if (self.frame.pdq.current_frame >= 0
-                and self.frame.pdq.next_segment != self.segment_number):
+        if (self.frame.pdq.current_frame >= 0 and
+                self.frame.pdq.next_segment != self.segment_number):
             raise SegmentSequenceError()
         self.frame.advance()
 
@@ -97,7 +94,7 @@ class _Frame:
 
     def _arm(self):
         self.segment_delays = [
-            seconds_to_mu(s.get_duration()*delay_margin_factor, self.core)
+            seconds_to_mu(s.duration*delay_margin_factor, self.core)
             for s in self.segments]
 
     def _invalidate(self):
@@ -106,6 +103,9 @@ class _Frame:
     def _get_program(self):
         r = []
         for segment in self.segments:
+            if segment.duration < 2*trigger_duration:
+                raise ValueError(("Segment too short ({:g} s), trigger might "
+                                  "spill").format(segment.duration))
             segment_program = [
                 {
                     "dac_divider": dac_divider,
@@ -171,18 +171,24 @@ class CompoundPDQ2:
     def disarm(self):
         for frame in self.frames:
             frame._invalidate()
-        self.frames = []
+        self.frames.clear()
+        for dev in self.pdq2s:
+            dev.park()
         self.armed = False
+
+    def get_program(self):
+        return [f._get_program() for f in self.frames]
 
     def arm(self):
         if self.armed:
             raise ArmError()
         for frame in self.frames:
             frame._arm()
-        self.armed = True
 
-        full_program = [f._get_program() for f in self.frames]
-        for n, pdq2 in enumerate(self.pdq2s):
+        full_program = self.get_program()
+        n = 0
+        for pdq2 in self.pdq2s:
+            dn = pdq2.get_num_channels()
             program = []
             for full_frame_program in full_program:
                 frame_program = []
@@ -190,13 +196,16 @@ class CompoundPDQ2:
                     line = {
                         "dac_divider": full_line["dac_divider"],
                         "duration": full_line["duration"],
-                        "channel_data": full_line["channel_data"]
-                        [n*channels_per_pdq2:(n+1)*channels_per_pdq2],
+                        "channel_data": full_line["channel_data"][n:n + dn],
                         "trigger": full_line["trigger"],
                     }
                     frame_program.append(line)
                 program.append(frame_program)
             pdq2.program(program)
+            n += dn
+        for pdq2 in self.pdq2s:
+            pdq2.unpark()
+        self.armed = True
 
     def create_frame(self):
         if self.armed:

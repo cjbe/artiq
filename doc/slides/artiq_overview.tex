@@ -132,7 +132,6 @@ with sequential:
     \item \verb!a! and \verb!b! pulses both start at the same time
     \item \verb!c! and \verb!d! pulses both start when \verb!a! and \verb!b! are both done
       (after 20\,µs)
-    \item Implemented by inlining, loop-unrolling, and interleaving
   \end{itemize}
 \end{frame}
 
@@ -219,11 +218,6 @@ class Experiment:
   \frametitle{Kernel deployment to the core device}
   \footnotesize
   \begin{itemize}
-    \item RPC and exception mappings are generated
-    \item Constants and small kernels are inlined
-    \item Small loops are unrolled
-    \item Statements in parallel blocks are interleaved
-    \item Time is converted to RTIO clock cycles
     \item The Python AST is converted to LLVM IR
     \item The LLVM IR is compiled to OpenRISC machine code
     \item The OpenRISC binary is sent to the core device
@@ -244,7 +238,7 @@ class Experiment:
   \item Scheduling of experiments \\
       e.g.\ calibrations, queue
   \item Archival of results (HDF5 format)
-  \item Graphical user interface \\ 
+  \item Graphical user interface \\
   	run with arguments, schedule, real-time plotting
   \end{itemize}
 \end{frame}
@@ -262,7 +256,7 @@ class Experiment:
   \item Novatech 409B DDS
   \item Thorlabs motor controllers
   \end{itemize}
-\end{frame}  
+\end{frame}
 
 \begin{frame}
   \begin{center}

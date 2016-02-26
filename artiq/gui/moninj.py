@@ -4,8 +4,7 @@ import socket
 import struct
 from operator import itemgetter
 
-from quamash import QtGui, QtCore
-from pyqtgraph import dockarea
+from PyQt5 import QtCore, QtWidgets
 
 from artiq.tools import TaskObject
 from artiq.protocols.sync_struct import Subscriber
@@ -22,56 +21,56 @@ _mode_enc = {
 }
 
 
-class _TTLWidget(QtGui.QFrame):
+class _TTLWidget(QtWidgets.QFrame):
     def __init__(self, channel, send_to_device, force_out, title):
         self.channel = channel
         self.send_to_device = send_to_device
         self.force_out = force_out
 
-        QtGui.QFrame.__init__(self)
+        QtWidgets.QFrame.__init__(self)
 
-        self.setFrameShape(QtGui.QFrame.Panel)
-        self.setFrameShadow(QtGui.QFrame.Raised)
+        self.setFrameShape(QtWidgets.QFrame.Panel)
+        self.setFrameShadow(QtWidgets.QFrame.Raised)
 
-        grid = QtGui.QGridLayout()
+        grid = QtWidgets.QGridLayout()
         self.setLayout(grid)
-        label = QtGui.QLabel(title)
+        label = QtWidgets.QLabel(title)
         label.setAlignment(QtCore.Qt.AlignCenter)
         label.setWordWrap(True)
         grid.addWidget(label, 1, 1)
 
-        self._direction = QtGui.QLabel()
+        self._direction = QtWidgets.QLabel()
         self._direction.setAlignment(QtCore.Qt.AlignCenter)
         grid.addWidget(self._direction, 2, 1)
-        self._override = QtGui.QLabel()
+        self._override = QtWidgets.QLabel()
         self._override.setAlignment(QtCore.Qt.AlignCenter)
         grid.addWidget(self._override, 3, 1)
-        self._value = QtGui.QLabel()
+        self._value = QtWidgets.QLabel()
         self._value.setAlignment(QtCore.Qt.AlignCenter)
         grid.addWidget(self._value, 4, 1, 6, 1)
 
         self._value.setContextMenuPolicy(QtCore.Qt.ActionsContextMenu)
-        menu = QtGui.QActionGroup(self._value)
+        menu = QtWidgets.QActionGroup(self._value)
         menu.setExclusive(True)
-        self._expctl_action = QtGui.QAction("Experiment controlled", self._value)
+        self._expctl_action = QtWidgets.QAction("Experiment controlled", self._value)
         self._expctl_action.setCheckable(True)
         menu.addAction(self._expctl_action)
         self._value.addAction(self._expctl_action)
         self._expctl_action.triggered.connect(lambda: self.set_mode("exp"))
-        separator = QtGui.QAction(self._value)
+        separator = QtWidgets.QAction(self._value)
         separator.setSeparator(True)
         self._value.addAction(separator)
-        self._force1_action = QtGui.QAction("Force 1", self._value)
+        self._force1_action = QtWidgets.QAction("Force 1", self._value)
         self._force1_action.setCheckable(True)
         menu.addAction(self._force1_action)
         self._value.addAction(self._force1_action)
         self._force1_action.triggered.connect(lambda: self.set_mode("1"))
-        self._force0_action = QtGui.QAction("Force 0", self._value)
+        self._force0_action = QtWidgets.QAction("Force 0", self._value)
         self._force0_action.setCheckable(True)
         menu.addAction(self._force0_action)
         self._value.addAction(self._force0_action)
         self._force0_action.triggered.connect(lambda: self.set_mode("0"))
-        self._forcein_action = QtGui.QAction("Force input", self._value)
+        self._forcein_action = QtWidgets.QAction("Force input", self._value)
         self._forcein_action.setCheckable(True)
         self._forcein_action.setEnabled(not force_out)
         menu.addAction(self._forcein_action)
@@ -118,24 +117,24 @@ class _TTLWidget(QtGui.QFrame):
             self._expctl_action.setChecked(True)
 
 
-class _DDSWidget(QtGui.QFrame):
+class _DDSWidget(QtWidgets.QFrame):
     def __init__(self, channel, sysclk, title):
         self.channel = channel
         self.sysclk = sysclk
 
-        QtGui.QFrame.__init__(self)
+        QtWidgets.QFrame.__init__(self)
 
-        self.setFrameShape(QtGui.QFrame.Panel)
-        self.setFrameShadow(QtGui.QFrame.Raised)
+        self.setFrameShape(QtWidgets.QFrame.Panel)
+        self.setFrameShadow(QtWidgets.QFrame.Raised)
 
-        grid = QtGui.QGridLayout()
+        grid = QtWidgets.QGridLayout()
         self.setLayout(grid)
-        label = QtGui.QLabel(title)
+        label = QtWidgets.QLabel(title)
         label.setAlignment(QtCore.Qt.AlignCenter)
         label.setWordWrap(True)
         grid.addWidget(label, 1, 1)
 
-        self._value = QtGui.QLabel()
+        self._value = QtWidgets.QLabel()
         self._value.setAlignment(QtCore.Qt.AlignCenter)
         self._value.setWordWrap(True)
         grid.addWidget(self._value, 2, 1, 6, 1)
@@ -213,25 +212,27 @@ class _DeviceManager:
             return None
 
 
-class _MonInjDock(dockarea.Dock):
+class _MonInjDock(QtWidgets.QDockWidget):
     def __init__(self, name):
-        dockarea.Dock.__init__(self, name, size=(1500, 500))
-        self.grid = QtGui.QGridLayout()
-        self.gridw = QtGui.QWidget()
-        self.gridw.setLayout(self.grid)
-        
-        self.scrollArea = QtGui.QScrollArea()
-        self.addWidget(self.scrollArea)
+        QtWidgets.QDockWidget.__init__(self, name)
+        self.setObjectName(name)
+        self.setFeatures(QtWidgets.QDockWidget.DockWidgetMovable |
+                         QtWidgets.QDockWidget.DockWidgetFloatable)
+
 
     def layout_widgets(self, widgets):
-        w = self.grid.itemAt(0)
-        while w is not None:
-            self.grid.removeItem(w)
-            w = self.grid.itemAt(0)
+        scroll_area = QtWidgets.QScrollArea()
+        self.setWidget(scroll_area)
+
+        grid = QtWidgets.QGridLayout()
+        grid_widget = QtWidgets.QWidget()
+        grid_widget.setLayout(grid)
+
         for i, (_, w) in enumerate(sorted(widgets, key=itemgetter(0))):
-            self.grid.addWidget(w, i // 8, i % 8)
-        self.scrollArea.setWidget(self.gridw)
-        self.scrollArea.show()
+            grid.addWidget(w, i // 4, i % 4)
+            grid.setColumnStretch(i % 4, 1)
+
+        scroll_area.setWidget(grid_widget)
 
 
 class MonInj(TaskObject):

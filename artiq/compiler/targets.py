@@ -43,6 +43,18 @@ class RunTool:
         for f in self.files:
             f.close()
 
+def _dump(target, kind, suffix, content):
+    if target is not None:
+        print("====== {} DUMP ======".format(kind.upper()), file=sys.stderr)
+        content_bytes = bytes(content(), 'utf-8')
+        if target == "":
+            file = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
+        else:
+            file = open(target + suffix, "wb")
+        file.write(content_bytes)
+        file.close()
+        print("{} dumped as {}".format(kind, file.name), file=sys.stderr)
+
 class Target:
     """
     A description of the target environment where the binaries
@@ -61,7 +73,6 @@ class Target:
     triple = "unknown"
     data_layout = ""
     features = []
-    print_function = "printf"
 
 
     def __init__(self):
@@ -74,11 +85,9 @@ class Target:
             print("====== MODULE_SIGNATURE DUMP ======", file=sys.stderr)
             print(module, file=sys.stderr)
 
-        if os.getenv("ARTIQ_DUMP_IR"):
-            print("====== ARTIQ IR DUMP ======", file=sys.stderr)
-            type_printer = types.TypePrinter()
-            for function in module.artiq_ir:
-                print(function.as_entity(type_printer), file=sys.stderr)
+        type_printer = types.TypePrinter()
+        _dump(os.getenv("ARTIQ_DUMP_IR"), "ARTIQ IR", ".txt",
+              lambda: "\n".join(fn.as_entity(type_printer) for fn in module.artiq_ir))
 
         llmod = module.build_llvm_ir(self)
 
@@ -86,13 +95,11 @@ class Target:
             llparsedmod = llvm.parse_assembly(str(llmod))
             llparsedmod.verify()
         except RuntimeError:
-            print("====== LLVM IR DUMP (PARSE FAILED) ======", file=sys.stderr)
-            print(str(llmod), file=sys.stderr)
+            _dump("", "LLVM IR (broken)", ".ll", lambda: str(llmod))
             raise
 
-        if os.getenv("ARTIQ_DUMP_LLVM"):
-            print("====== LLVM IR DUMP ======", file=sys.stderr)
-            print(str(llparsedmod), file=sys.stderr)
+        _dump(os.getenv("ARTIQ_DUMP_UNOPT_LLVM"), "LLVM IR (generated)", "_unopt.ll",
+              lambda: str(llparsedmod))
 
         llpassmgrbuilder = llvm.create_pass_manager_builder()
         llpassmgrbuilder.opt_level  = 2 # -O2
@@ -103,20 +110,21 @@ class Target:
         llpassmgrbuilder.populate(llpassmgr)
         llpassmgr.run(llparsedmod)
 
-        if os.getenv("ARTIQ_DUMP_LLVM"):
-            print("====== LLVM IR DUMP (OPTIMIZED) ======", file=sys.stderr)
-            print(str(llparsedmod), file=sys.stderr)
+        _dump(os.getenv("ARTIQ_DUMP_LLVM"), "LLVM IR (optimized)", ".ll",
+              lambda: str(llparsedmod))
 
+        return llparsedmod
+
+    def assemble(self, llmodule):
         lltarget = llvm.Target.from_triple(self.triple)
         llmachine = lltarget.create_target_machine(
                         features=",".join(["+{}".format(f) for f in self.features]),
                         reloc="pic", codemodel="default")
 
-        if os.getenv("ARTIQ_DUMP_ASSEMBLY"):
-            print("====== ASSEMBLY DUMP ======", file=sys.stderr)
-            print(llmachine.emit_assembly(llparsedmod), file=sys.stderr)
+        _dump(os.getenv("ARTIQ_DUMP_ASM"), "Assembly", ".s",
+              lambda: llmachine.emit_assembly(llmodule))
 
-        return llmachine.emit_object(llparsedmod)
+        return llmachine.emit_object(llmodule)
 
     def link(self, objects, init_fn):
         """Link the relocatable objects into a shared library for this target."""
@@ -128,17 +136,13 @@ class Target:
                 as results:
             library = results["output"].read()
 
-            if os.getenv("ARTIQ_DUMP_ELF"):
-                shlib_temp = tempfile.NamedTemporaryFile(suffix=".so", delete=False)
-                shlib_temp.write(library)
-                shlib_temp.close()
-                print("====== SHARED LIBRARY DUMP ======", file=sys.stderr)
-                print("Shared library dumped as {}".format(shlib_temp.name), file=sys.stderr)
+            _dump(os.getenv("ARTIQ_DUMP_ELF"), "Shared library", ".so",
+                  lambda: library)
 
             return library
 
     def compile_and_link(self, modules):
-        return self.link([self.compile(module) for module in modules],
+        return self.link([self.assemble(self.compile(module)) for module in modules],
                          init_fn=modules[0].entry_point())
 
     def strip(self, library):
@@ -151,20 +155,35 @@ class Target:
         if addresses == []:
             return []
 
-        # Addresses point one instruction past the jump; offset them back by 1.
+        # We got a list of return addresses, i.e. addresses of instructions
+        # just after the call. Offset them back to get an address somewhere
+        # inside the call instruction (or its delay slot), since that's what
+        # the backtrace entry should point at.
         offset_addresses = [hex(addr - 1) for addr in addresses]
-        with RunTool([self.triple + "-addr2line", "--functions", "--inlines",
+        with RunTool([self.triple + "-addr2line", "--addresses",  "--functions", "--inlines",
                       "--exe={library}"] + offset_addresses,
                      library=library) \
                 as results:
-            lines = results["__stdout__"].rstrip().split("\n")
+            lines = iter(results["__stdout__"].rstrip().split("\n"))
             backtrace = []
-            for function_name, location, address in zip(lines[::2], lines[1::2], addresses):
+            while True:
+                try:
+                    address_or_function = next(lines)
+                except StopIteration:
+                    break
+                if address_or_function[:2] == "0x":
+                    address  = int(address_or_function[2:], 16) + 1 # remove offset
+                    function = next(lines)
+                else:
+                    address  = backtrace[-1][4] # inlined
+                    function = address_or_function
+                location = next(lines)
+
                 filename, line = location.rsplit(":", 1)
-                if filename == "??":
+                if filename == "??" or filename == "<synthesized>":
                     continue
                 # can't get column out of addr2line D:
-                backtrace.append((filename, int(line), -1, function_name, address))
+                backtrace.append((filename, int(line), -1, function, address))
             return backtrace
 
 class NativeTarget(Target):
@@ -176,4 +195,3 @@ class OR1KTarget(Target):
     triple = "or1k-linux"
     data_layout = "E-m:e-p:32:32-i64:32-f64:32-v64:32-v128:32-a:0:32-n32"
     features = ["mul", "div", "ffl1", "cmov", "addc"]
-    print_function = "lognonl"

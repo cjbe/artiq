@@ -358,8 +358,10 @@ class LLVMIRGenerator:
             llty = ll.FunctionType(llptr, [])
         elif name == "llvm.stackrestore":
             llty = ll.FunctionType(llvoid, [llptr])
-        elif name == self.target.print_function:
+        elif name == "printf":
             llty = ll.FunctionType(llvoid, [llptr], var_arg=True)
+        elif name == "rtio_log":
+            llty = ll.FunctionType(llvoid, [lli64, llptr], var_arg=True)
         elif name == "__artiq_personality":
             llty = ll.FunctionType(lli32, [], var_arg=True)
         elif name == "__artiq_raise":
@@ -441,7 +443,7 @@ class LLVMIRGenerator:
         lldatalayout = llvm.create_target_data(self.llmodule.data_layout)
 
         llrpcattrty = self.llcontext.get_identified_type("attr_desc")
-        llrpcattrty.elements = [lli32, llptr, llptr]
+        llrpcattrty.elements = [lli32, lli32, llptr, llptr]
 
         lldescty = self.llcontext.get_identified_type("type_desc")
         lldescty.elements = [llrpcattrty.as_pointer().as_pointer(), llptr.as_pointer()]
@@ -457,7 +459,10 @@ class LLVMIRGenerator:
                 type_name = "instance.{}".format(typ.name)
 
             def llrpcattr_of_attr(name, typ):
-                size = self.llty_of_type(typ).get_abi_size(lldatalayout, context=self.llcontext)
+                size      = self.llty_of_type(typ). \
+                    get_abi_size(lldatalayout, context=self.llcontext)
+                alignment = self.llty_of_type(typ). \
+                    get_abi_alignment(lldatalayout, context=self.llcontext)
 
                 def rpc_tag_error(typ):
                     print(typ)
@@ -474,12 +479,13 @@ class LLVMIRGenerator:
                                               name="attr.{}.{}".format(type_name, name))
                 llrpcattr.initializer = ll.Constant(llrpcattrty, [
                     ll.Constant(lli32, size),
+                    ll.Constant(lli32, alignment),
                     llrpctag,
                     self.llstr_of_str(name)
                 ])
                 llrpcattr.global_constant = True
                 llrpcattr.unnamed_addr = True
-                llrpcattr.linkage = 'internal'
+                llrpcattr.linkage = 'private'
 
                 return llrpcattr
 
@@ -493,14 +499,14 @@ class LLVMIRGenerator:
                 llrpcattrs + [ll.Constant(llrpcattrty.as_pointer(), None)])
             llrpcattrary.global_constant = True
             llrpcattrary.unnamed_addr = True
-            llrpcattrary.linkage = 'internal'
+            llrpcattrary.linkage = 'private'
 
             llobjectaryty = ll.ArrayType(llptr, len(llobjects[typ]) + 1)
             llobjectary = ll.GlobalVariable(self.llmodule, llobjectaryty,
                                             name="objects.{}".format(type_name))
             llobjectary.initializer = ll.Constant(llobjectaryty,
                 llobjects[typ] + [ll.Constant(llptr, None)])
-            llobjectary.linkage = 'internal'
+            llobjectary.linkage = 'private'
 
             lldesc = ll.GlobalVariable(self.llmodule, lldescty,
                                        name="desc.{}".format(type_name))
@@ -509,7 +515,7 @@ class LLVMIRGenerator:
                 llobjectary.bitcast(llptr.as_pointer())
             ])
             lldesc.global_constant = True
-            lldesc.linkage = 'internal'
+            lldesc.linkage = 'private'
             lldescs.append(lldesc)
 
         llglobaldescty = ll.ArrayType(lldescty.as_pointer(), len(lldescs) + 1)
@@ -523,7 +529,7 @@ class LLVMIRGenerator:
             self.llfunction = self.map(func)
 
             if func.is_internal:
-                self.llfunction.linkage = 'internal'
+                self.llfunction.linkage = 'private'
 
             self.llfunction.attributes.add('uwtable')
 
@@ -892,10 +898,10 @@ class LLVMIRGenerator:
         elif insn.op == "len":
             lst, = insn.operands
             return self.llbuilder.extract_value(self.map(lst), 0)
-        elif insn.op == "printf":
+        elif insn.op in ("printf", "rtio_log"):
             # We only get integers, floats, pointers and strings here.
             llargs = map(self.map, insn.operands)
-            return self.llbuilder.call(self.llbuiltin(self.target.print_function), llargs,
+            return self.llbuilder.call(self.llbuiltin(insn.op), llargs,
                                        name=insn.name)
         elif insn.op == "exncast":
             # This is an identity cast at LLVM IR level.

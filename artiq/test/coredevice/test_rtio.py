@@ -1,10 +1,14 @@
 # Copyright (C) 2014, 2015 M-Labs Limited
 # Copyright (C) 2014, 2015 Robert Jordens <jordens@gmail.com>
 
+import os, unittest
+
 from math import sqrt
 
 from artiq.experiment import *
 from artiq.test.hardware_testbench import ExperimentCase
+
+artiq_low_latency = os.getenv("ARTIQ_LOW_LATENCY")
 
 
 class RTT(EnvExperiment):
@@ -16,7 +20,7 @@ class RTT(EnvExperiment):
     def run(self):
         self.ttl_inout.output()
         delay(1*us)
-        with parallel:
+        with interleave:
             # make sure not to send two commands into the same RTIO
             # channel with the same timestamp
             self.ttl_inout.gate_rising(5*us)
@@ -100,7 +104,8 @@ class Watchdog(EnvExperiment):
 class LoopbackCount(EnvExperiment):
     def build(self):
         self.setattr_device("core")
-        self.setattr_device("ttl_inout")
+        self.setattr_device("loop_in")
+        self.setattr_device("loop_out")
         self.setattr_argument("npulses")
 
     def set_count(self, count):
@@ -108,15 +113,15 @@ class LoopbackCount(EnvExperiment):
 
     @kernel
     def run(self):
-        self.ttl_inout.output()
+        self.loop_out.output()
         delay(5*us)
         with parallel:
-            self.ttl_inout.gate_rising(10*us)
+            self.loop_in.gate_rising(10*us)
             with sequential:
                 for i in range(self.npulses):
                     delay(25*ns)
-                    self.ttl_inout.pulse(25*ns)
-        self.set_dataset("count", self.ttl_inout.count())
+                    self.loop_out.pulse(25*ns)
+        self.set_dataset("count", self.loop_in.count())
 
 
 class Underflow(EnvExperiment):
@@ -181,13 +186,6 @@ class Handover(EnvExperiment):
 
 
 class CoredeviceTest(ExperimentCase):
-    def test_rtt(self):
-        self.execute(RTT)
-        rtt = self.dataset_mgr.get("rtt")
-        print(rtt)
-        self.assertGreater(rtt, 0*ns)
-        self.assertLess(rtt, 100*ns)
-
     def test_loopback(self):
         self.execute(Loopback)
         rtt = self.dataset_mgr.get("rtt")
@@ -230,6 +228,8 @@ class CoredeviceTest(ExperimentCase):
         with self.assertRaises(IOError):
             self.execute(Watchdog)
 
+    @unittest.skipUnless(artiq_low_latency,
+                         "timings are dependent on CPU load and network conditions")
     def test_time_keeps_running(self):
         self.execute(TimeKeepsRunning)
         t1 = self.dataset_mgr.get("time_at_start")
@@ -272,6 +272,8 @@ class RPCTiming(EnvExperiment):
 
 
 class RPCTest(ExperimentCase):
+    @unittest.skipUnless(artiq_low_latency,
+                         "timings are dependent on CPU load and network conditions")
     def test_rpc_timing(self):
         self.execute(RPCTiming)
         self.assertGreater(self.dataset_mgr.get("rpc_time_mean"), 100*ns)

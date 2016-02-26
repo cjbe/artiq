@@ -134,6 +134,28 @@ Try reducing the period of the generated waveform until the CPU cannot keep up w
             except RTIOUnderflow:
                 print_underflow()
 
+RTIO analyzer
+-------------
+
+The core device records the real-time IO waveforms into a circular buffer. It is possible to dump any Python object so that it appears alongside the waveforms using the ``rtio_log`` function, which accepts a channel name (i.e. a log target) as the first argument: ::
+
+    from artiq.experiment import *
+
+
+    class Tutorial(EnvExperiment):
+        def build(self):
+            self.setattr_device("core")
+            self.setattr_device("ttl0")
+
+        @kernel
+        def run(self):
+            for i in range(100):
+                self.ttl0.pulse(...)
+                rtio_log("ttl0", "i", i)
+                delay(...)
+
+Afterwards, the recorded data can be extracted and written to a VCD file using ``artiq_coreanalyzer -w rtio.vcd`` (see: :ref:`core-device-rtio-analyzer-tool`). VCD files can be viewed using third-party tools such as GtkWave.
+
 Parallel and sequential blocks
 ------------------------------
 
@@ -158,5 +180,5 @@ Within a parallel block, some statements can be made sequential again using a ``
             self.ttl1.pulse(4*us)
         delay(4*us)
 
-.. warning::
-    In its current implementation, ARTIQ only supports those pulse sequences that can be interleaved at compile time into a sequential series of on/off events. Combinations of ``parallel``/``sequential`` blocks that require multithreading (due to the parallel execution of long loops, complex algorithms, or algorithms that depend on external input) will cause the compiler to return an error.
+.. note::
+    Branches of a ``parallel`` block are executed one after another, with a reset of the internal RTIO time variable before moving to the next branch. If a branch takes a lot of CPU time, it may cause an underflow when the next branch begins its execution.

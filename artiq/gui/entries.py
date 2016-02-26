@@ -1,13 +1,106 @@
 import logging
 from collections import OrderedDict
 
-from quamash import QtGui, QtCore
-from pyqtgraph import LayoutWidget
+from PyQt5 import QtCore, QtGui, QtWidgets
 
-from artiq.gui.tools import disable_scroll_wheel
+from artiq.gui.tools import LayoutWidget, disable_scroll_wheel
 
 
 logger = logging.getLogger(__name__)
+
+
+class _StringEntry(QtWidgets.QLineEdit):
+    def __init__(self, argument):
+        QtWidgets.QLineEdit.__init__(self)
+        self.setText(argument["state"])
+        def update(text):
+            argument["state"] = text
+        self.textEdited.connect(update)
+
+    @staticmethod
+    def state_to_value(state):
+        return state
+
+    @staticmethod
+    def default_state(procdesc):
+        return procdesc.get("default", "")
+
+
+class _BooleanEntry(QtWidgets.QCheckBox):
+    def __init__(self, argument):
+        QtWidgets.QCheckBox.__init__(self)
+        self.setChecked(argument["state"])
+        def update(checked):
+            argument["state"] = bool(checked)
+        self.stateChanged.connect(update)
+
+    @staticmethod
+    def state_to_value(state):
+        return state
+
+    @staticmethod
+    def default_state(procdesc):
+        return procdesc.get("default", False)
+
+
+class _EnumerationEntry(QtWidgets.QComboBox):
+    def __init__(self, argument):
+        QtWidgets.QComboBox.__init__(self)
+        disable_scroll_wheel(self)
+        choices = argument["desc"]["choices"]
+        self.addItems(choices)
+        idx = choices.index(argument["state"])
+        self.setCurrentIndex(idx)
+        def update(index):
+            argument["state"] = choices[index]
+        self.currentIndexChanged.connect(update)
+
+    @staticmethod
+    def state_to_value(state):
+        return state
+
+    @staticmethod
+    def default_state(procdesc):
+        if "default" in procdesc:
+            return procdesc["default"]
+        else:
+            return procdesc["choices"][0]
+
+
+class _NumberEntry(QtWidgets.QDoubleSpinBox):
+    def __init__(self, argument):
+        QtWidgets.QDoubleSpinBox.__init__(self)
+        disable_scroll_wheel(self)
+        procdesc = argument["desc"]
+        scale = procdesc["scale"]
+        self.setDecimals(procdesc["ndecimals"])
+        self.setSingleStep(procdesc["step"]/scale)
+        if procdesc["min"] is not None:
+            self.setMinimum(procdesc["min"]/scale)
+        else:
+            self.setMinimum(float("-inf"))
+        if procdesc["max"] is not None:
+            self.setMaximum(procdesc["max"]/scale)
+        else:
+            self.setMaximum(float("inf"))
+        if procdesc["unit"]:
+            self.setSuffix(" " + procdesc["unit"])
+
+        self.setValue(argument["state"]/scale)
+        def update(value):
+            argument["state"] = value*scale
+        self.valueChanged.connect(update)
+
+    @staticmethod
+    def state_to_value(state):
+        return state
+
+    @staticmethod
+    def default_state(procdesc):
+        if "default" in procdesc:
+            return procdesc["default"]
+        else:
+            return 0.0
 
 
 class _NoScan(LayoutWidget):
@@ -15,7 +108,7 @@ class _NoScan(LayoutWidget):
         LayoutWidget.__init__(self)
 
         scale = procdesc["scale"]
-        self.value = QtGui.QDoubleSpinBox()
+        self.value = QtWidgets.QDoubleSpinBox()
         disable_scroll_wheel(self.value)
         self.value.setDecimals(procdesc["ndecimals"])
         if procdesc["global_min"] is not None:
@@ -29,7 +122,7 @@ class _NoScan(LayoutWidget):
         self.value.setSingleStep(procdesc["global_step"]/scale)
         if procdesc["unit"]:
             self.value.setSuffix(" " + procdesc["unit"])
-        self.addWidget(QtGui.QLabel("Value:"), 0, 0)
+        self.addWidget(QtWidgets.QLabel("Value:"), 0, 0)
         self.addWidget(self.value, 0, 1)
 
         self.value.setValue(state["value"]/scale)
@@ -38,7 +131,7 @@ class _NoScan(LayoutWidget):
         self.value.valueChanged.connect(update)
 
 
-class _Range(LayoutWidget):
+class _RangeScan(LayoutWidget):
     def __init__(self, procdesc, state):
         LayoutWidget.__init__(self)
 
@@ -58,20 +151,20 @@ class _Range(LayoutWidget):
             if procdesc["unit"]:
                 spinbox.setSuffix(" " + procdesc["unit"])
 
-        self.addWidget(QtGui.QLabel("Min:"), 0, 0)
-        self.min = QtGui.QDoubleSpinBox()
+        self.addWidget(QtWidgets.QLabel("Min:"), 0, 0)
+        self.min = QtWidgets.QDoubleSpinBox()
         disable_scroll_wheel(self.min)
         apply_properties(self.min)
         self.addWidget(self.min, 0, 1)
 
-        self.addWidget(QtGui.QLabel("Max:"), 1, 0)
-        self.max = QtGui.QDoubleSpinBox()
+        self.addWidget(QtWidgets.QLabel("Max:"), 1, 0)
+        self.max = QtWidgets.QDoubleSpinBox()
         disable_scroll_wheel(self.max)
         apply_properties(self.max)
         self.addWidget(self.max, 1, 1)
 
-        self.addWidget(QtGui.QLabel("#Points:"), 2, 0)
-        self.npoints = QtGui.QSpinBox()
+        self.addWidget(QtWidgets.QLabel("#Points:"), 2, 0)
+        self.npoints = QtWidgets.QSpinBox()
         disable_scroll_wheel(self.npoints)
         self.npoints.setMinimum(2)
         self.npoints.setValue(10)
@@ -90,12 +183,13 @@ class _Range(LayoutWidget):
         self.max.valueChanged.connect(update_max)
         self.npoints.valueChanged.connect(update_npoints)
 
-class _Explicit(LayoutWidget):
+
+class _ExplicitScan(LayoutWidget):
     def __init__(self, state):
         LayoutWidget.__init__(self)
 
-        self.value = QtGui.QLineEdit()
-        self.addWidget(QtGui.QLabel("Sequence:"), 0, 0)
+        self.value = QtWidgets.QLineEdit()
+        self.addWidget(QtWidgets.QLabel("Sequence:"), 0, 0)
         self.addWidget(self.value, 0, 1)
 
         float_regexp = "[-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?"
@@ -109,30 +203,30 @@ class _Explicit(LayoutWidget):
         self.value.textEdited.connect(update)
 
 
-class ScanController(LayoutWidget):
+class _ScanEntry(LayoutWidget):
     def __init__(self, argument):
         LayoutWidget.__init__(self)
         self.argument = argument
 
-        self.stack = QtGui.QStackedWidget()
+        self.stack = QtWidgets.QStackedWidget()
         self.addWidget(self.stack, 1, 0, colspan=4)
 
         procdesc = argument["desc"]
         state = argument["state"]
         self.widgets = OrderedDict()
         self.widgets["NoScan"] = _NoScan(procdesc, state["NoScan"])
-        self.widgets["LinearScan"] = _Range(procdesc, state["LinearScan"])
-        self.widgets["RandomScan"] = _Range(procdesc, state["RandomScan"])
-        self.widgets["ExplicitScan"] = _Explicit(state["ExplicitScan"])
+        self.widgets["LinearScan"] = _RangeScan(procdesc, state["LinearScan"])
+        self.widgets["RandomScan"] = _RangeScan(procdesc, state["RandomScan"])
+        self.widgets["ExplicitScan"] = _ExplicitScan(state["ExplicitScan"])
         for widget in self.widgets.values():
             self.stack.addWidget(widget)
 
         self.radiobuttons = OrderedDict()
-        self.radiobuttons["NoScan"] = QtGui.QRadioButton("No scan")
-        self.radiobuttons["LinearScan"] = QtGui.QRadioButton("Linear")
-        self.radiobuttons["RandomScan"] = QtGui.QRadioButton("Random")
-        self.radiobuttons["ExplicitScan"] = QtGui.QRadioButton("Explicit")
-        scan_type = QtGui.QButtonGroup()
+        self.radiobuttons["NoScan"] = QtWidgets.QRadioButton("No scan")
+        self.radiobuttons["LinearScan"] = QtWidgets.QRadioButton("Linear")
+        self.radiobuttons["RandomScan"] = QtWidgets.QRadioButton("Random")
+        self.radiobuttons["ExplicitScan"] = QtWidgets.QRadioButton("Explicit")
+        scan_type = QtWidgets.QButtonGroup()
         for n, b in enumerate(self.radiobuttons.values()):
             self.addWidget(b, 0, n)
             scan_type.addButton(b)
@@ -181,3 +275,13 @@ class ScanController(LayoutWidget):
                 self.stack.setCurrentWidget(self.widgets[ty])
                 self.argument["state"]["selected"] = ty
                 break
+
+
+argty_to_entry = {
+    "PYONValue": _StringEntry,
+    "BooleanValue": _BooleanEntry,
+    "EnumerationValue": _EnumerationEntry,
+    "NumberValue": _NumberEntry,
+    "StringValue": _StringEntry,
+    "Scannable": _ScanEntry
+}

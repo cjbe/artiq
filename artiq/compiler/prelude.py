@@ -31,6 +31,7 @@ def globals():
 
         # ARTIQ context managers
         "parallel":             builtins.obj_parallel(),
+        "interleave":           builtins.obj_interleave(),
         "sequential":           builtins.obj_sequential(),
         "watchdog":             builtins.fn_watchdog(),
 
@@ -43,4 +44,7 @@ def globals():
         "at_mu":                builtins.fn_at_mu(),
         "mu_to_seconds":        builtins.fn_mu_to_seconds(),
         "seconds_to_mu":        builtins.fn_seconds_to_mu(),
+
+        # ARTIQ utility functions
+        "rtio_log":             builtins.fn_rtio_log(),
     }

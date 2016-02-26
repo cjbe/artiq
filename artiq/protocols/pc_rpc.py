@@ -57,8 +57,7 @@ def _validate_target_name(target_name, target_names):
             target_name = target_names[0]
     elif target_name not in target_names:
         raise IncompatibleServer(
-            "valid target name(s): " +
-                " ".join(sorted(target_names)))
+            "valid target name(s): " + " ".join(sorted(target_names)))
     return target_name
 
 
@@ -92,9 +91,16 @@ class Client:
         Use ``None`` to skip selecting a target. The list of targets can then
         be retrieved using ``get_rpc_id`` and then one can be selected later
         using ``select_rpc_target``.
+    :param timeout: Socket operation timeout. Use ``None`` for blocking
+        (default), ``0`` for non-blocking, and a finite value to raise
+        ``socket.timeout`` if an operation does not complete within the
+        given time. See also ``socket.create_connection()`` and
+        ``socket.settimeout()`` in the Python standard library. A timeout
+        in the middle of a RPC can break subsequent RPCs (from the same
+        client).
     """
-    def __init__(self, host, port, target_name=AutoTarget):
-        self.__socket = socket.create_connection((host, port))
+    def __init__(self, host, port, target_name=AutoTarget, timeout=None):
+        self.__socket = socket.create_connection((host, port), timeout)
 
         try:
             self.__socket.sendall(_init_string)
@@ -185,7 +191,7 @@ class AsyncioClient:
         this method is a coroutine. See ``Client`` for a description of the
         parameters."""
         self.__reader, self.__writer = \
-            await asyncio.open_connection(host, port)
+            await asyncio.open_connection(host, port, limit=4*1024*1024)
         try:
             self.__writer.write(_init_string)
             server_identification = await self.__recv()
@@ -485,7 +491,8 @@ class Server(_AsyncioServer):
                         obj = {"status": "ok", "ret": doc}
                     elif obj["action"] == "call":
                         logger.debug("calling %s", _PrettyPrintCall(obj))
-                        if self.builtin_terminate and obj["name"] == "terminate":
+                        if (self.builtin_terminate and obj["name"] ==
+                                "terminate"):
                             self._terminate_request.set()
                             obj = {"status": "ok", "ret": None}
                         else:
