@@ -3,18 +3,11 @@ from collections import OrderedDict
 from functools import partial
 import logging
 
-from quamash import QtGui, QtCore
-from pyqtgraph import dockarea
-from pyqtgraph import LayoutWidget
+from PyQt5 import QtCore, QtWidgets
 
 from artiq.tools import short_format
+from artiq.gui.tools import LayoutWidget
 from artiq.gui.models import DictSyncTreeSepModel
-from artiq.gui.displays import *
-
-try:
-    QSortFilterProxyModel = QtCore.QSortFilterProxyModel
-except AttributeError:
-    QSortFilterProxyModel = QtGui.QSortFilterProxyModel
 
 
 logger = logging.getLogger(__name__)
@@ -35,46 +28,38 @@ class Model(DictSyncTreeSepModel):
            raise ValueError
 
 
-def _get_display_type_name(display_cls):
-    for name, (_, cls) in display_types.items():
-        if cls is display_cls:
-            return name
-
-
-class DatasetsDock(dockarea.Dock):
-    def __init__(self, dialog_parent, dock_area, datasets_sub):
-        dockarea.Dock.__init__(self, "Datasets")
-        self.dialog_parent = dialog_parent
-        self.dock_area = dock_area
+class DatasetsDock(QtWidgets.QDockWidget):
+    def __init__(self, datasets_sub, dataset_ctl):
+        QtWidgets.QDockWidget.__init__(self, "Datasets")
+        self.setObjectName("Datasets")
+        self.setFeatures(QtWidgets.QDockWidget.DockWidgetMovable |
+                         QtWidgets.QDockWidget.DockWidgetFloatable)
+        self.dataset_ctl = dataset_ctl
 
         grid = LayoutWidget()
-        self.addWidget(grid)
+        self.setWidget(grid)
 
-        self.search = QtGui.QLineEdit()
+        self.search = QtWidgets.QLineEdit()
         self.search.setPlaceholderText("search...")
         self.search.editingFinished.connect(self._search_datasets)
         grid.addWidget(self.search, 0, 0)
 
-        self.table = QtGui.QTreeView()
-        self.table.setSelectionMode(QtGui.QAbstractItemView.NoSelection)
-        self.table.header().setResizeMode(QtGui.QHeaderView.ResizeToContents)
+        self.table = QtWidgets.QTreeView()
+        self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+        self.table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
+        self.table.header().setSectionResizeMode(
+            QtWidgets.QHeaderView.ResizeToContents)
         grid.addWidget(self.table, 1, 0)
+
+        self.table.setContextMenuPolicy(QtCore.Qt.ActionsContextMenu)
+        delete_action = QtWidgets.QAction("Delete dataset", self.table)
+        delete_action.triggered.connect(self.delete_clicked)
+        delete_action.setShortcut("DELETE")
+        delete_action.setShortcutContext(QtCore.Qt.WidgetShortcut)
+        self.table.addAction(delete_action)
 
         self.table_model = Model(dict())
         datasets_sub.add_setmodel_callback(self.set_model)
-        datasets_sub.notify_cbs.append(self.on_mod)
-
-        add_display_box = QtGui.QGroupBox("Add display")
-        grid.addWidget(add_display_box, 1, 1)
-        display_grid = QtGui.QGridLayout()
-        add_display_box.setLayout(display_grid)
-
-        for n, name in enumerate(display_types.keys()):
-            btn = QtGui.QPushButton(name)
-            display_grid.addWidget(btn, n, 0)
-            btn.clicked.connect(partial(self.create_dialog, name))
-
-        self.displays = dict()
 
     def _search_datasets(self):
         if hasattr(self, "table_model_filter"):
@@ -83,74 +68,14 @@ class DatasetsDock(dockarea.Dock):
 
     def set_model(self, model):
         self.table_model = model
-        self.table_model_filter = QSortFilterProxyModel()
+        self.table_model_filter = QtCore.QSortFilterProxyModel()
         self.table_model_filter.setSourceModel(self.table_model)
         self.table.setModel(self.table_model_filter)
 
-    def update_display_data(self, dsp):
-        filtered_data = {k: self.table_model.backing_store[k][1]
-                         for k in dsp.data_sources()
-                         if k in self.table_model.backing_store}
-        dsp.update_data(filtered_data)
-
-    def on_mod(self, mod):
-        if mod["action"] == "init":
-            for display in self.displays.values():
-                display.update_data(self.table_model.backing_store)
-            return
-
-        if mod["path"]:
-            source = mod["path"][0]
-        elif mod["action"] == "setitem":
-            source = mod["key"]
-        else:
-            return
-
-        for display in self.displays.values():
-            if source in display.data_sources():
-                self.update_display_data(display)
-
-    def create_dialog(self, ty):
-        dlg_class = display_types[ty][0]
-        dlg = dlg_class(self.dialog_parent, None, dict(),
-            sorted(self.table_model.backing_store.keys()),
-            partial(self.create_display, ty, None))
-        dlg.open()
-
-    def create_display(self, ty, prev_name, name, settings):
-        if prev_name is not None and prev_name in self.displays:
-            raise NotImplementedError
-        dsp_class = display_types[ty][1]
-        dsp = dsp_class(name, settings)
-        self.displays[name] = dsp
-        self.update_display_data(dsp)
-
-        def on_close():
-            del self.displays[name]
-        dsp.sigClosed.connect(on_close)
-        self.dock_area.floatDock(dsp)
-        return dsp
-
-    def save_state(self):
-        r = dict()
-        for name, display in self.displays.items():
-            r[name] = {
-                "ty": _get_display_type_name(type(display)),
-                "settings": display.settings,
-                "state": display.save_state()
-            }
-        return r
-
-    def restore_state(self, state):
-        for name, desc in state.items():
-            try:
-                dsp = self.create_display(desc["ty"], None, name,
-                                          desc["settings"])
-            except:
-                logger.warning("Failed to create display '%s'", name,
-                               exc_info=True)
-            try:
-                dsp.restore_state(desc["state"])
-            except:
-                logger.warning("Failed to restore display state of '%s'",
-                               name, exc_info=True)
+    def delete_clicked(self):
+        idx = self.table.selectedIndexes()
+        if idx:
+            idx = self.table_model_filter.mapToSource(idx[0])
+            key = self.table_model.index_to_key(idx)
+            if key is not None:
+                asyncio.ensure_future(self.dataset_ctl.delete(key))

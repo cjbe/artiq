@@ -24,17 +24,14 @@ if os.name != "nt":
     async def _fds_to_asyncio(rfd, wfd, loop):
         reader = asyncio.StreamReader(loop=loop)
         reader_protocol = asyncio.StreamReaderProtocol(reader, loop=loop)
+        rf = open(rfd, "rb", 0)
+        rt, _ = await loop.connect_read_pipe(lambda: reader_protocol, rf)
 
         wf = open(wfd, "wb", 0)
-        transport, _ = await loop.connect_write_pipe(
-            FlowControlMixin, wf)
-        writer = asyncio.StreamWriter(transport, reader_protocol,
-                                      None, loop)
+        wt, _ = await loop.connect_write_pipe(FlowControlMixin, wf)
+        writer = asyncio.StreamWriter(wt, reader_protocol, None, loop)
 
-        rf = open(rfd, "rb", 0)
-        await loop.connect_read_pipe(lambda: reader_protocol, rf)
-
-        return reader, writer
+        return rt, reader, writer
 
 
     class AsyncioParentComm(_BaseIO):
@@ -47,6 +44,7 @@ if os.name != "nt":
 
         async def _autoclose(self):
             await self.process.wait()
+            self.reader_transport.close()
             self.writer.close()
 
         async def create_subprocess(self, *args, **kwargs):
@@ -56,8 +54,8 @@ if os.name != "nt":
             os.close(self.c_rfd)
             os.close(self.c_wfd)
 
-            self.reader, self.writer = await _fds_to_asyncio(
-                self.p_rfd, self.p_wfd, loop)
+            self.reader_transport, self.reader, self.writer = \
+                await _fds_to_asyncio(self.p_rfd, self.p_wfd, loop)
             asyncio.ensure_future(self._autoclose())
 
 
@@ -67,10 +65,12 @@ if os.name != "nt":
 
         async def connect(self):
             rfd, wfd = self.address.split(",", maxsplit=1)
-            self.reader, self.writer = await _fds_to_asyncio(
-                int(rfd), int(wfd), asyncio.get_event_loop())
+            self.reader_transport, self.reader, self.writer = \
+                await _fds_to_asyncio(int(rfd), int(wfd),
+                                      asyncio.get_event_loop())
 
         def close(self):
+            self.reader_transport.close()
             self.writer.close()
 
 
@@ -141,7 +141,16 @@ else:  # windows
             asyncio.ensure_future(self._autoclose())
 
         def _child_connected(self, reader, writer):
-            self.server[0].close()
+            # HACK: We should shut down the pipe server here.
+            # However, self.server[0].close() is racy, and will cause an
+            # invalid handle error if loop.start_serving_pipe has not finished
+            # its work in the background.
+            # The bug manifests itself here frequently as the event loop is
+            # reopening the server as soon as a new client connects.
+            # There is still a race condition in the AsyncioParentComm
+            # creation/destruction, but it is unlikely to cause problems
+            # in most practical cases.
+            assert self.server is not None
             self.server = None
             self.reader = reader
             self.writer = writer

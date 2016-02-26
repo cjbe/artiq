@@ -5,7 +5,6 @@ import logging
 import subprocess
 import traceback
 import time
-from functools import partial
 
 from artiq.protocols import pipe_ipc, pyon
 from artiq.protocols.logging import LogParser
@@ -42,7 +41,7 @@ def log_worker_exception():
 
 
 class Worker:
-    def __init__(self, handlers=dict(), send_timeout=1.0):
+    def __init__(self, handlers=dict(), send_timeout=2.0):
         self.handlers = handlers
         self.send_timeout = send_timeout
 
@@ -82,10 +81,13 @@ class Worker:
             if self.closed.is_set():
                 raise WorkerError("Attempting to create process after close")
             self.ipc = pipe_ipc.AsyncioParentComm()
+            env = os.environ.copy()
+            env["PYTHONUNBUFFERED"] = "1"
             await self.ipc.create_subprocess(
                 sys.executable, "-m", "artiq.master.worker_impl",
                 self.ipc.get_address(), str(log_level),
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                env=env, start_new_session=True)
             asyncio.ensure_future(
                 LogParser(self._get_log_source).stream_task(
                     self.ipc.process.stdout))
@@ -95,7 +97,7 @@ class Worker:
         finally:
             self.io_lock.release()
 
-    async def close(self, term_timeout=1.0):
+    async def close(self, term_timeout=2.0):
         """Interrupts any I/O with the worker process and terminates the
         worker process.
 
@@ -115,30 +117,38 @@ class Worker:
                                    " (RID %s)", self.ipc.process.returncode,
                                    self.rid)
                 return
-            obj = {"action": "terminate"}
             try:
-                await self._send(obj, cancellable=False)
+                await self._send({"action": "terminate"}, cancellable=False)
+                await asyncio.wait_for(self.ipc.process.wait(), term_timeout)
+                logger.debug("worker exited on request (RID %s)", self.rid)
+                return
             except:
-                logger.debug("failed to send terminate command to worker"
-                             " (RID %s), killing", self.rid, exc_info=True)
+                logger.debug("worker failed to exit on request"
+                             " (RID %s), ending the process", self.rid,
+                             exc_info=True)
+            if os.name != "nt":
                 try:
-                    self.ipc.process.kill()
+                    self.ipc.process.terminate()
                 except ProcessLookupError:
                     pass
-                await self.ipc.process.wait()
-                return
+                try:
+                    await asyncio.wait_for(self.ipc.process.wait(),
+                                           term_timeout)
+                    logger.debug("worker terminated (RID %s)", self.rid)
+                    return
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "worker did not terminate (RID %s), killing", self.rid)
+            try:
+                self.ipc.process.kill()
+            except ProcessLookupError:
+                pass
             try:
                 await asyncio.wait_for(self.ipc.process.wait(), term_timeout)
+                logger.debug("worker killed (RID %s)", self.rid)
+                return
             except asyncio.TimeoutError:
-                logger.debug("worker did not exit by itself (RID %s), killing",
-                             self.rid)
-                try:
-                    self.ipc.process.kill()
-                except ProcessLookupError:
-                    pass
-                await self.ipc.process.wait()
-            else:
-                logger.debug("worker exited by itself (RID %s)", self.rid)
+                logger.warning("worker refuses to die (RID %s)", self.rid)
         finally:
             self.io_lock.release()
 
@@ -208,7 +218,8 @@ class Worker:
                 reply = {"status": "ok", "data": data}
             except Exception as e:
                 reply = {"status": "failed",
-                         "exception": traceback.format_exception_only(type(e), e)[0][:-1],
+                         "exception": traceback.format_exception_only(
+                             type(e), e)[0][:-1],
                          "message": str(e),
                          "traceback": traceback.format_tb(e.__traceback__)}
             await self.io_lock.acquire()
@@ -235,7 +246,8 @@ class Worker:
                 del self.watchdogs[-1]
         return completed
 
-    async def build(self, rid, pipeline_name, wd, expid, priority, timeout=15.0):
+    async def build(self, rid, pipeline_name, wd, expid, priority,
+                    timeout=15.0):
         self.rid = rid
         self.filename = os.path.basename(expid["file"])
         await self._create_process(expid["log_level"])
@@ -280,6 +292,7 @@ class Worker:
 
         await self._create_process(logging.WARNING)
         r = dict()
+
         def register(class_name, name, arginfo):
             r[class_name] = {"name": name, "arginfo": arginfo}
         self.register_experiment = register

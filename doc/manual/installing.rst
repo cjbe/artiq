@@ -14,16 +14,17 @@ But you can also :ref:`install from sources <install-from-sources>`.
 Installing using conda
 ----------------------
 
+.. warning::
+    Conda packages are supported for Linux (64-bit) and Windows (32- and 64-bit). Users of other
+    operating systems (32-bit Linux, BSD, ...) should install from source.
+
+
 Installing Anaconda or Miniconda
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 * You can either install Anaconda (choose Python 3.5) from https://store.continuum.io/cshop/anaconda/
 
 * Or install the more minimalistic Miniconda (choose Python 3.5) from http://conda.pydata.org/miniconda.html
-
-.. warning::
-    If you are installing on Windows, choose the Windows 32-bit version regardless of whether you have
-    a 32-bit or 64-bit Windows.
 
 After installing either Anaconda or Miniconda, open a new terminal and make sure the following command works::
 
@@ -35,9 +36,9 @@ If not, then make sure your ``$PATH`` environment variable contains the path to 
     $ echo $PATH
     /home/.../miniconda3/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
 
-If your ``$PATH`` misses reference the miniconda3/bin or anaconda3/bin you can fix this by typing::
+If your ``$PATH`` misses reference the ``miniconda3/bin`` or ``anaconda3/bin`` you can fix this by typing::
 
-    $ export PATH=$HOME/miniconda3:$PATH
+    $ export PATH=$HOME/miniconda3/bin:$PATH
 
 Installing the host side software
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -126,12 +127,9 @@ and the ARTIQ kernels.
 * Install OpenRISC binutils (or1k-linux-...): ::
 
         $ cd ~/artiq-dev
-        $ wget https://ftp.gnu.org/gnu/binutils/binutils-2.25.1.tar.bz2
-        $ tar xvf binutils-2.25.1.tar.bz2
-        $ rm binutils-2.25.1.tar.bz2
-
-        $ cd binutils-2.25.1
-        $ patch -p1 <~/artiq-dev/misc/binutils-2.25.1-or1k-R_PCREL-pcrel_offset.patch
+        $ wget https://ftp.gnu.org/gnu/binutils/binutils-2.26.tar.bz2
+        $ tar xvf binutils-2.26.tar.bz2
+        $ rm binutils-2.26.tar.bz2
 
         $ mkdir build
         $ cd build
@@ -405,10 +403,3 @@ The core device may use either an external clock signal or its internal clock. T
 
     $ artiq_coreconfig write -s startup_clock i  # internal clock (default)
     $ artiq_coreconfig write -s startup_clock e  # external clock
-
-Ubuntu 15.10+/Debian jessie+ specific instructions
---------------------------------------------------
-
-This command installs all the required packages: ::
-
-    $ sudo apt-get install build-essential autotools-dev file git patch perl xutils-dev texinfo flex bison libmpc-dev subversion cmake libusb-dev libftdi-dev pkg-config libffi-dev libgit2-dev python3.5 python3.5-dev

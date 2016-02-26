@@ -4,15 +4,10 @@ import time
 import re
 from functools import partial
 
-from quamash import QtGui, QtCore
-from pyqtgraph import dockarea, LayoutWidget
+from PyQt5 import QtCore, QtGui, QtWidgets
 
-from artiq.gui.tools import log_level_to_name
-
-try:
-    QSortFilterProxyModel = QtCore.QSortFilterProxyModel
-except AttributeError:
-    QSortFilterProxyModel = QtGui.QSortFilterProxyModel
+from artiq.gui.tools import (LayoutWidget, log_level_to_name,
+                             QDockWidgetCloseDetect)
 
 
 def _make_wrappable(row, width=30):
@@ -34,8 +29,7 @@ class Model(QtCore.QAbstractTableModel):
         timer.timeout.connect(self.timer_tick)
         timer.start(100)
 
-        self.fixed_font = QtGui.QFont()
-        self.fixed_font.setFamily("Monospace")
+        self.fixed_font = QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.FixedFont)
 
         self.white = QtGui.QBrush(QtGui.QColor(255, 255, 255))
         self.black = QtGui.QBrush(QtGui.QColor(0, 0, 0))
@@ -87,6 +81,8 @@ class Model(QtCore.QAbstractTableModel):
             if (role == QtCore.Qt.FontRole
                     and index.column() == 1):
                 return self.fixed_font
+            elif role == QtCore.Qt.TextAlignmentRole:
+                return QtCore.Qt.AlignLeft | QtCore.Qt.AlignTop
             elif role == QtCore.Qt.BackgroundRole:
                 level = self.entries[index.row()][0]
                 if level >= logging.ERROR:
@@ -114,9 +110,9 @@ class Model(QtCore.QAbstractTableModel):
                     time.strftime("%m/%d %H:%M:%S", time.localtime(v[2])))
 
 
-class _LogFilterProxyModel(QSortFilterProxyModel):
+class _LogFilterProxyModel(QtCore.QSortFilterProxyModel):
     def __init__(self, min_level, freetext):
-        QSortFilterProxyModel.__init__(self)
+        QtCore.QSortFilterProxyModel.__init__(self)
         self.min_level = min_level
         self.freetext = freetext
 
@@ -144,54 +140,54 @@ class _LogFilterProxyModel(QSortFilterProxyModel):
         self.invalidateFilter()
 
 
-class _LogDock(dockarea.Dock):
+class _LogDock(QDockWidgetCloseDetect):
     def __init__(self, manager, name, log_sub):
-        dockarea.Dock.__init__(self, name, label="Log")
-        self.setMinimumSize(QtCore.QSize(720, 250))
+        QDockWidgetCloseDetect.__init__(self, "Log")
+        self.setObjectName(name)
 
         grid = LayoutWidget()
-        self.addWidget(grid)
+        self.setWidget(grid)
 
-        grid.addWidget(QtGui.QLabel("Minimum level: "), 0, 0)
-        self.filter_level = QtGui.QComboBox()
+        grid.addWidget(QtWidgets.QLabel("Minimum level: "), 0, 0)
+        self.filter_level = QtWidgets.QComboBox()
         self.filter_level.addItems(["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"])
         self.filter_level.setToolTip("Display entries at or above this level")
         grid.addWidget(self.filter_level, 0, 1)
         self.filter_level.currentIndexChanged.connect(
             self.filter_level_changed)
-        self.filter_freetext = QtGui.QLineEdit()
+        self.filter_freetext = QtWidgets.QLineEdit()
         self.filter_freetext.setPlaceholderText("freetext filter...")
         self.filter_freetext.editingFinished.connect(
             self.filter_freetext_changed)
         grid.addWidget(self.filter_freetext, 0, 2)
 
-        scrollbottom = QtGui.QToolButton()
+        scrollbottom = QtWidgets.QToolButton()
         scrollbottom.setToolTip("Scroll to bottom")
-        scrollbottom.setIcon(QtGui.QApplication.style().standardIcon(
-            QtGui.QStyle.SP_ArrowDown))
+        scrollbottom.setIcon(QtWidgets.QApplication.style().standardIcon(
+            QtWidgets.QStyle.SP_ArrowDown))
         grid.addWidget(scrollbottom, 0, 3)
         scrollbottom.clicked.connect(self.scroll_to_bottom)
-        newdock = QtGui.QToolButton()
+        newdock = QtWidgets.QToolButton()
         newdock.setToolTip("Create new log dock")
-        newdock.setIcon(QtGui.QApplication.style().standardIcon(
-            QtGui.QStyle.SP_FileDialogNewFolder))
+        newdock.setIcon(QtWidgets.QApplication.style().standardIcon(
+            QtWidgets.QStyle.SP_FileDialogNewFolder))
         # note the lambda, the default parameter is overriden otherwise
         newdock.clicked.connect(lambda: manager.create_new_dock())
         grid.addWidget(newdock, 0, 4)
         grid.layout.setColumnStretch(2, 1)
 
-        self.log = QtGui.QTableView()
-        self.log.setSelectionMode(QtGui.QAbstractItemView.NoSelection)
-        self.log.horizontalHeader().setResizeMode(
-            QtGui.QHeaderView.ResizeToContents)
+        self.log = QtWidgets.QTableView()
+        self.log.setSelectionMode(QtWidgets.QAbstractItemView.NoSelection)
+        self.log.horizontalHeader().setSectionResizeMode(
+            QtWidgets.QHeaderView.ResizeToContents)
         self.log.horizontalHeader().setStretchLastSection(True)
-        self.log.verticalHeader().setResizeMode(
-            QtGui.QHeaderView.ResizeToContents)
+        self.log.verticalHeader().setSectionResizeMode(
+            QtWidgets.QHeaderView.ResizeToContents)
         self.log.verticalHeader().hide()
         self.log.setHorizontalScrollMode(
-            QtGui.QAbstractItemView.ScrollPerPixel)
+            QtWidgets.QAbstractItemView.ScrollPerPixel)
         self.log.setVerticalScrollMode(
-            QtGui.QAbstractItemView.ScrollPerPixel)
+            QtWidgets.QAbstractItemView.ScrollPerPixel)
         self.log.setShowGrid(False)
         self.log.setTextElideMode(QtCore.Qt.ElideNone)
         grid.addWidget(self.log, 1, 0, colspan=5)
@@ -256,6 +252,8 @@ class _LogDock(dockarea.Dock):
         self.table_model_filter.rowsInserted.connect(self.rows_inserted_after)
         self.table_model_filter.rowsRemoved.connect(self.rows_removed)
 
+        asyncio.get_event_loop().call_soon(self.log.scrollToBottom)
+
     def save_state(self):
         return {
             "min_level_idx": self.filter_level.currentIndex(),
@@ -283,8 +281,8 @@ class _LogDock(dockarea.Dock):
 
 
 class LogDockManager:
-    def __init__(self, dock_area, log_sub):
-        self.dock_area = dock_area
+    def __init__(self, main_window, log_sub):
+        self.main_window = main_window
         self.log_sub = log_sub
         self.docks = dict()
 
@@ -298,7 +296,8 @@ class LogDockManager:
         dock = _LogDock(self, name, self.log_sub)
         self.docks[name] = dock
         if add_to_area:
-            self.dock_area.floatDock(dock)
+            self.main_window.addDockWidget(QtCore.Qt.RightDockWidgetArea, dock)
+            dock.setFloating(True)
         dock.sigClosed.connect(partial(self.on_dock_closed, name))
         self.update_closable()
         return dock
@@ -308,9 +307,12 @@ class LogDockManager:
         self.update_closable()
 
     def update_closable(self):
-        closable = len(self.docks) > 1
+        flags = (QtWidgets.QDockWidget.DockWidgetMovable |
+                 QtWidgets.QDockWidget.DockWidgetFloatable)
+        if len(self.docks) > 1:
+            flags |= QtWidgets.QDockWidget.DockWidgetClosable
         for dock in self.docks.values():
-            dock.setClosable(closable)
+            dock.setFeatures(flags)
 
     def save_state(self):
         return {name: dock.save_state() for name, dock in self.docks.items()}
@@ -320,9 +322,11 @@ class LogDockManager:
             raise NotImplementedError
         for name, dock_state in state.items():
             dock = _LogDock(self, name, self.log_sub)
-            dock.restore_state(dock_state)
-            self.dock_area.addDock(dock)
             self.docks[name] = dock
+            dock.restore_state(dock_state)
+            self.main_window.addDockWidget(QtCore.Qt.RightDockWidgetArea, dock)
+            dock.sigClosed.connect(partial(self.on_dock_closed, name))
+        self.update_closable()
 
     def first_log_dock(self):
         if self.docks:

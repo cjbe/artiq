@@ -1,4 +1,5 @@
 import os
+import sys
 import unittest
 import logging
 import asyncio
@@ -59,11 +60,13 @@ class ControllerCase(unittest.TestCase):
             "type": "controller",
             "host": "::1",
             "port": 3253,
-            "command": "lda_controller -p {port} --bind {bind} "
-                    "--no-localhost-bind --simulation",
+            "command": (sys.executable.replace("\\", "\\\\")
+                        + " -m artiq.frontend.lda_controller "
+                        + "-p {port} --simulation")
         }
         async def test():
             await self.start("lda_sim", entry)
             remote = await self.get_client(entry["host"], entry["port"])
+            await remote.ping()
 
         self.loop.run_until_complete(test())

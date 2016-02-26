@@ -14,7 +14,7 @@ class TestSplineCoef(unittest.TestCase):
         self.s = coefficients.SplineSource(self.x, self.y, order=4)
 
     def test_get_segment(self):
-        return list(self.s.get_segment_data(start=1.5, stop=3.2, scale=.01))
+        return list(self.s.get_segment(start=1.5, stop=3.2, scale=.01))
 
     def test_synth(self):
         d = self.test_get_segment()
@@ -31,6 +31,15 @@ class TestSplineCoef(unittest.TestCase):
 
     def test_run(self):
         return self.drive(self.test_synth())
+
+    def test_compare(self):
+        scale = 100
+        d = list(self.s.get_segment(start=0, stop=4, scale=1/scale))
+        d[0]["trigger"] = True
+        s = compute_samples.Synthesizer(self.y.shape[0], [d])
+        s.select(0)
+        y = s.trigger()[0]
+        np.testing.assert_almost_equal(y[::scale], self.y[0, :-1])
 
     @unittest.skip("manual/visual test")
     def test_plot(self):

@@ -23,12 +23,13 @@ class Segment:
 
     def __init__(self):
         self.data = b""
+        self.addr = None
 
     def line(self, typ, duration, data, trigger=False, silence=False,
              aux=False, shift=0, jump=False, clear=False, wait=False):
         assert len(data) % 2 == 0, data
         assert len(data)//2 <= 14
-        #assert dt*(1 << shift) > 1 + len(data)//2
+        # assert dt*(1 << shift) > 1 + len(data)//2
         header = (
             1 + len(data)//2 | (typ << 4) | (trigger << 6) | (silence << 7) |
             (aux << 8) | (shift << 9) | (jump << 13) | (clear << 14) |
@@ -92,7 +93,7 @@ class Channel:
         self.segments = []
 
     def clear(self):
-        del self.segments[:]
+        self.segments.clear()
 
     def new_segment(self):
         segment = Segment()
@@ -127,6 +128,7 @@ class Pdq2:
     PDQ DAC (a.k.a. QC_Waveform)
     """
     num_dacs = 3
+    freq = 50e6
 
     _escape = b"\xa5"
     _commands = "RESET TRIGGER ARM DCM START".split()
@@ -145,13 +147,15 @@ class Pdq2:
     def get_num_channels(self):
         return self.num_channels
 
+    def get_freq(self):
+        return self.freq
+
+    def set_freq(self, freq):
+        self.freq = float(freq)
+
     def close(self):
         self.dev.close()
         del self.dev
-
-    def clear_all(self):
-        for channel in self.channels:
-            channel.clear()
 
     def write(self, data):
         logger.debug("> %r", data)
@@ -172,30 +176,21 @@ class Pdq2:
         data = data.replace(self._escape, self._escape + self._escape)
         self.write(data)
 
-    def write_channel(self, channel):
-        self.write_mem(self.channels.index(channel),
-                       channel.serialize())
+    def flush(self):
+        self.dev.flush()
 
-    def write_all(self):
-        for channel in self.channels:
-            self.write_mem(self.channels.index(channel),
-                           channel.serialize())
+    def park(self):
+        self.cmd("START", False)
+        self.cmd("TRIGGER", True)
+        self.flush()
 
-    def write_table(self, channel):
-        # no segment placement
-        # no segment writing
-        self.write_mem(channel, self.channels[channel].table())
+    def unpark(self):
+        self.cmd("TRIGGER", False)
+        self.cmd("START", True)
+        self.flush()
 
-    def write_segment(self, channel, segment):
-        # no collision check
-        s = self.channels[channel].segments[segment]
-        self.write_mem(channel, s.data, s.adr)
-
-    def program_frame(self, frame_data):
-        segments = [c.new_segment() for c in self.channels]
-        for segment in segments:
-            segment.line(typ=3, data=b"", trigger=True, duration=10, aux=1)
-        for i, line in enumerate(frame_data):  # segments are concatenated
+    def program_segments(self, segments, data):
+        for i, line in enumerate(data):
             dac_divider = line.get("dac_divider", 1)
             shift = int(log(dac_divider, 2))
             if 2**shift != dac_divider:
@@ -210,19 +205,24 @@ class Pdq2:
                     getattr(segment, target)(
                         shift=shift, duration=duration, trigger=trigger,
                         **target_data)
-        # append an empty line to stall the memory reader before jumping
-        # through the frame table (`wait` does not prevent reading
-        # the next line)
-        for segment in segments:
-            segment.line(typ=3, data=b"", trigger=True, duration=1,
-                         jump=True, aux=1)
-        return segments
 
-    def program(self, program):
-        self.clear_all()
-        for frame_data in program:
-            self.program_frame(frame_data)
-        self.write_all()
+    def program(self, program, channels=None):
+        if channels is None:
+            channels = range(self.num_channels)
+        chs = [self.channels[i] for i in channels]
+        for channel in chs:
+            channel.clear()
+        for frame in program:
+            segments = [c.new_segment() for c in chs]
+            self.program_segments(segments, frame)
+            # append an empty line to stall the memory reader before jumping
+            # through the frame table (`wait` does not prevent reading
+            # the next line)
+            for segment in segments:
+                segment.line(typ=3, data=b"", trigger=True, duration=1, aux=1,
+                             jump=True)
+        for channel, ch in zip(channels, chs):
+            self.write_mem(channel, ch.serialize())
 
     def ping(self):
         return True

@@ -4,16 +4,21 @@ import asyncio
 import argparse
 import atexit
 import os
+import logging
 
-from artiq.tools import *
+from artiq.tools import (simple_network_args, atexit_register_coroutine,
+                         bind_address_from_args)
 from artiq.protocols.pc_rpc import Server as RPCServer
 from artiq.protocols.sync_struct import Publisher
 from artiq.protocols.logging import Server as LoggingServer
 from artiq.master.log import log_args, init_log
 from artiq.master.databases import DeviceDB, DatasetDB
 from artiq.master.scheduler import Scheduler
-from artiq.master.worker_db import get_last_rid
-from artiq.master.experiments import FilesystemBackend, GitBackend, ExperimentDB
+from artiq.master.worker_db import RIDCounter
+from artiq.master.experiments import (FilesystemBackend, GitBackend,
+                                      ExperimentDB)
+
+logger = logging.getLogger(__name__)
 
 
 def get_argparser():
@@ -73,7 +78,7 @@ def main():
         "get_dataset": dataset_db.get,
         "update_dataset": dataset_db.update
     }
-    scheduler = Scheduler(get_last_rid() + 1, worker_handlers, experiment_db)
+    scheduler = Scheduler(RIDCounter(), worker_handlers, experiment_db)
     worker_handlers.update({
         "scheduler_submit": scheduler.submit,
         "scheduler_delete": scheduler.delete,
@@ -111,6 +116,7 @@ def main():
         bind, args.port_logging))
     atexit_register_coroutine(server_logging.stop)
 
+    logger.info("running, bound to %s", bind)
     loop.run_forever()
 
 if __name__ == "__main__":

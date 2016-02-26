@@ -747,8 +747,8 @@ class ARTIQIRGenerator(algorithm.Visitor):
         if types.is_builtin(context_expr_node.type, "sequential"):
             self.visit(node.body)
             return
-        elif types.is_builtin(context_expr_node.type, "parallel"):
-            parallel = self.append(ir.Parallel([]))
+        elif types.is_builtin(context_expr_node.type, "interleave"):
+            interleave = self.append(ir.Interleave([]))
 
             heads, tails = [], []
             for stmt in node.body:
@@ -758,12 +758,34 @@ class ARTIQIRGenerator(algorithm.Visitor):
                 tails.append(self.current_block)
 
             for head in heads:
-                parallel.add_destination(head)
+                interleave.add_destination(head)
 
             self.current_block = self.add_block()
             for tail in tails:
                 if not tail.is_terminated():
                     tail.append(ir.Branch(self.current_block))
+            return
+        elif types.is_builtin(context_expr_node.type, "parallel"):
+            start_mu = self.append(ir.Builtin("now_mu", [], builtins.TInt64()))
+            end_mu   = start_mu
+
+            for stmt in node.body:
+                self.append(ir.Builtin("at_mu", [start_mu], builtins.TNone()))
+
+                block = self.add_block()
+                if self.current_block.is_terminated():
+                    self.warn_unreachable(stmt[0])
+                else:
+                    self.append(ir.Branch(block))
+                self.current_block = block
+
+                self.visit(stmt)
+
+                mid_mu = self.append(ir.Builtin("now_mu", [], builtins.TInt64()))
+                gt_mu  = self.append(ir.Compare(ast.Gt(loc=None), mid_mu, end_mu))
+                end_mu = self.append(ir.Select(gt_mu, mid_mu, end_mu))
+
+            self.append(ir.Builtin("at_mu", [end_mu], builtins.TNone()))
             return
 
         cleanup = []
@@ -1612,6 +1634,13 @@ class ARTIQIRGenerator(algorithm.Visitor):
             self.polymorphic_print([self.visit(arg) for arg in node.args],
                                    separator=" ", suffix="\n")
             return ir.Constant(None, builtins.TNone())
+        elif types.is_builtin(typ, "rtio_log"):
+            prefix, *args = node.args
+            self.polymorphic_print([self.visit(prefix)],
+                                   separator=" ", suffix="\x1E", as_rtio=True)
+            self.polymorphic_print([self.visit(arg) for arg in args],
+                                   separator=" ", suffix="\n", as_rtio=True)
+            return ir.Constant(None, builtins.TNone())
         elif types.is_builtin(typ, "now"):
             if len(node.args) == 0 and len(node.keywords) == 0:
                 now_mu = self.append(ir.Builtin("now_mu", [], builtins.TInt64()))
@@ -1822,14 +1851,21 @@ class ARTIQIRGenerator(algorithm.Visitor):
         tail = self.current_block = self.add_block()
         self.append(ir.BranchIf(cond, tail, if_failed), block=head)
 
-    def polymorphic_print(self, values, separator, suffix="", as_repr=False):
+    def polymorphic_print(self, values, separator, suffix="", as_repr=False, as_rtio=False):
+        def printf(format_string, *args):
+            format = ir.Constant(format_string, builtins.TStr())
+            if as_rtio:
+                now_mu = self.append(ir.Builtin("now_mu", [], builtins.TInt64()))
+                self.append(ir.Builtin("rtio_log", [now_mu, format, *args], builtins.TNone()))
+            else:
+                self.append(ir.Builtin("printf", [format, *args], builtins.TNone()))
+
         format_string = ""
         args = []
         def flush():
             nonlocal format_string, args
             if format_string != "":
-                format_arg = [ir.Constant(format_string, builtins.TStr())]
-                self.append(ir.Builtin("printf", format_arg + args, builtins.TNone()))
+                printf(format_string, *args)
                 format_string = ""
                 args = []
 
@@ -1841,7 +1877,7 @@ class ARTIQIRGenerator(algorithm.Visitor):
                 format_string += "("; flush()
                 self.polymorphic_print([self.append(ir.GetAttr(value, index))
                                         for index in range(len(value.type.elts))],
-                                       separator=", ", as_repr=True)
+                                       separator=", ", as_repr=True, as_rtio=as_rtio)
                 if len(value.type.elts) == 1:
                     format_string += ",)"
                 else:
@@ -1882,13 +1918,12 @@ class ARTIQIRGenerator(algorithm.Visitor):
                 last = self.append(ir.Arith(ast.Sub(loc=None), length, ir.Constant(1, length.type)))
                 def body_gen(index):
                     elt = self.iterable_get(value, index)
-                    self.polymorphic_print([elt], separator="", as_repr=True)
+                    self.polymorphic_print([elt], separator="", as_repr=True, as_rtio=as_rtio)
                     is_last = self.append(ir.Compare(ast.Lt(loc=None), index, last))
                     head = self.current_block
 
                     if_last = self.current_block = self.add_block()
-                    self.append(ir.Builtin("printf",
-                                           [ir.Constant(", ", builtins.TStr())], builtins.TNone()))
+                    printf(", ")
 
                     tail = self.current_block = self.add_block()
                     if_last.append(ir.Branch(tail))
@@ -1907,7 +1942,7 @@ class ARTIQIRGenerator(algorithm.Visitor):
                 start  = self.append(ir.GetAttr(value, "start"))
                 stop   = self.append(ir.GetAttr(value, "stop"))
                 step   = self.append(ir.GetAttr(value, "step"))
-                self.polymorphic_print([start, stop, step], separator=", ")
+                self.polymorphic_print([start, stop, step], separator=", ", as_rtio=as_rtio)
 
                 format_string += ")"
             elif builtins.is_exception(value.type):

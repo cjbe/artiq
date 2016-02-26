@@ -147,6 +147,9 @@ def fn_kernel():
 def obj_parallel():
     return types.TBuiltin("parallel")
 
+def obj_interleave():
+    return types.TBuiltin("interleave")
+
 def obj_sequential():
     return types.TBuiltin("sequential")
 
@@ -176,6 +179,9 @@ def fn_mu_to_seconds():
 
 def fn_seconds_to_mu():
     return types.TBuiltinFunction("seconds_to_mu")
+
+def fn_rtio_log():
+    return types.TBuiltinFunction("rtio_log")
 
 # Accessors
 

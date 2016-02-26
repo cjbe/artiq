@@ -2,7 +2,6 @@
 
 from setuptools import setup, find_packages
 import sys
-import os
 
 import versioneer
 
@@ -11,9 +10,10 @@ if sys.version_info[:3] < (3, 5, 1):
     raise Exception("You need Python 3.5.1+")
 
 
+# Depends on PyQt5, but setuptools cannot check for it.
 requirements = [
     "sphinx", "sphinx-argparse", "pyserial", "numpy", "scipy",
-    "python-dateutil", "prettytable", "h5py", "pydaqmx", "pyelftools",
+    "python-dateutil", "prettytable", "h5py",
     "quamash", "pyqtgraph", "pygit2", "aiohttp",
     "llvmlite_artiq", "pythonparser", "python-Levenshtein",
     "lit", "OutputCheck",
@@ -37,7 +37,6 @@ scripts = [
     "novatech409b_controller=artiq.frontend.novatech409b_controller:main",
     "pdq2_client=artiq.frontend.pdq2_client:main",
     "pdq2_controller=artiq.frontend.pdq2_controller:main",
-    "pxi6733_controller=artiq.frontend.pxi6733_controller:main",
     "thorlabs_tcube_controller=artiq.frontend.thorlabs_tcube_controller:main",
     "coherentDds_controller=artiq.frontend.coherentDds_controller:main",
     "dosDac_controller=artiq.frontend.dosDac_controller:main",
@@ -52,7 +51,7 @@ setup(
     cmdclass=versioneer.get_cmdclass(),
     author="M-Labs / NIST Ion Storage Group",
     author_email="sb@m-labs.hk",
-    url="http://m-labs.hk/artiq",
+    url="https://m-labs.hk/artiq",
     description="A control system for trapped-ion experiments",
     long_description=open("README.rst").read(),
     license="GPL",
@@ -64,7 +63,6 @@ setup(
     ],
     packages=find_packages(),
     namespace_packages=[],
-    test_suite="artiq.test",
     include_package_data=True,
     ext_modules=[],
     entry_points={
