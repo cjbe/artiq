@@ -16,7 +16,7 @@ class ProfileSwitcher:
     @kernel
     def setProfile(self, profile):
         if profile < 0 or profile > 7:
-            raise InvalidProfile
+            raise InvalidProfile()
         
         if profile & 0x4:
             self.p2.on()

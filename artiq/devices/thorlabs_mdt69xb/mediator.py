@@ -10,7 +10,7 @@ class PiezoWrapper:
         
         self.mappings = mappings
         
-    def setChannel(self, logicalChannel, value):
+    def set_channel(self, logicalChannel, value):
         # Look up the (device name, channel name) tuple in the mappings dictionary
         try:
             (deviceName,channel) = self.mappings[logicalChannel]
@@ -24,7 +24,7 @@ class PiezoWrapper:
             raise UnknownDeviceName
         
         # Set the physical device & channel to the given value
-        device.setChannel(channel, value)
+        device.set_channel(channel, value)
         
         
         
