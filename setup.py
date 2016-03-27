@@ -37,12 +37,7 @@ scripts = [
     "novatech409b_controller=artiq.frontend.novatech409b_controller:main",
     "pdq2_client=artiq.frontend.pdq2_client:main",
     "pdq2_controller=artiq.frontend.pdq2_controller:main",
-    "thorlabs_tcube_controller=artiq.frontend.thorlabs_tcube_controller:main",
-    "coherentDds_controller=artiq.frontend.coherentDds_controller:main",
-    "dosDac_controller=artiq.frontend.dosDac_controller:main",
-    "arduinoDds_controller=artiq.frontend.arduinoDds_controller:main",
-    "trapDac_controller=artiq.frontend.trapDac_controller:main",
-    "thorlabs_mdt69xb_controller=artiq.frontend.thorlabs_mdt69xb_controller:main"
+    "thorlabs_tcube_controller=artiq.frontend.thorlabs_tcube_controller:main"
 ]
 
 setup(
