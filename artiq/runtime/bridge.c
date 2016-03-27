@@ -7,16 +7,21 @@
 
 #define TIME_BUFFER (8000 << CONFIG_RTIO_FINE_TS_WIDTH)
 
-static void dds_write(int addr, int data)
+static void rtio_output_blind(int channel, int addr, int data)
 {
-    rtio_chan_sel_write(CONFIG_RTIO_DDS_CHANNEL);
+    rtio_chan_sel_write(channel);
     rtio_o_address_write(addr);
     rtio_o_data_write(data);
     rtio_o_timestamp_write(rtio_get_counter() + TIME_BUFFER);
     rtio_o_we_write(1);
 }
 
-static int dds_read(int addr)
+static void dds_write(int bus_channel, int addr, int data)
+{
+    rtio_output_blind(bus_channel, addr, data);
+}
+
+static int dds_read(int bus_channel, int addr)
 {
     int r;
 
@@ -26,7 +31,7 @@ static int dds_read(int addr)
 #ifdef CONFIG_DDS_AD9914
 #define DDS_READ_FLAG 256
 #endif
-    dds_write(addr | DDS_READ_FLAG, 0);
+    dds_write(bus_channel, addr | DDS_READ_FLAG, 0);
     while(rtio_i_status_read() & RTIO_I_STATUS_EMPTY);
     r = rtio_i_data_read();
     rtio_i_re_write(1);
@@ -54,7 +59,7 @@ void bridge_main(void)
                 struct msg_brg_ttl_out *msg;
 
                 msg = (struct msg_brg_ttl_out *)umsg;
-                ttl_set_oe(rtio_get_counter() + TIME_BUFFER, msg->channel, msg->value);
+                rtio_output_blind(msg->channel, TTL_OE_ADDR, msg->value);
                 mailbox_acknowledge();
                 break;
             }
@@ -62,7 +67,7 @@ void bridge_main(void)
                 struct msg_brg_ttl_out *msg;
 
                 msg = (struct msg_brg_ttl_out *)umsg;
-                ttl_set_o(rtio_get_counter() + TIME_BUFFER, msg->channel, msg->value);
+                rtio_output_blind(msg->channel, TTL_O_ADDR, msg->value);
                 mailbox_acknowledge();
                 break;
             }
@@ -70,16 +75,18 @@ void bridge_main(void)
                 struct msg_brg_dds_sel *msg;
 
                 msg = (struct msg_brg_dds_sel *)umsg;
-                dds_write(DDS_GPIO, msg->channel << 1);
+                dds_write(msg->bus_channel, DDS_GPIO, msg->channel << 1);
                 mailbox_acknowledge();
                 break;
             }
             case MESSAGE_TYPE_BRG_DDS_RESET: {
                 unsigned int g;
+                struct msg_brg_dds_reset *msg;
 
-                g = dds_read(DDS_GPIO);
-                dds_write(DDS_GPIO, g | 1);
-                dds_write(DDS_GPIO, g);
+                msg = (struct msg_brg_dds_reset *)umsg;
+                g = dds_read(msg->bus_channel, DDS_GPIO);
+                dds_write(msg->bus_channel, DDS_GPIO, g | 1);
+                dds_write(msg->bus_channel, DDS_GPIO, g);
 
                 mailbox_acknowledge();
                 break;
@@ -90,7 +97,7 @@ void bridge_main(void)
 
                 msg = (struct msg_brg_dds_read_request *)umsg;
                 rmsg.type = MESSAGE_TYPE_BRG_DDS_READ_REPLY;
-                rmsg.data = dds_read(msg->address);
+                rmsg.data = dds_read(msg->bus_channel, msg->address);
                 mailbox_send_and_wait(&rmsg);
                 break;
             }
@@ -98,14 +105,18 @@ void bridge_main(void)
                 struct msg_brg_dds_write *msg;
 
                 msg = (struct msg_brg_dds_write *)umsg;
-                dds_write(msg->address, msg->data);
+                dds_write(msg->bus_channel, msg->address, msg->data);
                 mailbox_acknowledge();
                 break;
             }
-            case MESSAGE_TYPE_BRG_DDS_FUD:
-                dds_write(DDS_FUD, 0);
+            case MESSAGE_TYPE_BRG_DDS_FUD: {
+                struct msg_brg_dds_fud *msg;
+
+                msg = (struct msg_brg_dds_fud *)umsg;
+                dds_write(msg->bus_channel, DDS_FUD, 0);
                 mailbox_acknowledge();
                 break;
+            }
             default:
                 mailbox_acknowledge();
                 break;

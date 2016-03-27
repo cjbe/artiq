@@ -4,6 +4,8 @@ from collections import OrderedDict
 from PyQt5 import QtCore, QtGui, QtWidgets
 
 from artiq.gui.tools import LayoutWidget, disable_scroll_wheel
+from artiq.gui.scanwidget import ScanWidget
+from artiq.gui.scientific_spinbox import ScientificSpinBox
 
 
 logger = logging.getLogger(__name__)
@@ -136,6 +138,7 @@ class _RangeScan(LayoutWidget):
         LayoutWidget.__init__(self)
 
         scale = procdesc["scale"]
+
         def apply_properties(spinbox):
             spinbox.setDecimals(procdesc["ndecimals"])
             if procdesc["global_min"] is not None:
@@ -151,37 +154,52 @@ class _RangeScan(LayoutWidget):
             if procdesc["unit"]:
                 spinbox.setSuffix(" " + procdesc["unit"])
 
-        self.addWidget(QtWidgets.QLabel("Min:"), 0, 0)
-        self.min = QtWidgets.QDoubleSpinBox()
-        disable_scroll_wheel(self.min)
-        apply_properties(self.min)
-        self.addWidget(self.min, 0, 1)
+        scanner = ScanWidget()
+        disable_scroll_wheel(scanner)
+        self.addWidget(scanner, 0, 0, -1, 1)
 
-        self.addWidget(QtWidgets.QLabel("Max:"), 1, 0)
-        self.max = QtWidgets.QDoubleSpinBox()
-        disable_scroll_wheel(self.max)
-        apply_properties(self.max)
-        self.addWidget(self.max, 1, 1)
+        start = ScientificSpinBox()
+        start.setStyleSheet("QDoubleSpinBox {color:blue}")
+        start.setMinimumSize(110, 0)
+        start.setSizePolicy(QtWidgets.QSizePolicy(
+            QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed))
+        disable_scroll_wheel(start)
+        self.addWidget(start, 0, 1)
 
-        self.addWidget(QtWidgets.QLabel("#Points:"), 2, 0)
-        self.npoints = QtWidgets.QSpinBox()
-        disable_scroll_wheel(self.npoints)
-        self.npoints.setMinimum(2)
-        self.npoints.setValue(10)
-        self.addWidget(self.npoints, 2, 1)
+        npoints = QtWidgets.QSpinBox()
+        npoints.setMinimum(1)
+        disable_scroll_wheel(npoints)
+        self.addWidget(npoints, 1, 1)
 
-        self.min.setValue(state["min"]/scale)
-        self.max.setValue(state["max"]/scale)
-        self.npoints.setValue(state["npoints"])
-        def update_min(value):
-            state["min"] = value*scale
-        def update_max(value):
-            state["min"] = value*scale
+        stop = ScientificSpinBox()
+        stop.setStyleSheet("QDoubleSpinBox {color:red}")
+        stop.setMinimumSize(110, 0)
+        disable_scroll_wheel(stop)
+        self.addWidget(stop, 2, 1)
+
+        def update_start(value):
+            state["start"] = value*scale
+            scanner.setStart(value)
+
+        def update_stop(value):
+            state["stop"] = value*scale
+            scanner.setStop(value)
+
         def update_npoints(value):
             state["npoints"] = value
-        self.min.valueChanged.connect(update_min)
-        self.max.valueChanged.connect(update_max)
-        self.npoints.valueChanged.connect(update_npoints)
+            scanner.setNum(value)
+
+        scanner.startChanged.connect(start.setValue)
+        scanner.numChanged.connect(npoints.setValue)
+        scanner.stopChanged.connect(stop.setValue)
+        start.valueChanged.connect(update_start)
+        npoints.valueChanged.connect(update_npoints)
+        stop.valueChanged.connect(update_stop)
+        scanner.setStart(state["start"]/scale)
+        scanner.setNum(state["npoints"])
+        scanner.setStop(state["stop"]/scale)
+        apply_properties(start)
+        apply_properties(stop)
 
 
 class _ExplicitScan(LayoutWidget):
@@ -248,8 +266,8 @@ class _ScanEntry(LayoutWidget):
         state = {
             "selected": "NoScan",
             "NoScan": {"value": 0.0},
-            "LinearScan": {"min": 0.0, "max": 100.0*scale, "npoints": 10},
-            "RandomScan": {"min": 0.0, "max": 100.0*scale, "npoints": 10},
+            "LinearScan": {"start": 0.0, "stop": 100.0*scale, "npoints": 10},
+            "RandomScan": {"start": 0.0, "stop": 100.0*scale, "npoints": 10},
             "ExplicitScan": {"sequence": []}
         }
         if "default" in procdesc:
@@ -260,8 +278,8 @@ class _ScanEntry(LayoutWidget):
                 state["NoScan"]["value"] = default["value"]
             elif ty == "LinearScan" or ty == "RandomScan":
                 for d in state["LinearScan"], state["RandomScan"]:
-                    d["min"] = default["min"]
-                    d["max"] = default["max"]
+                    d["start"] = default["start"]
+                    d["stop"] = default["stop"]
                     d["npoints"] = default["npoints"]
             elif ty == "ExplicitScan":
                 state["ExplicitScan"]["sequence"] = default["sequence"]

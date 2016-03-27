@@ -423,6 +423,8 @@ class Function:
     :ivar is_internal:
         (bool) if True, the function should not be accessible from outside
         the module it is contained in
+    :ivar is_cold:
+        (bool) if True, the function should be considered rarely called
     """
 
     def __init__(self, typ, name, arguments, loc=None):
@@ -431,13 +433,14 @@ class Function:
         self.next_name = 1
         self.set_arguments(arguments)
         self.is_internal = False
+        self.is_cold = False
 
     def _remove_name(self, name):
         self.names.remove(name)
 
     def _add_name(self, base_name):
         if base_name == "":
-            name = "v.{}".format(self.next_name)
+            name = "UNN.{}".format(self.next_name)
             self.next_name += 1
         elif base_name in self.names:
             name = "{}.{}".format(base_name, self.next_name)
@@ -647,38 +650,6 @@ class SetLocal(Instruction):
     def value(self):
         return self.operands[1]
 
-class GetConstructor(Instruction):
-    """
-    An intruction that loads a local variable with the given type
-    from an environment, possibly going through multiple levels of indirection.
-
-    :ivar var_name: (string) variable name
-    """
-
-    """
-    :param env: (:class:`Value`) local environment
-    :param var_name: (string) local variable name
-    :param var_type: (:class:`types.Type`) local variable type
-    """
-    def __init__(self, env, var_name, var_type, name=""):
-        assert isinstance(env, Value)
-        assert isinstance(env.type, TEnvironment)
-        assert isinstance(var_name, str)
-        assert isinstance(var_type, types.Type)
-        super().__init__([env], var_type, name)
-        self.var_name = var_name
-
-    def copy(self, mapper):
-        self_copy = super().copy(mapper)
-        self_copy.var_name = self.var_name
-        return self_copy
-
-    def opcode(self):
-        return "getconstructor({})".format(repr(self.var_name))
-
-    def environment(self):
-        return self.operands[0]
-
 class GetAttr(Instruction):
     """
     An intruction that loads an attribute from an object,
@@ -697,8 +668,12 @@ class GetAttr(Instruction):
         if isinstance(attr, int):
             assert isinstance(obj.type, types.TTuple)
             typ = obj.type.elts[attr]
-        else:
+        elif attr in obj.type.attributes:
             typ = obj.type.attributes[attr]
+        else:
+            typ = obj.type.constructor.attributes[attr]
+            if types.is_function(typ):
+                typ = types.TMethod(obj.type, typ)
         super().__init__([obj], typ, name)
         self.attr = attr
 
@@ -897,9 +872,11 @@ class Builtin(Instruction):
     """
     :param op: (string) operation name
     """
-    def __init__(self, op, operands, typ, name=""):
+    def __init__(self, op, operands, typ, name=None):
         assert isinstance(op, str)
         for operand in operands: assert isinstance(operand, Value)
+        if name is None:
+            name = "BLT.{}".format(op)
         super().__init__(operands, typ, name)
         self.op = op
 
@@ -948,6 +925,8 @@ class Call(Instruction):
         iodelay expressions for values of arguments
     :ivar static_target_function: (:class:`Function` or None)
         statically resolved callee
+    :ivar is_cold: (bool)
+        the callee function is cold
     """
 
     """
@@ -964,6 +943,7 @@ class Call(Instruction):
         super().__init__([func] + args, func.type.ret, name)
         self.arg_exprs = arg_exprs
         self.static_target_function = None
+        self.is_cold = False
 
     def copy(self, mapper):
         self_copy = super().copy(mapper)
@@ -1212,6 +1192,8 @@ class Invoke(Terminator):
         iodelay expressions for values of arguments
     :ivar static_target_function: (:class:`Function` or None)
         statically resolved callee
+    :ivar is_cold: (bool)
+        the callee function is cold
     """
 
     """
@@ -1232,6 +1214,7 @@ class Invoke(Terminator):
         super().__init__([func] + args + [normal, exn], func.type.ret, name)
         self.arg_exprs = arg_exprs
         self.static_target_function = None
+        self.is_cold = False
 
     def copy(self, mapper):
         self_copy = super().copy(mapper)

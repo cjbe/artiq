@@ -66,6 +66,7 @@ class MdiArea(QtWidgets.QMdiArea):
         painter = QtGui.QPainter(self.viewport())
         x = (self.width() - self.pixmap.width())//2
         y = (self.height() - self.pixmap.height())//2
+        painter.setOpacity(0.5)
         painter.drawPixmap(x, y, self.pixmap)
 
 
@@ -90,11 +91,12 @@ def main():
         rpc_clients[target] = client
 
     sub_clients = dict()
-    for notifier_name, module in (("explist", explorer),
-                                  ("datasets", datasets),
-                                  ("schedule", schedule),
-                                  ("log", log)):
-        subscriber = ModelSubscriber(notifier_name, module.Model)
+    for notifier_name, modelf in (("explist", explorer.Model),
+                                  ("explist_status", explorer.StatusUpdater),
+                                  ("datasets", datasets.Model),
+                                  ("schedule", schedule.Model),
+                                  ("log", log.Model)):
+        subscriber = ModelSubscriber(notifier_name, modelf)
         loop.run_until_complete(subscriber.connect(
             args.server, args.port_notify))
         atexit_register_coroutine(subscriber.close)
@@ -122,11 +124,13 @@ def main():
     smgr.register(d_shortcuts)
     d_explorer = explorer.ExplorerDock(status_bar, expmgr, d_shortcuts,
                                        sub_clients["explist"],
+                                       sub_clients["explist_status"],
                                        rpc_clients["schedule"],
                                        rpc_clients["experiment_db"])
 
     d_datasets = datasets.DatasetsDock(sub_clients["datasets"],
                                        rpc_clients["dataset_db"])
+    smgr.register(d_datasets)
 
     d_applets = applets.AppletsDock(main_window, sub_clients["datasets"])
     atexit_register_coroutine(d_applets.stop)
@@ -139,6 +143,7 @@ def main():
 
     d_schedule = schedule.ScheduleDock(
         status_bar, rpc_clients["schedule"], sub_clients["schedule"])
+    smgr.register(d_schedule)
 
     logmgr = log.LogDockManager(main_window, sub_clients["log"])
     smgr.register(logmgr)
@@ -169,7 +174,7 @@ def main():
     # create first log dock if not already in state
     d_log0 = logmgr.first_log_dock()
     if d_log0 is not None:
-        main_window.tabifyDockWidget(d_shortcuts, d_log0)
+        main_window.tabifyDockWidget(d_schedule, d_log0)
 
     # run
     main_window.show()

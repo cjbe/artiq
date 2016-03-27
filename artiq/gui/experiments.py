@@ -18,6 +18,15 @@ logger = logging.getLogger(__name__)
 # 2. file:<class name>@<file name>
 
 
+class _WheelFilter(QtCore.QObject):
+    def eventFilter(self, obj, event):
+        if (event.type() == QtCore.QEvent.Wheel and
+                event.modifiers() != QtCore.Qt.NoModifier):
+            event.ignore()
+            return True
+        return False
+
+
 class _ArgumentEditor(QtWidgets.QTreeWidget):
     def __init__(self, manager, dock, expurl):
         self.manager = manager
@@ -37,6 +46,8 @@ class _ArgumentEditor(QtWidgets.QTreeWidget):
         self.setSelectionMode(QtWidgets.QAbstractItemView.NoSelection)
         self.setHorizontalScrollMode(QtWidgets.QAbstractItemView.ScrollPerPixel)
         self.setVerticalScrollMode(QtWidgets.QAbstractItemView.ScrollPerPixel)
+
+        self.viewport().installEventFilter(_WheelFilter(self.viewport()))
 
         self._groups = dict()
         self._arg_to_entry_widgetitem = dict()
@@ -401,7 +412,14 @@ class ExperimentManager:
             dock = self.open_experiments[expurl]
             self.main_window.centralWidget().setActiveSubWindow(dock)
             return dock
-        dock = _ExperimentDock(self, expurl)
+        try:
+            dock = _ExperimentDock(self, expurl)
+        except:
+            logger.warning("Failed to create experiment dock for %s, "
+                           "attempting to reset arguments", expurl,
+                           exc_info=True)
+            del self.submission_arguments[expurl]
+            dock = _ExperimentDock(self, expurl)
         self.open_experiments[expurl] = dock
         self.main_window.centralWidget().addSubWindow(dock)
         dock.show()

@@ -85,7 +85,7 @@ class AppletIPCServer(AsyncioParentComm):
         await asyncio.wait([self.server_task])
 
 
-class AppletDock(QDockWidgetCloseDetect):
+class _AppletDock(QDockWidgetCloseDetect):
     def __init__(self, datasets_sub, uid, name, command):
         QDockWidgetCloseDetect.__init__(self, "Applet: " + name)
         self.setObjectName("applet" + str(uid))
@@ -137,7 +137,7 @@ class AppletDock(QDockWidgetCloseDetect):
     def fix_initial_size(self):
         self.embed_window.resize(self.embed_widget.size())
 
-    async def terminate(self):
+    async def terminate(self, delete_self=True):
         if self.starting_stopping:
             return
         self.starting_stopping = True
@@ -163,8 +163,12 @@ class AppletDock(QDockWidgetCloseDetect):
 
         self.starting_stopping = False
 
+        if delete_self:
+            self.setParent(None)
+            self.deleteLater()
+
     async def restart(self):
-        await self.terminate()
+        await self.terminate(False)
         await self.start()
 
 
@@ -181,6 +185,8 @@ _templates = [
                        "--embed {ipc_address} X_DATASET "
                        "HIST_BIN_BOUNDARIES_DATASET "
                        "HISTS_COUNTS_DATASET"),
+    ("Image", "{python} -m artiq.applets.image "
+                  "--embed {ipc_address} IMG_DATASET"),
 ]
 
 
@@ -235,7 +241,7 @@ class AppletsDock(QtWidgets.QDockWidget):
         self.table.cellChanged.connect(self.cell_changed)
 
     def create(self, uid, name, command):
-        dock = AppletDock(self.datasets_sub, uid, name, command)
+        dock = _AppletDock(self.datasets_sub, uid, name, command)
         self.main_window.addDockWidget(QtCore.Qt.RightDockWidgetArea, dock)
         dock.setFloating(True)
         asyncio.ensure_future(dock.start())

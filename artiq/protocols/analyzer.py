@@ -5,6 +5,7 @@ class MessageType(Enum):
     output = 0b00
     input = 0b01
     exception = 0b10
+    stopped = 0b11
 
 
 class ExceptionType(Enum):
@@ -15,6 +16,6 @@ class ExceptionType(Enum):
 
     o_underflow_reset = 0b010000
     o_sequence_error_reset = 0b010001
-    o_collision_error_reset = 0b010010
+    o_collision_reset = 0b010010
 
     i_overflow_reset = 0b100000

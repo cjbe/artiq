@@ -40,13 +40,16 @@ If your ``$PATH`` misses reference the ``miniconda3/bin`` or ``anaconda3/bin`` y
 
     $ export PATH=$HOME/miniconda3/bin:$PATH
 
-Installing the host side software
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Installing the ARTIQ packages
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 For this, you need to add our Anaconda repository to your conda configuration::
 
     $ conda config --add channels http://conda.anaconda.org/m-labs/channel/main
-    $ conda config --add channels http://conda.anaconda.org/m-labs/channel/dev
+
+.. note::
+    To use the development versions of ARTIQ, also add the ``dev`` channel (http://conda.anaconda.org/m-labs/channel/dev).
+    Development versions contain more features, but are not as well-tested and are more likely to contain bugs or inconsistencies.
 
 Then you can install the ARTIQ package, it will pull all the necessary dependencies.
 
@@ -60,7 +63,12 @@ Then you can install the ARTIQ package, it will pull all the necessary dependenc
     $ ENV=$(date +artiq-%Y-%m-%d); conda create -n $ENV artiq-kc705-nist_qc1; \
         echo "Created environment $ENV for ARTIQ"
 
-* For the KC705 board with the FMC backplane and AD9914 DDS chips::
+* For the KC705 board with the "clock" FMC backplane and AD9914 DDS chips::
+
+    $ ENV=$(date +artiq-%Y-%m-%d); conda create -n $ENV artiq-kc705-nist_clock; \
+        echo "Created environment $ENV for ARTIQ"
+
+* For the KC705 board with the QC2 FMC backplane and AD9914 DDS chips::
 
     $ ENV=$(date +artiq-%Y-%m-%d); conda create -n $ENV artiq-kc705-nist_qc2; \
         echo "Created environment $ENV for ARTIQ"
@@ -85,23 +93,50 @@ Preparing the core device FPGA board
 
 You now need to flash 3 things on the FPGA board:
 
-1. The FPGA bitstream
+1. The FPGA gateware bitstream
 2. The BIOS
 3. The ARTIQ runtime
 
-First you need to :ref:`install openocd <install-openocd>`. Then, you can flash the board:
+They are all shipped in our Conda packages, along with the required flash proxy gateware bitstreams.
+
+.. _install-openocd:
+
+Installing OpenOCD
+..................
+
+There are several tools that can be used to write the thee binaries into
+the core device FPGA board's flash memory. Xilinx ISE (impact) or Vivado work, as does xc3sprog
+sometimes. OpenOCD is the recommended and most reliable method. But
+it is not currently packaged as a conda package.
+
+The following instructions are for Ubuntu.
+
+    ::
+
+        $ cd ~/artiq-dev
+        $ git clone https://github.com/ntfreak/openocd.git
+        $ cd openocd
+        $ sudo apt-get install build-essential libtool libusb-1.0-0-dev libftdi-dev automake
+        $ ./bootstrap
+        $ ./configure
+        $ make
+        $ sudo make install
+        $ sudo cp contrib/99-openocd.rules /etc/udev/rules.d
+        $ sudo adduser $USER plugdev
+
+
+
+Then, you can flash the board:
 
 * For the Pipistrello board::
 
-    $ artiq_flash -t pipistrello
+    $ artiq_flash -t pipistrello -m qc1
 
 * For the KC705 board::
 
-    $ artiq_flash
+    $ artiq_flash -m [qc1/clock/qc2]
 
-Next step (for KC705) is to flash MAC and IP addresses to the board:
-
-* See :ref:`those instructions <flash-mac-ip-addr>` to flash MAC and IP addresses.
+For the KC705, the next step is to flash the MAC and IP addresses to the board. See :ref:`those instructions <flash-mac-ip-addr>`.
 
 .. _install-from-sources:
 
@@ -161,11 +196,11 @@ and the ARTIQ kernels.
 Preparing the core device FPGA board
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-These steps are required to generate bitstream (``.bit``) files, build the MiSoC BIOS and ARTIQ runtime, and flash FPGA boards. If the board is already flashed, you may skip those steps and go directly to `Installing the host-side software`.
+These steps are required to generate gateware bitstream (``.bit``) files, build the MiSoC BIOS and ARTIQ runtime, and flash FPGA boards. If the board is already flashed, you may skip those steps and go directly to `Installing the host-side software`.
 
 * Install the FPGA vendor tools (e.g. Xilinx ISE and/or Vivado):
 
-    * Get Xilinx tools from http://www.xilinx.com/support/download/index.htm. ISE can build bitstreams both for boards using the Spartan-6 (Pipistrello) and 7-series devices (KC705), while Vivado supports only boards using 7-series devices.
+    * Get Xilinx tools from http://www.xilinx.com/support/download/index.htm. ISE can build gateware bitstreams both for boards using the Spartan-6 (Pipistrello) and 7-series devices (KC705), while Vivado supports only boards using 7-series devices.
 
     * The Pipistrello is supported by Webpack, the KC705 is not.
 
@@ -181,28 +216,11 @@ These steps are required to generate bitstream (``.bit``) files, build the MiSoC
 .. note::
     The options ``develop`` and ``--user`` are for setup.py to install Migen in ``~/.local/lib/python3.5``.
 
-.. _install-openocd:
-
-* Install JTAG tools needed to program the Pipistrello and KC705:
-
-    ::
-
-        $ cd ~/artiq-dev
-        $ git clone https://github.com/ntfreak/openocd.git
-        $ cd openocd
-        $ sudo apt-get install build-essentials libtool libusb-1.0-0-dev libftdi-dev
-        $ ./bootstrap
-        $ ./configure
-        $ make
-        $ sudo make install
-        $ sudo cp contrib/99-openocd.rules /etc/udev/rules.d
-        $ adduser $USER plugdev
-
 .. _install-flash-proxy:
 
-* Install the required flash proxy bitstreams:
+* Install the required flash proxy gateware bitstreams:
 
-    The purpose of the flash proxy bitstream is to give programming software fast JTAG access to the flash connected to the FPGA.
+    The purpose of the flash proxy gateware bitstream is to give programming software fast JTAG access to the flash connected to the FPGA.
 
     * Pipistrello and KC705:
 
@@ -214,6 +232,7 @@ These steps are required to generate bitstream (``.bit``) files, build the MiSoC
 
         Then move both files ``~/artiq-dev/bscan_spi_xc6slx45.bit`` and ``~/artiq-dev/bscan_spi_xc7k325t.bit`` to ``~/.migen``, ``/usr/local/share/migen``, or ``/usr/share/migen``.
 
+* :ref:`Download and install OpenOCD <install-openocd>`.
 
 * Download and install MiSoC: ::
 
@@ -235,7 +254,7 @@ These steps are required to generate bitstream (``.bit``) files, build the MiSoC
     :ref:`installing the host-side software <installing-the-host-side-software>`.
 
 
-* Build the bitstream, BIOS and runtime by running:
+* Build the gateware bitstream, BIOS and runtime by running:
     ::
 
         $ cd ~/artiq-dev
@@ -262,16 +281,17 @@ These steps are required to generate bitstream (``.bit``) files, build the MiSoC
 
 .. note:: The `-t` option specifies the board your are targeting. Available options are ``kc705`` and ``pipistrello``.
 
-* Check that the board boots by running a serial terminal program (you may need to press its FPGA reconfiguration button or power-cycle it to load the bitstream that was newly written into the flash): ::
+* Check that the board boots by running a serial terminal program (you may need to press its FPGA reconfiguration button or power-cycle it to load the gateware bitstream that was newly written into the flash): ::
 
-        $ make -C ~/artiq-dev/misoc/tools # do only once
-        $ ~/artiq-dev/misoc/tools/flterm --port /dev/ttyUSB1
+        $ flterm /dev/ttyUSB1
         MiSoC BIOS   http://m-labs.hk
         [...]
         Booting from flash...
         Loading xxxxx bytes from flash...
         Executing booted program.
         ARTIQ runtime built <date/time>
+
+.. note:: flterm is part of MiSoC. If you installed MiSoC with ``setup.py develop --user``, the flterm launcher is in ``~/.local/bin``.
 
 The communication parameters are 115200 8-N-1. Ensure that your user has access
 to the serial device (``sudo adduser $USER dialout`` assuming standard setup).

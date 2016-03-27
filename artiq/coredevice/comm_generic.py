@@ -50,6 +50,9 @@ class _D2HMsgType(Enum):
     FLASH_OK_REPLY = 12
     FLASH_ERROR_REPLY = 13
 
+    WATCHDOG_EXPIRED = 14
+    CLOCK_FAILURE = 15
+
 
 class UnsupportedDevice(Exception):
     pass
@@ -158,7 +161,7 @@ class CommGeneric:
         return self._read_chunk(self._read_int32())
 
     def _read_string(self):
-        return self._read_bytes()[:-1].decode('utf-8')
+        return self._read_bytes()[:-1].decode("utf-8")
 
     #
     # Writer interface
@@ -242,7 +245,7 @@ class CommGeneric:
 
         self._read_header()
         self._read_expect(_D2HMsgType.LOG_REPLY)
-        return self._read_chunk(self._read_length).decode("utf-8")
+        return self._read_chunk(self._read_length).decode("utf-8", "replace")
 
     def clear_log(self):
         self._write_empty(_H2DMsgType.LOG_CLEAR)
@@ -522,6 +525,10 @@ class CommGeneric:
                 self._serve_rpc(object_map)
             elif self._read_type == _D2HMsgType.KERNEL_EXCEPTION:
                 self._serve_exception(object_map, symbolizer)
+            elif self._read_type == _D2HMsgType.WATCHDOG_EXPIRED:
+                raise exceptions.WatchdogExpired
+            elif self._read_type == _D2HMsgType.CLOCK_FAILURE:
+                raise exceptions.ClockFailure
             else:
                 self._read_expect(_D2HMsgType.KERNEL_FINISHED)
                 return

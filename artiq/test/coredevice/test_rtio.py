@@ -7,8 +7,14 @@ from math import sqrt
 
 from artiq.experiment import *
 from artiq.test.hardware_testbench import ExperimentCase
+from artiq.coredevice import exceptions
+
 
 artiq_low_latency = os.getenv("ARTIQ_LOW_LATENCY")
+
+
+class PulseNotReceived(Exception):
+    pass
 
 
 class RTT(EnvExperiment):
@@ -28,7 +34,10 @@ class RTT(EnvExperiment):
                 delay(1*us)
                 t0 = now_mu()
                 self.ttl_inout.pulse(1*us)
-        self.set_dataset("rtt", mu_to_seconds(self.ttl_inout.timestamp_mu() - t0))
+        t1 = self.ttl_inout.timestamp_mu()
+        if t1 < 0:
+            raise PulseNotReceived()
+        self.set_dataset("rtt", mu_to_seconds(t1 - t0))
 
 
 class Loopback(EnvExperiment):
@@ -40,6 +49,7 @@ class Loopback(EnvExperiment):
     @kernel
     def run(self):
         self.loop_in.input()
+        self.loop_out.off()
         delay(1*us)
         with parallel:
             self.loop_in.gate_rising(2*us)
@@ -47,7 +57,10 @@ class Loopback(EnvExperiment):
                 delay(1*us)
                 t0 = now_mu()
                 self.loop_out.pulse(1*us)
-        self.set_dataset("rtt", mu_to_seconds(self.loop_in.timestamp_mu() - t0))
+        t1 = self.loop_in.timestamp_mu()
+        if t1 < 0:
+            raise PulseNotReceived()
+        self.set_dataset("rtt", mu_to_seconds(t1 - t0))
 
 
 class ClockGeneratorLoopback(EnvExperiment):
@@ -76,14 +89,41 @@ class PulseRate(EnvExperiment):
 
     @kernel
     def run(self):
-        dt = seconds_to_mu(1000*ns)
+        dt = seconds_to_mu(300*ns)
         while True:
-            try:
-                for i in range(1000):
+            for i in range(10000):
+                try:
                     self.ttl_out.pulse_mu(dt)
                     delay_mu(dt)
+                except RTIOUnderflow:
+                    dt += 1
+                    self.core.break_realtime()
+                    break
+            else:
+                self.set_dataset("pulse_rate", mu_to_seconds(2*dt))
+                return
+
+
+class PulseRateDDS(EnvExperiment):
+    def build(self):
+        self.setattr_device("core")
+        self.setattr_device("core_dds")
+        self.setattr_device("dds0")
+        self.setattr_device("dds1")
+
+    @kernel
+    def run(self):
+        dt = seconds_to_mu(150*us)
+        while True:
+            try:
+                delay(10*ms)
+                for i in range(100):
+                    with self.core_dds.batch:
+                        self.dds0.set(100*MHz)
+                        self.dds1.set(100*MHz)
+                    delay_mu(dt)
             except RTIOUnderflow:
-                dt += 1
+                dt += 100
                 self.core.break_realtime()
             else:
                 self.set_dataset("pulse_rate", mu_to_seconds(2*dt))
@@ -149,7 +189,7 @@ class SequenceError(EnvExperiment):
         self.ttl_out.pulse(25*us)
 
 
-class CollisionError(EnvExperiment):
+class Collision(EnvExperiment):
     def build(self):
         self.setattr_device("core")
         self.setattr_device("ttl_out_serdes")
@@ -160,6 +200,17 @@ class CollisionError(EnvExperiment):
         for i in range(16):
             self.ttl_out_serdes.pulse_mu(1)
             delay_mu(1)
+
+
+class AddressCollision(EnvExperiment):
+    def build(self):
+        self.setattr_device("core")
+        self.setattr_device("loop_in")
+
+    @kernel
+    def run(self):
+        self.loop_in.input()
+        self.loop_in.pulse(10*us)
 
 
 class TimeKeepsRunning(EnvExperiment):
@@ -191,7 +242,7 @@ class CoredeviceTest(ExperimentCase):
         rtt = self.dataset_mgr.get("rtt")
         print(rtt)
         self.assertGreater(rtt, 0*ns)
-        self.assertLess(rtt, 50*ns)
+        self.assertLess(rtt, 60*ns)
 
     def test_clock_generator_loopback(self):
         self.execute(ClockGeneratorLoopback)
@@ -203,7 +254,14 @@ class CoredeviceTest(ExperimentCase):
         rate = self.dataset_mgr.get("pulse_rate")
         print(rate)
         self.assertGreater(rate, 100*ns)
-        self.assertLess(rate, 2500*ns)
+        self.assertLess(rate, 1500*ns)
+
+    def test_pulse_rate_dds(self):
+        self.execute(PulseRateDDS)
+        rate = self.dataset_mgr.get("pulse_rate")
+        print(rate)
+        self.assertGreater(rate, 100*us)
+        self.assertLess(rate, 2500*us)
 
     def test_loopback_count(self):
         npulses = 2
@@ -219,13 +277,17 @@ class CoredeviceTest(ExperimentCase):
         with self.assertRaises(RTIOSequenceError):
             self.execute(SequenceError)
 
-    def test_collision_error(self):
-        with self.assertRaises(RTIOCollisionError):
-            self.execute(CollisionError)
+    def test_collision(self):
+        with self.assertRaises(RTIOCollision):
+            self.execute(Collision)
+
+    def test_address_collision(self):
+        with self.assertRaises(RTIOCollision):
+            self.execute(AddressCollision)
 
     def test_watchdog(self):
         # watchdog only works on the device
-        with self.assertRaises(IOError):
+        with self.assertRaises(exceptions.WatchdogExpired):
             self.execute(Watchdog)
 
     @unittest.skipUnless(artiq_low_latency,
@@ -233,8 +295,11 @@ class CoredeviceTest(ExperimentCase):
     def test_time_keeps_running(self):
         self.execute(TimeKeepsRunning)
         t1 = self.dataset_mgr.get("time_at_start")
+
+        self.device_mgr.get("comm").close()  # start a new session
         self.execute(TimeKeepsRunning)
         t2 = self.dataset_mgr.get("time_at_start")
+
         dead_time = mu_to_seconds(t2 - t1, self.device_mgr.get("core"))
         print(dead_time)
         self.assertGreater(dead_time, 1*ms)

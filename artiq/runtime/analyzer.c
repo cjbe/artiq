@@ -12,7 +12,6 @@ struct analyzer_header {
     unsigned long long int total_byte_count;
     unsigned char overflow_occured;
     unsigned char log_channel;
-    unsigned char dds_channel;
     unsigned char dds_onehot_sel;
 } __attribute__((packed));
 
@@ -28,13 +27,13 @@ static void arm(void)
     rtio_analyzer_dma_base_address_write((unsigned int)analyzer_buffer);
     rtio_analyzer_dma_last_address_write((unsigned int)analyzer_buffer + ANALYZER_BUFFER_SIZE - 1);
     rtio_analyzer_dma_reset_write(1);
-    rtio_analyzer_dma_enable_write(1);
+    rtio_analyzer_enable_write(1);
 }
 
 static void disarm(void)
 {
-    rtio_analyzer_dma_enable_write(0);
-    while(rtio_analyzer_dma_busy_read());
+    rtio_analyzer_enable_write(0);
+    while(rtio_analyzer_busy_read());
     flush_cpu_dcache();
     flush_l2_cache();
 }
@@ -72,7 +71,6 @@ void analyzer_start(void)
 
     analyzer_header.overflow_occured = rtio_analyzer_message_encoder_overflow_read();
     analyzer_header.log_channel = CONFIG_RTIO_LOG_CHANNEL;
-    analyzer_header.dds_channel = CONFIG_RTIO_DDS_CHANNEL;
 #ifdef CONFIG_DDS_ONEHOT_SEL
     analyzer_header.dds_onehot_sel = 1;
 #else
@@ -95,8 +93,9 @@ int analyzer_input(void *data, int length)
     return -1;
 }
 
-void analyzer_poll(void **data, int *length)
+void analyzer_poll(void **data, int *length, int *close_flag)
 {
+    *close_flag = 0;
     switch(send_state) {
         case SEND_STATE_HEADER:
             *length = sizeof(struct analyzer_header) - offset_consumed;

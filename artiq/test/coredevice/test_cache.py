@@ -1,24 +1,26 @@
 from artiq.experiment import *
+from artiq.coredevice.exceptions import CacheError
 from artiq.test.hardware_testbench import ExperimentCase
 
 
 class _Cache(EnvExperiment):
     def build(self):
         self.setattr_device("core")
-        self.print = lambda x: print(x)
+        self.setattr_device("core_cache")
 
     @kernel
     def get(self, key):
-        return self.core.get_cache(key)
+        return self.core_cache.get(key)
 
     @kernel
     def put(self, key, value):
-        self.core.put_cache(key, value)
+        self.core_cache.put(key, value)
 
     @kernel
     def get_put(self, key, value):
         self.get(key)
         self.put(key, value)
+
 
 class CacheTest(ExperimentCase):
     def test_get_empty(self):

@@ -95,7 +95,7 @@ def main():
         "master_dataset_db": dataset_db,
         "master_schedule": scheduler,
         "master_experiment_db": experiment_db
-    })
+    }, allow_parallel=True)
     loop.run_until_complete(server_control.start(
         bind, args.port_control))
     atexit_register_coroutine(server_control.stop)
@@ -105,6 +105,7 @@ def main():
         "devices": device_db.data,
         "datasets": dataset_db.data,
         "explist": experiment_db.explist,
+        "explist_status": experiment_db.status,
         "log": log_buffer.data
     })
     loop.run_until_complete(server_notify.start(

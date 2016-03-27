@@ -86,7 +86,7 @@ class RTIOSequenceError(Exception):
     """
     artiq_builtin = True
 
-class RTIOCollisionError(Exception):
+class RTIOCollision(Exception):
     """Raised when an event is submitted on a given channel with the same
     coarse timestamp as the previous one but with a different fine timestamp.
 
@@ -95,6 +95,18 @@ class RTIOCollisionError(Exception):
     (typically around 1GHz).
 
     The offending event is discarded and the RTIO core keeps operating.
+    """
+    artiq_builtin = True
+
+class RTIOBusy(Exception):
+    """Raised when at least one output event could not be executed because
+    the given channel was already busy executing a previous event.
+
+    This exception is raised late: after the error condition occurred. More
+    specifically it is raised on submitting an event on the same channel after
+    the execution of the faulty event was attempted.
+
+    The offending event was discarded.
     """
     artiq_builtin = True
 
@@ -108,8 +120,19 @@ class RTIOOverflow(Exception):
     """
     artiq_builtin = True
 
-class DDSBatchError(Exception):
+class DDSError(Exception):
     """Raised when attempting to start a DDS batch while already in a batch,
-    or when too many commands are batched.
+    when too many commands are batched, and when DDS channel settings are
+    incorrect.
     """
     artiq_builtin = True
+
+class I2CError(Exception):
+    """Raised with a I2C transaction fails."""
+    artiq_builtin = True
+
+class WatchdogExpired(Exception):
+    """Raised when a watchdog expires."""
+
+class ClockFailure(Exception):
+    """Raised when RTIO PLL has lost lock."""

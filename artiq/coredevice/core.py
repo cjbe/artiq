@@ -22,7 +22,7 @@ def _render_diagnostic(diagnostic, colored):
     lines = [shorten_path(path) for path in diagnostic.render(colored=colored)]
     return "\n".join(lines)
 
-colors_supported = (os.name == 'posix')
+colors_supported = os.name == "posix"
 class _DiagnosticEngine(diagnostic.Engine):
     def render_diagnostic(self, diagnostic):
         sys.stderr.write(_render_diagnostic(diagnostic, colored=colors_supported) + "\n")
@@ -41,13 +41,6 @@ class CompileError(Exception):
 def rtio_get_counter() -> TInt64:
     raise NotImplementedError("syscall not simulated")
 
-@syscall
-def cache_get(key: TStr) -> TList(TInt32):
-    raise NotImplementedError("syscall not simulated")
-
-@syscall
-def cache_put(key: TStr, value: TList(TInt32)) -> TNone:
-    raise NotImplementedError("syscall not simulated")
 
 class Core:
     """Core device driver.
@@ -60,14 +53,21 @@ class Core:
         The time machine unit is equal to this period.
     :param external_clock: whether the core device should switch to its
         external RTIO clock input instead of using its internal oscillator.
+    :param ref_multiplier: ratio between the RTIO fine timestamp frequency
+        and the RTIO coarse timestamp frequency (e.g. SERDES multiplication
+        factor).
     :param comm_device: name of the device used for communications.
     """
-    def __init__(self, dmgr, ref_period, external_clock=False, comm_device="comm"):
+    def __init__(self, dmgr, ref_period, external_clock=False,
+                 ref_multiplier=8, comm_device="comm"):
         self.ref_period = ref_period
         self.external_clock = external_clock
+        self.ref_multiplier = ref_multiplier
+        self.coarse_ref_period = ref_period*ref_multiplier
         self.comm = dmgr.get(comm_device)
 
         self.first_run = True
+        self.dmgr = dmgr
         self.core = self
         self.comm.core = self
 
@@ -75,7 +75,7 @@ class Core:
         try:
             engine = _DiagnosticEngine(all_errors_are_fatal=True)
 
-            stitcher = Stitcher(engine=engine)
+            stitcher = Stitcher(engine=engine, core=self, dmgr=self.dmgr)
             stitcher.stitch_call(function, args, kwargs, set_result)
             stitcher.finalize()
 
@@ -120,31 +120,3 @@ class Core:
         min_now = rtio_get_counter() + 125000
         if now_mu() < min_now:
             at_mu(min_now)
-
-    @kernel
-    def get_cache(self, key):
-        """Extract a value from the core device cache.
-        After a value is extracted, it cannot be replaced with another value using
-        :meth:`put_cache` until all kernel functions finish executing; attempting
-        to replace it will result in a :class:`artiq.coredevice.exceptions.CacheError`.
-
-        If the cache does not contain any value associated with ``key``, an empty list
-        is returned.
-
-        The value is not copied, so mutating it will change what's stored in the cache.
-
-        :param str key: cache key
-        :return: a list of 32-bit integers
-        """
-        return cache_get(key)
-
-    @kernel
-    def put_cache(self, key, value):
-        """Put a value into the core device cache. The value will persist until reboot.
-
-        To remove a value from the cache, call :meth:`put_cache` with an empty list.
-
-        :param str key: cache key
-        :param list value: a list of 32-bit integers
-        """
-        cache_put(key, value)

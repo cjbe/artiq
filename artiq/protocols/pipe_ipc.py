@@ -22,7 +22,7 @@ class _BaseIO:
 
 if os.name != "nt":
     async def _fds_to_asyncio(rfd, wfd, loop):
-        reader = asyncio.StreamReader(loop=loop)
+        reader = asyncio.StreamReader(loop=loop, limit=4*1024*1024)
         reader_protocol = asyncio.StreamReaderProtocol(reader, loop=loop)
         rf = open(rfd, "rb", 0)
         rt, _ = await loop.connect_read_pipe(lambda: reader_protocol, rf)
@@ -109,7 +109,6 @@ else:  # windows
             # mode or not.
             self.address = "\\\\.\\pipe\\artiq-{}-{}".format(os.getpid(),
                                                              next(_pipe_count))
-            self.server = None
             self.ready = asyncio.Event()
             self.write_buffer = b""
 
@@ -118,17 +117,18 @@ else:  # windows
 
         async def _autoclose(self):
             await self.process.wait()
-            if self.server is not None:
-                self.server[0].close()
-                self.server = None
+            self.server[0].close()
+            del self.server
             if self.ready.is_set():
                 self.writer.close()
+                del self.reader
+                del self.writer
 
         async def create_subprocess(self, *args, **kwargs):
             loop = asyncio.get_event_loop()
 
             def factory():
-                reader = asyncio.StreamReader(loop=loop)
+                reader = asyncio.StreamReader(loop=loop, limit=4*1024*1024)
                 protocol = asyncio.StreamReaderProtocol(reader,
                                                 self._child_connected,
                                                 loop=loop)
@@ -150,8 +150,12 @@ else:  # windows
             # There is still a race condition in the AsyncioParentComm
             # creation/destruction, but it is unlikely to cause problems
             # in most practical cases.
-            assert self.server is not None
-            self.server = None
+            if self.ready.is_set():
+                # A child already connected before. We should have shut down
+                # the server, but asyncio won't let us do that.
+                # Drop connections immediately instead.
+                writer.close()
+                return
             self.reader = reader
             self.writer = writer
             if self.write_buffer:
@@ -185,7 +189,7 @@ else:  # windows
 
         async def connect(self):
             loop = asyncio.get_event_loop()
-            self.reader = asyncio.StreamReader(loop=loop)
+            self.reader = asyncio.StreamReader(loop=loop, limit=4*1024*1024)
             reader_protocol = asyncio.StreamReaderProtocol(
                 self.reader, loop=loop)
             transport, _ = await loop.create_pipe_connection(
