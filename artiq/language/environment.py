@@ -78,7 +78,12 @@ class EnumerationValue(_SimpleArgProcessor):
 
 
 class NumberValue(_SimpleArgProcessor):
-    """An argument that can take a numerical value (typically floating point).
+    """An argument that can take a numerical value.
+
+    If ndecimals = 0, scale = 1 and step is integer, then it returns
+    an integer value. Otherwise, it returns a floating point value.
+    The simplest way to represent an integer argument is
+    ``NumberValue(step=1, ndecimals=0)``.
 
     :param unit: A string representing the unit of the value, for user
         interface (UI) purposes.
@@ -94,7 +99,8 @@ class NumberValue(_SimpleArgProcessor):
                  step=None, min=None, max=None, ndecimals=2):
         if step is None:
             step = scale/10.0
-        _SimpleArgProcessor.__init__(self, default)
+        if default is not NoDefault:
+            self.default_value = default
         self.unit = unit
         self.scale = scale
         self.step = step
@@ -102,8 +108,29 @@ class NumberValue(_SimpleArgProcessor):
         self.max = max
         self.ndecimals = ndecimals
 
+    def _is_int(self):
+        return (self.ndecimals == 0
+                and int(self.step) == self.step
+                and self.scale == 1)
+
+    def default(self):
+        if not hasattr(self, "default_value"):
+            raise DefaultMissing
+        if self._is_int():
+            return int(self.default_value)
+        else:
+            return float(self.default_value)
+
+    def process(self, x):
+        if self._is_int():
+            return int(x)
+        else:
+            return float(x)
+
     def describe(self):
-        d = _SimpleArgProcessor.describe(self)
+        d = {"ty": self.__class__.__name__}
+        if hasattr(self, "default_value"):
+            d["default"] = self.default_value
         d["unit"] = self.unit
         d["scale"] = self.scale
         d["step"] = self.step
@@ -119,8 +146,8 @@ class StringValue(_SimpleArgProcessor):
 
 
 class HasEnvironment:
-    """Provides methods to manage the environment of an experiment (devices,
-    parameters, results, arguments)."""
+    """Provides methods to manage the environment of an experiment (arguments,
+    devices, datasets)."""
     def __init__(self, device_mgr=None, dataset_mgr=None, *, parent=None,
                  default_arg_none=False, enable_processors=False, **kwargs):
         self.requested_args = OrderedDict()
@@ -143,11 +170,12 @@ class HasEnvironment:
     def build(self):
         """Must be implemented by the user to request arguments.
 
-        Other initialization steps such as requesting devices and parameters
-        or initializing real-time results may also be performed here.
+        Other initialization steps such as requesting devices may also be
+        performed here.
 
-        When the repository is scanned, any requested devices and parameters
-        are set to ``None``."""
+        When the repository is scanned, any requested devices and arguments
+        are set to ``None``.
+        """
         raise NotImplementedError
 
     def managers(self):
@@ -163,6 +191,8 @@ class HasEnvironment:
 
     def get_argument(self, key, processor=None, group=None):
         """Retrieves and returns the value of an argument.
+
+        This function should only be called from ``build``.
 
         :param key: Name of the argument.
         :param processor: A description of how to process the argument, such
@@ -202,6 +232,8 @@ class HasEnvironment:
         """Returns the full contents of the device database."""
         if self.__parent is not None:
             return self.__parent.get_device_db()
+        if self.__device_mgr is None:
+            raise ValueError("Device manager not present")
         return self.__device_mgr.get_device_db()
 
     def get_device(self, key):
@@ -221,13 +253,11 @@ class HasEnvironment:
                     broadcast=False, persist=False, save=True):
         """Sets the contents and handling modes of a dataset.
 
-        If the dataset is broadcasted, it must be PYON-serializable.
-        If the dataset is saved, it must be a scalar (``bool``, ``int``,
-        ``float`` or NumPy scalar) or a NumPy array.
+        Datasets must be scalars (``bool``, ``int``, ``float`` or NumPy scalar)
+        or NumPy arrays.
 
         :param broadcast: the data is sent in real-time to the master, which
-            dispatches it. Returns a Notifier that can be used to mutate the
-            dataset.
+            dispatches it.
         :param persist: the master should store the data on-disk. Implies
             broadcast.
         :param save: the data is saved into the local storage of the current
@@ -238,7 +268,19 @@ class HasEnvironment:
             return
         if self.__dataset_mgr is None:
             raise ValueError("Dataset manager not present")
-        return self.__dataset_mgr.set(key, value, broadcast, persist, save)
+        self.__dataset_mgr.set(key, value, broadcast, persist, save)
+
+    def mutate_dataset(self, key, index, value):
+        """Mutate an existing dataset at the given index (e.g. set a value at
+        a given position in a NumPy array)
+
+        If the dataset was created in broadcast mode, the modification is
+        immediately transmitted."""
+        if self.__parent is not None:
+            self.__parent.mutate_dataset(key, index, value)
+        if self.__dataset_mgr is None:
+            raise ValueError("Dataset manager not present")
+        self.__dataset_mgr.mutate(key, index, value)
 
     def get_dataset(self, key, default=NoDefault):
         """Returns the contents of a dataset.
@@ -269,7 +311,7 @@ class HasEnvironment:
 
 
 class Experiment:
-    """Base class for experiments.
+    """Base class for top-level experiments.
 
     Deriving from this class enables automatic experiment discovery in
     Python modules.
@@ -315,15 +357,15 @@ class Experiment:
 
 
 class EnvExperiment(Experiment, HasEnvironment):
-    """Base class for experiments that use the ``HasEnvironment`` environment
-    manager.
+    """Base class for top-level experiments that use the ``HasEnvironment``
+    environment manager.
 
     Most experiment should derive from this class."""
     pass
 
 
 def is_experiment(o):
-    """Checks if a Python object is an instantiable user experiment."""
+    """Checks if a Python object is a top-level experiment class."""
     return (isclass(o)
         and issubclass(o, Experiment)
         and o is not Experiment

@@ -37,7 +37,7 @@ class CompileError(Exception):
         return "\n" + _render_diagnostic(self.diagnostic, colored=colors_supported)
 
 
-@syscall
+@syscall(flags={"nounwind", "nowrite"})
 def rtio_get_counter() -> TInt64:
     raise NotImplementedError("syscall not simulated")
 
@@ -58,6 +58,12 @@ class Core:
         factor).
     :param comm_device: name of the device used for communications.
     """
+
+    kernel_invariants = {
+        "core", "ref_period", "coarse_ref_period", "ref_multiplier",
+        "external_clock",
+    }
+
     def __init__(self, dmgr, ref_period, external_clock=False,
                  ref_multiplier=8, comm_device="comm"):
         self.ref_period = ref_period

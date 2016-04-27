@@ -137,6 +137,9 @@ class ASTSynthesizer:
                     instance_type = types.TInstance("{}.{}".format(typ.__module__, typ.__qualname__),
                                                     OrderedDict())
                     instance_type.attributes['__objectid__'] = builtins.TInt32()
+                    if hasattr(typ, 'kernel_invariants'):
+                        assert isinstance(typ.kernel_invariants, set)
+                        instance_type.constant_attributes = typ.kernel_invariants
 
                     constructor_type = types.TConstructor(instance_type)
                 constructor_type.attributes['__objectid__'] = builtins.TInt32()
@@ -543,7 +546,7 @@ class Stitcher:
                               value_map=self.value_map,
                               quote_function=self._quote_function)
 
-    def _quote_embedded_function(self, function):
+    def _quote_embedded_function(self, function, flags):
         if not hasattr(function, "artiq_embedded"):
             raise ValueError("{} is not an embedded function".format(repr(function)))
 
@@ -593,6 +596,7 @@ class Stitcher:
             globals=self.globals, host_environment=host_environment,
             quote=self._quote)
         function_node = asttyped_rewriter.visit_quoted_function(function_node, embedded_function)
+        function_node.flags = flags
 
         # Add it into our typedtree so that it gets inferenced and codegen'd.
         self._inject(function_node)
@@ -690,7 +694,7 @@ class Stitcher:
             # Let the rest of the program decide.
             return types.TVar()
 
-    def _quote_foreign_function(self, function, loc, syscall):
+    def _quote_foreign_function(self, function, loc, syscall, flags):
         signature = inspect.signature(function)
 
         arg_types = OrderedDict()
@@ -739,7 +743,7 @@ class Stitcher:
                                                service=self.object_map.store(function))
         else:
             function_type = types.TCFunction(arg_types, ret_type,
-                                             name=syscall)
+                                             name=syscall, flags=flags)
 
         self.functions[function] = function_type
 
@@ -771,12 +775,14 @@ class Stitcher:
                             notes=[note])
                         self.engine.process(diag)
 
-                    self._quote_embedded_function(function)
+                    self._quote_embedded_function(function,
+                                                  flags=function.artiq_embedded.flags)
                 elif function.artiq_embedded.syscall is not None:
                     # Insert a storage-less global whose type instructs the compiler
                     # to perform a system call instead of a regular call.
                     self._quote_foreign_function(function, loc,
-                                                 syscall=function.artiq_embedded.syscall)
+                                                 syscall=function.artiq_embedded.syscall,
+                                                 flags=function.artiq_embedded.flags)
                 elif function.artiq_embedded.forbidden is not None:
                     diag = diagnostic.Diagnostic("fatal",
                         "this function cannot be called as an RPC", {},
@@ -788,7 +794,7 @@ class Stitcher:
             else:
                 # Insert a storage-less global whose type instructs the compiler
                 # to perform an RPC instead of a regular call.
-                self._quote_foreign_function(function, loc, syscall=None)
+                self._quote_foreign_function(function, loc, syscall=None, flags=None)
 
         function_type = self.functions[function]
         if types.is_rpc_function(function_type):

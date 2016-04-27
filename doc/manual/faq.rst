@@ -6,22 +6,24 @@ FAQ
 How do I ...
 ============
 
+find ARTIQ examples?
+--------------------
+
+The examples are installed in the ``examples`` folder of the ARTIQ package. You can find where the ARTIQ package is installed on your machine with: ::
+
+  python3.5 -c "import artiq; print(artiq.__path__[0])"
+
+Copy the ``examples`` folder from that path into your home/user directory, and start experimenting!
+
 prevent my first RTIO command from causing an underflow?
 --------------------------------------------------------
 
 The first RTIO event is programmed with a small timestamp above the value of the timecounter at the start of the experiment. If the kernel needs more time than this timestamp to produce the event, an underflow will occur. You can prevent it by calling ``break_realtime`` just before programming the first event, or by adding a sufficient delay.
 
-organize parameters in folders?
--------------------------------
+organize datasets in folders?
+-----------------------------
 
-Folders are not supported yet, use GUI filtering for now. Names need to be unique.
-
-enforce functional dependencies between parameters?
----------------------------------------------------
-
-If you want to override a parameter ``b`` in the PDB to be ``b = 2*a``,
-use wrapper experiments, overriding parameters by passing them to the
-experiment's constructor (``param_override`` argument).
+Use the dot (".") in dataset names to separate folders. The GUI will automatically create and delete folders in the dataset tree display.
 
 write a generator feeding a kernel feeding an analyze function?
 ---------------------------------------------------------------
@@ -58,13 +60,12 @@ Use ``threading.Thread``: portable, fast, simple for one-shot calls.
 write part of my experiment as a coroutine/asyncio task/generator?
 ------------------------------------------------------------------
 
-You can not change the API that your experiment exposes: ``__init__()``,
-``build()``, ``run()`` and ``analyze()`` need to be regular functions, not
+You can not change the API that your experiment exposes: ``build()``,
+``prepare()``, ``run()`` and ``analyze()`` need to be regular functions, not
 generators or asyncio coroutines. That would make reusing your own code in
-sub-experiments difficult and fragile. You can however always use the
-scheduler API to achieve the same (``scheduler.yield(duration=0)``)
-or wrap your own generators/coroutines/tasks in regular functions that
-you then expose as part of the API.
+sub-experiments difficult and fragile. You can however wrap your own
+generators/coroutines/tasks in regular functions that you then expose as part
+of the API.
 
 determine the pyserial URL to attach to a device by its serial number?
 ----------------------------------------------------------------------
@@ -72,7 +73,7 @@ determine the pyserial URL to attach to a device by its serial number?
 You can list your system's serial devices and print their vendor/product
 id and serial number by running::
 
-    $ python3 -m serial.tools.list_ports -v
+    $ python3.5 -m serial.tools.list_ports -v
 
 It will give you the ``/dev/ttyUSBxx`` (or the ``COMxx`` for Windows) device
 names.
@@ -91,3 +92,16 @@ run unit tests?
 ---------------
 
 The unit tests assume that the Python environment has been set up in such a way that ``import artiq`` will import the code being tested, and that this is still true for any subprocess created. This is not the way setuptools operates as it adds the path to ARTIQ to ``sys.path`` which is not passed to subprocesses; as a result, running the tests via ``setup.py`` is not supported. The user must first install the package or set ``PYTHONPATH``, and then run the tests with e.g. ``python3.5 -m unittest discover`` in the ``artiq/test`` folder and ``lit .`` in the ``artiq/test/lit`` folder.
+
+For the hardware-in-the-loop unit tests, set the ``ARTIQ_ROOT`` environment variable to the path to a device database containing the relevant devices.
+
+The core device tests require the following TTL devices and connections:
+
+* ``ttl_out``: any output-only TTL.
+* ``ttl_out_serdes``: any output-only TTL that uses a SERDES (i.e. has a fine timestamp). Can be aliased to ``ttl_out``.
+* ``loop_out``: any output-only TTL. Must be physically connected to ``loop_in``. Can be aliased to ``ttl_out``.
+* ``loop_in``: any input-capable TTL. Must be physically connected to ``loop_out``.
+* ``loop_clock_out``: a clock generator TTL. Must be physically connected to ``loop_clock_in``.
+* ``loop_clock_in``: any input-capable TTL. Must be physically connected to ``loop_clock_out``.
+
+If TTL devices are missing, the corresponding tests are skipped.

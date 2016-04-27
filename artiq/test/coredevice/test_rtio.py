@@ -83,6 +83,8 @@ class ClockGeneratorLoopback(EnvExperiment):
 
 
 class PulseRate(EnvExperiment):
+    kernel_invariants = {"core", "ttl_out"}
+
     def build(self):
         self.setattr_device("core")
         self.setattr_device("ttl_out")
@@ -100,11 +102,13 @@ class PulseRate(EnvExperiment):
                     self.core.break_realtime()
                     break
             else:
-                self.set_dataset("pulse_rate", mu_to_seconds(2*dt))
+                self.set_dataset("pulse_rate", mu_to_seconds(dt))
                 return
 
 
 class PulseRateDDS(EnvExperiment):
+    kernel_invariants = {"core", "core_dds", "dds0", "dds1"}
+
     def build(self):
         self.setattr_device("core")
         self.setattr_device("core_dds")
@@ -113,21 +117,22 @@ class PulseRateDDS(EnvExperiment):
 
     @kernel
     def run(self):
-        dt = seconds_to_mu(150*us)
+        dt = seconds_to_mu(5*us)
         while True:
-            try:
-                delay(10*ms)
-                for i in range(100):
+            delay(10*ms)
+            for i in range(1250):
+                try:
                     with self.core_dds.batch:
                         self.dds0.set(100*MHz)
                         self.dds1.set(100*MHz)
                     delay_mu(dt)
-            except RTIOUnderflow:
-                dt += 100
-                self.core.break_realtime()
+                except RTIOUnderflow:
+                    dt += 100
+                    self.core.break_realtime()
+                    break
             else:
-                self.set_dataset("pulse_rate", mu_to_seconds(2*dt))
-                break
+                self.set_dataset("pulse_rate", mu_to_seconds(dt//2))
+                return
 
 
 class Watchdog(EnvExperiment):
@@ -153,6 +158,7 @@ class LoopbackCount(EnvExperiment):
 
     @kernel
     def run(self):
+        self.loop_in.input()
         self.loop_out.output()
         delay(5*us)
         with parallel:
@@ -250,18 +256,20 @@ class CoredeviceTest(ExperimentCase):
         self.assertEqual(count, 10)
 
     def test_pulse_rate(self):
+        """Minimum interval for sustained TTL output switching"""
         self.execute(PulseRate)
         rate = self.dataset_mgr.get("pulse_rate")
         print(rate)
         self.assertGreater(rate, 100*ns)
-        self.assertLess(rate, 1500*ns)
+        self.assertLess(rate, 700*ns)
 
     def test_pulse_rate_dds(self):
+        """Minimum interval for sustained DDS frequency switching"""
         self.execute(PulseRateDDS)
         rate = self.dataset_mgr.get("pulse_rate")
         print(rate)
-        self.assertGreater(rate, 100*us)
-        self.assertLess(rate, 2500*us)
+        self.assertGreater(rate, 1*us)
+        self.assertLess(rate, 6*us)
 
     def test_loopback_count(self):
         npulses = 2

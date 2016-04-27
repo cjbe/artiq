@@ -37,9 +37,14 @@ def get_argparser():
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self, server):
         QtWidgets.QMainWindow.__init__(self)
+
         icon = QtGui.QIcon(os.path.join(artiq_dir, "gui", "logo.svg"))
         self.setWindowIcon(icon)
         self.setWindowTitle("ARTIQ - {}".format(server))
+
+        qfm = QtGui.QFontMetrics(self.font())
+        self.resize(140*qfm.averageCharWidth(), 38*qfm.lineSpacing())
+
         self.exit_request = asyncio.Event()
 
     def closeEvent(self, *args):
@@ -136,10 +141,9 @@ def main():
     atexit_register_coroutine(d_applets.stop)
     smgr.register(d_applets)
 
-    if os.name != "nt":
-        d_ttl_dds = moninj.MonInj()
-        loop.run_until_complete(d_ttl_dds.start(args.server, args.port_notify))
-        atexit_register_coroutine(d_ttl_dds.stop)
+    d_ttl_dds = moninj.MonInj()
+    loop.run_until_complete(d_ttl_dds.start(args.server, args.port_notify))
+    atexit_register_coroutine(d_ttl_dds.stop)
 
     d_schedule = schedule.ScheduleDock(
         status_bar, rpc_clients["schedule"], sub_clients["schedule"])
@@ -149,17 +153,15 @@ def main():
     smgr.register(logmgr)
 
     # lay out docks
-    if os.name != "nt":
-        main_window.addDockWidget(QtCore.Qt.RightDockWidgetArea, d_ttl_dds.dds_dock)
-        main_window.tabifyDockWidget(d_ttl_dds.dds_dock, d_ttl_dds.ttl_dock)
-        main_window.tabifyDockWidget(d_ttl_dds.ttl_dock, d_applets)
-        main_window.tabifyDockWidget(d_applets, d_datasets)
-    else:
-        main_window.addDockWidget(QtCore.Qt.RightDockWidgetArea, d_applets)
-        main_window.tabifyDockWidget(d_applets, d_datasets)
-    main_window.tabifyDockWidget(d_datasets, d_shortcuts)
+    right_docks = [
+        d_explorer, d_shortcuts,
+        d_ttl_dds.ttl_dock, d_ttl_dds.dds_dock,
+        d_datasets, d_applets
+    ]
+    main_window.addDockWidget(QtCore.Qt.RightDockWidgetArea, right_docks[0])
+    for d1, d2 in zip(right_docks, right_docks[1:]):
+        main_window.tabifyDockWidget(d1, d2)
     main_window.addDockWidget(QtCore.Qt.BottomDockWidgetArea, d_schedule)
-    main_window.addDockWidget(QtCore.Qt.LeftDockWidgetArea, d_explorer)
 
     # load/initialize state
     if os.name == "nt":

@@ -10,25 +10,27 @@ PHASE_MODE_ABSOLUTE = 1
 PHASE_MODE_TRACKING = 2
 
 
-@syscall
+@syscall(flags={"nowrite"})
 def dds_init(time_mu: TInt64, bus_channel: TInt32, channel: TInt32) -> TNone:
     raise NotImplementedError("syscall not simulated")
 
-@syscall
+@syscall(flags={"nowrite"})
 def dds_set(time_mu: TInt64, bus_channel: TInt32, channel: TInt32, ftw: TInt32,
             pow: TInt32, phase_mode: TInt32, amplitude: TInt32) -> TNone:
     raise NotImplementedError("syscall not simulated")
 
-@syscall
+@syscall(flags={"nowrite"})
 def dds_batch_enter(time_mu: TInt64) -> TNone:
     raise NotImplementedError("syscall not simulated")
 
-@syscall
+@syscall(flags={"nowrite"})
 def dds_batch_exit() -> TNone:
     raise NotImplementedError("syscall not simulated")
 
 
 class _BatchContextManager:
+    kernel_invariants = {"core", "core_dds"}
+
     def __init__(self, core_dds):
         self.core_dds = core_dds
         self.core = self.core_dds.core
@@ -50,6 +52,9 @@ class CoreDDS:
     :param sysclk: DDS system frequency. The DDS system clock must be a
         phase-locked multiple of the RTIO clock.
     """
+
+    kernel_invariants = {"core", "sysclk", "batch"}
+
     def __init__(self, dmgr, sysclk, core_device="core"):
         self.core = dmgr.get(core_device)
         self.sysclk = sysclk
@@ -82,6 +87,11 @@ class _DDSGeneric:
     :param bus: name of the DDS bus device that this DDS is connected to.
     :param channel: channel number of the DDS device to control.
     """
+
+    kernel_invariants = {
+        "core", "core_dds", "bus_channel", "channel", "pow_width"
+    }
+
     def __init__(self, dmgr, bus_channel, channel, core_dds_device="core_dds"):
         self.core_dds = dmgr.get(core_dds_device)
         self.core = self.core_dds.core
@@ -89,27 +99,27 @@ class _DDSGeneric:
         self.channel = channel
         self.phase_mode = PHASE_MODE_CONTINUOUS
 
-    @portable
+    @portable(flags=["fast-math"])
     def frequency_to_ftw(self, frequency):
         """Returns the frequency tuning word corresponding to the given
         frequency.
         """
         return round(int(2, width=64)**32*frequency/self.core_dds.sysclk)
 
-    @portable
+    @portable(flags=["fast-math"])
     def ftw_to_frequency(self, ftw):
         """Returns the frequency corresponding to the given frequency tuning
         word.
         """
         return ftw*self.core_dds.sysclk/int(2, width=64)**32
 
-    @portable
+    @portable(flags=["fast-math"])
     def turns_to_pow(self, turns):
         """Returns the phase offset word corresponding to the given phase
         in turns."""
         return round(turns*2**self.pow_width)
 
-    @portable
+    @portable(flags=["fast-math"])
     def pow_to_turns(self, pow):
         """Returns the phase in turns corresponding to the given phase offset
         word."""
@@ -130,7 +140,13 @@ class _DDSGeneric:
     def init(self):
         """Resets and initializes the DDS channel.
 
-        The runtime does this for all channels upon core device startup."""
+        This needs to be done for each DDS channel before it can be used, and
+        it is recommended to use the startup kernel for this.
+
+        This function cannot be used in a batch; the correct way of
+        initializing multiple DDS channels is to call this function
+        sequentially with a delay between the calls. 2ms provides a good
+        timing margin."""
         dds_init(now_mu(), self.bus_channel, self.channel)
 
     @kernel

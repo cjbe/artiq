@@ -46,12 +46,14 @@ class RunTool:
 def _dump(target, kind, suffix, content):
     if target is not None:
         print("====== {} DUMP ======".format(kind.upper()), file=sys.stderr)
-        content_bytes = bytes(content(), 'utf-8')
+        content_value = content()
+        if isinstance(content_value, str):
+            content_value = bytes(content_value, 'utf-8')
         if target == "":
             file = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
         else:
             file = open(target + suffix, "wb")
-        file.write(content_bytes)
+        file.write(content_value)
         file.close()
         print("{} dumped as {}".format(kind, file.name), file=sys.stderr)
 
@@ -81,13 +83,21 @@ class Target:
 
     def target_machine(self):
         lltarget = llvm.Target.from_triple(self.triple)
-        return lltarget.create_target_machine(
+        llmachine = lltarget.create_target_machine(
                         features=",".join(["+{}".format(f) for f in self.features]),
                         reloc="pic", codemodel="default")
+        llmachine.set_verbose(True)
+        return llmachine
 
     def optimize(self, llmodule):
+        llmachine = self.target_machine()
         llpassmgr = llvm.create_module_pass_manager()
-        self.target_machine().target_data.add_pass(llpassmgr)
+        llmachine.target_data.add_pass(llpassmgr)
+        llmachine.add_analysis_passes(llpassmgr)
+
+        # Register our alias analysis passes.
+        llpassmgr.add_basic_alias_analysis_pass()
+        llpassmgr.add_type_based_alias_analysis_pass()
 
         # Start by cleaning up after our codegen and exposing as much
         # information to LLVM as possible.
@@ -105,6 +115,7 @@ class Target:
         llpassmgr.add_instruction_combining_pass()
         llpassmgr.add_gvn_pass()
         llpassmgr.add_cfg_simplification_pass()
+        llpassmgr.add_licm_pass()
 
         # Clean up after optimizing.
         llpassmgr.add_dead_arg_elimination_pass()
@@ -217,6 +228,7 @@ class NativeTarget(Target):
 
 class OR1KTarget(Target):
     triple = "or1k-linux"
-    data_layout = "E-m:e-p:32:32-i64:32-f64:32-v64:32-v128:32-a:0:32-n32"
+    data_layout = "E-m:e-p:32:32-i8:8:8-i16:16:16-i64:32:32-" \
+                  "f64:32:32-v64:32:32-v128:32:32-a0:0:32-n32"
     features = ["mul", "div", "ffl1", "cmov", "addc"]
     print_function = "core_log"

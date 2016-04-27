@@ -14,8 +14,8 @@ logger = logging.getLogger(__name__)
 
 
 async def _get_repository_entries(entry_dict,
-                                  root, filename, get_device_db):
-    worker = Worker({"get_device_db": get_device_db})
+                                  root, filename, worker_handlers):
+    worker = Worker(worker_handlers)
     try:
         description = await worker.examine("scan", os.path.join(root, filename))
     except:
@@ -31,12 +31,14 @@ async def _get_repository_entries(entry_dict,
                            "name (%s)", name)
             name = name.replace("/", "_")
         if name in entry_dict:
-            logger.warning("Duplicate experiment name: '%s'", name)
             basename = name
             i = 1
             while name in entry_dict:
                 name = basename + str(i)
                 i += 1
+            logger.warning("Duplicate experiment name: '%s'\n"
+                           "Renaming class '%s' in '%s' to '%s'",
+                           basename, class_name, filename, name)
         entry = {
             "file": filename,
             "class_name": class_name,
@@ -45,7 +47,7 @@ async def _get_repository_entries(entry_dict,
         entry_dict[name] = entry
 
 
-async def _scan_experiments(root, get_device_db, subdir=""):
+async def _scan_experiments(root, worker_handlers, subdir=""):
     entry_dict = dict()
     for de in os.scandir(os.path.join(root, subdir)):
         if de.name.startswith("."):
@@ -54,13 +56,13 @@ async def _scan_experiments(root, get_device_db, subdir=""):
             filename = os.path.join(subdir, de.name)
             try:
                 await _get_repository_entries(
-                    entry_dict, root, filename, get_device_db)
+                    entry_dict, root, filename, worker_handlers)
             except Exception as exc:
                 logger.warning("Skipping file '%s'", filename,
                     exc_info=not isinstance(exc, WorkerInternalException))
         if de.is_dir():
             subentries = await _scan_experiments(
-                root, get_device_db,
+                root, worker_handlers,
                 os.path.join(subdir, de.name))
             entries = {de.name + "/" + k: v for k, v in subentries.items()}
             entry_dict.update(entries)
@@ -77,9 +79,9 @@ def _sync_explist(target, source):
 
 
 class ExperimentDB:
-    def __init__(self, repo_backend, get_device_db_fn):
+    def __init__(self, repo_backend, worker_handlers):
         self.repo_backend = repo_backend
-        self.get_device_db_fn = get_device_db_fn
+        self.worker_handlers = worker_handlers
 
         self.cur_rev = self.repo_backend.get_head_rev()
         self.repo_backend.request_rev(self.cur_rev)
@@ -107,7 +109,7 @@ class ExperimentDB:
             self.repo_backend.release_rev(self.cur_rev)
             self.cur_rev = new_cur_rev
             self.status["cur_rev"] = new_cur_rev
-            new_explist = await _scan_experiments(wd, self.get_device_db_fn)
+            new_explist = await _scan_experiments(wd, self.worker_handlers)
 
             _sync_explist(self.explist, new_explist)
         finally:
@@ -123,7 +125,7 @@ class ExperimentDB:
             revision = self.cur_rev
             wd, _ = self.repo_backend.request_rev(revision)
             filename = os.path.join(wd, filename)
-        worker = Worker({"get_device_db": self.get_device_db_fn})
+        worker = Worker(self.worker_handlers)
         try:
             description = await worker.examine("examine", filename)
         finally:

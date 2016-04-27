@@ -6,7 +6,6 @@ import tempfile
 import time
 import re
 
-import numpy as np
 import h5py
 
 from artiq.protocols.sync_struct import Notifier
@@ -44,7 +43,8 @@ class RIDCounter:
     def _update_cache(self, rid):
         contents = str(rid) + "\n"
         directory = os.path.abspath(os.path.dirname(self.cache_filename))
-        with tempfile.NamedTemporaryFile("w", dir=directory, delete=False) as f:
+        with tempfile.NamedTemporaryFile("w", dir=directory, delete=False
+                                         ) as f:
             f.write(contents)
             tmpname = f.name
         os.replace(tmpname, self.cache_filename)
@@ -68,7 +68,7 @@ class RIDCounter:
             except:
                 continue
             minute_folders = filter(lambda x: re.fullmatch('\d\d-\d\d', x),
-                                              minute_folders)
+                                    minute_folders)
             for mf in minute_folders:
                 minute_path = os.path.join(day_path, mf)
                 try:
@@ -167,56 +167,6 @@ def get_hdf5_output(start_time, rid, name):
     return h5py.File(os.path.join(dirname, filename), "w")
 
 
-_type_to_hdf5 = {
-    int: h5py.h5t.STD_I64BE,
-    float: h5py.h5t.IEEE_F64BE,
-
-    np.int8: h5py.h5t.STD_I8BE,
-    np.int16: h5py.h5t.STD_I16BE,
-    np.int32: h5py.h5t.STD_I32BE,
-    np.int64: h5py.h5t.STD_I64BE,
-
-    np.uint8: h5py.h5t.STD_U8BE,
-    np.uint16: h5py.h5t.STD_U16BE,
-    np.uint32: h5py.h5t.STD_U32BE,
-    np.uint64: h5py.h5t.STD_U64BE,
-
-    np.float16: h5py.h5t.IEEE_F16BE,
-    np.float32: h5py.h5t.IEEE_F32BE,
-    np.float64: h5py.h5t.IEEE_F64BE
-}
-
-def result_dict_to_hdf5(f, rd):
-    for name, data in rd.items():
-        flag = None
-        # beware: isinstance(True/False, int) == True
-        if isinstance(data, bool):
-            data = np.int8(data)
-            flag = "py_bool"
-        elif isinstance(data, int):
-            data = np.int64(data)
-            flag = "py_int"
-
-        if isinstance(data, np.ndarray):
-            dataset = f.create_dataset(name, data=data)
-        else:
-            ty = type(data)
-            if ty is str:
-                ty_h5 = "S{}".format(len(data))
-                data = data.encode()
-            else:
-                try:
-                    ty_h5 = _type_to_hdf5[ty]
-                except KeyError:
-                    raise TypeError("Type {} is not supported for HDF5 output"
-                                    .format(ty)) from None
-            dataset = f.create_dataset(name, (), ty_h5)
-            dataset[()] = data
-
-        if flag is not None:
-            dataset.attrs[flag] = np.int8(1)
-
-
 class DatasetManager:
     def __init__(self, ddb):
         self.broadcast = Notifier(dict())
@@ -228,20 +178,28 @@ class DatasetManager:
     def set(self, key, value, broadcast=False, persist=False, save=True):
         if persist:
             broadcast = True
-        r = None
         if broadcast:
-            self.broadcast[key] = (persist, value)
-            r = self.broadcast[key][1]
+            self.broadcast[key] = persist, value
         if save:
             self.local[key] = value
-        return r
+
+    def mutate(self, key, index, value):
+        target = None
+        if key in self.local:
+            target = self.local[key]
+        if key in self.broadcast.read:
+            target = self.broadcast[key][1]
+        if target is None:
+            raise KeyError("Cannot mutate non-existing dataset")
+        target[index] = value
 
     def get(self, key):
-        try:
+        if key in self.local:
             return self.local[key]
-        except KeyError:
-            pass
-        return self.ddb.get(key)
+        else:
+            return self.ddb.get(key)
 
     def write_hdf5(self, f):
-        result_dict_to_hdf5(f, self.local)
+        g = f.create_group("datasets")
+        for k, v in self.local.items():
+            g[k] = v

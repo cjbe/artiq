@@ -11,7 +11,13 @@ class CreateTTLPulse(EnvExperiment):
         self.setattr_device("loop_out")
 
     @kernel
+    def initialize_io(self):
+        self.loop_in.input()
+        self.loop_out.off()
+
+    @kernel
     def run(self):
+        self.core.break_realtime()
         with parallel:
             self.loop_in.gate_both_mu(1200)
             with sequential:
@@ -24,10 +30,9 @@ class AnalyzerTest(ExperimentCase):
     def test_ttl_pulse(self):
         comm = self.device_mgr.get("comm")
 
-        # clear analyzer buffer
-        comm.get_analyzer_dump()
-
         exp = self.create(CreateTTLPulse)
+        exp.initialize_io()
+        comm.get_analyzer_dump()  # clear analyzer buffer
         exp.run()
 
         dump = decode_dump(comm.get_analyzer_dump())
