@@ -417,9 +417,9 @@ class Oxford(_NIST_Ions):
         
         
         self.config["RTIO_REGULAR_TTL_COUNT"] = len(rtio_channels)
-
-        self.config["RTIO_DDS_CHANNEL"] = len(rtio_channels)
-        self.config["DDS_CHANNEL_COUNT"] = 0
+        self.config["RTIO_FIRST_DDS_CHANNEL"] = len(rtio_channels)
+        self.config["RTIO_DDS_COUNT"] = 0
+        self.config["DDS_CHANNELS_PER_BUS"] = 0
         self.config["DDS_AD9914"] = True
 
         self.config["RTIO_LOG_CHANNEL"] = len(rtio_channels)
@@ -489,11 +489,10 @@ class OxfordOverride(_NIST_Ions):
         self.submodules += phy
         rtio_channels.append(rtio.Channel.from_phy(phy))
         
-        
         self.config["RTIO_REGULAR_TTL_COUNT"] = len(rtio_channels)
-
-        self.config["RTIO_DDS_CHANNEL"] = len(rtio_channels)
-        self.config["DDS_CHANNEL_COUNT"] = 0
+        self.config["RTIO_FIRST_DDS_CHANNEL"] = len(rtio_channels)
+        self.config["RTIO_DDS_COUNT"] = 0
+        self.config["DDS_CHANNELS_PER_BUS"] = 0
         self.config["DDS_AD9914"] = True
 
         self.config["RTIO_LOG_CHANNEL"] = len(rtio_channels)
