@@ -5,7 +5,7 @@ the references to the host objects and translates the functions
 annotated as ``@kernel`` when they are referenced.
 """
 
-import sys, os, re, linecache, inspect, textwrap
+import sys, os, re, linecache, inspect, textwrap, types as pytypes
 from collections import OrderedDict, defaultdict
 
 from pythonparser import ast, algorithm, source, diagnostic, parse_buffer
@@ -55,6 +55,7 @@ class ASTSynthesizer:
         self.object_map, self.type_map, self.value_map = object_map, type_map, value_map
         self.quote_function = quote_function
         self.expanded_from = expanded_from
+        self.diagnostics = []
 
     def finalize(self):
         self.source_buffer.source = self.source
@@ -102,7 +103,8 @@ class ASTSynthesizer:
             return asttyped.ListT(elts=elts, ctx=None, type=builtins.TList(),
                                   begin_loc=begin_loc, end_loc=end_loc,
                                   loc=begin_loc.join(end_loc))
-        elif inspect.isfunction(value) or inspect.ismethod(value):
+        elif inspect.isfunction(value) or inspect.ismethod(value) or \
+                isinstance(value, pytypes.BuiltinFunctionType):
             quote_loc   = self._add('`')
             repr_loc    = self._add(repr(value))
             unquote_loc = self._add('`')
@@ -123,6 +125,35 @@ class ASTSynthesizer:
 
             if typ in self.type_map:
                 instance_type, constructor_type = self.type_map[typ]
+
+                if hasattr(value, 'kernel_invariants') and \
+                        value.kernel_invariants != instance_type.constant_attributes:
+                    attr_diff = value.kernel_invariants.difference(
+                                    instance_type.constant_attributes)
+                    if len(attr_diff) > 0:
+                        diag = diagnostic.Diagnostic("warning",
+                            "object {value} of type {typ} declares attribute(s) {attrs} as "
+                            "kernel invariant, but other objects of the same type do not; "
+                            "the invariant annotation on this object will be ignored",
+                            {"value": repr(value),
+                             "typ": types.TypePrinter().name(instance_type, max_depth=0),
+                             "attrs": ", ".join(["'{}'".format(attr) for attr in attr_diff])},
+                            loc)
+                        self.diagnostics.append(diag)
+                    attr_diff = instance_type.constant_attributes.difference(
+                                    value.kernel_invariants)
+                    if len(attr_diff) > 0:
+                        diag = diagnostic.Diagnostic("warning",
+                            "object {value} of type {typ} does not declare attribute(s) {attrs} as "
+                            "kernel invariant, but other objects of the same type do; "
+                            "the invariant annotation on other objects will be ignored",
+                            {"value": repr(value),
+                             "typ": types.TypePrinter().name(instance_type, max_depth=0),
+                             "attrs": ", ".join(["'{}'".format(attr) for attr in attr_diff])},
+                            loc)
+                        self.diagnostics.append(diag)
+                    value.kernel_invariants = value.kernel_invariants.intersection(
+                                        instance_type.constant_attributes)
             else:
                 if issubclass(typ, BaseException):
                     if hasattr(typ, 'artiq_builtin'):
@@ -137,15 +168,15 @@ class ASTSynthesizer:
                     instance_type = types.TInstance("{}.{}".format(typ.__module__, typ.__qualname__),
                                                     OrderedDict())
                     instance_type.attributes['__objectid__'] = builtins.TInt32()
-                    if hasattr(typ, 'kernel_invariants'):
-                        assert isinstance(typ.kernel_invariants, set)
-                        instance_type.constant_attributes = typ.kernel_invariants
-
                     constructor_type = types.TConstructor(instance_type)
                 constructor_type.attributes['__objectid__'] = builtins.TInt32()
                 instance_type.constructor = constructor_type
 
                 self.type_map[typ] = instance_type, constructor_type
+
+                if hasattr(value, 'kernel_invariants'):
+                    assert isinstance(value.kernel_invariants, set)
+                    instance_type.constant_attributes = value.kernel_invariants
 
             if isinstance(value, type):
                 self.value_map[constructor_type].append((value, loc))
@@ -428,9 +459,8 @@ class StitchingInferencer(Inferencer):
             if attr_name not in attributes:
                 # We just figured out what the type should be. Add it.
                 attributes[attr_name] = attr_value_type
-            elif not types.is_rpc_function(attr_value_type):
+            else:
                 # Does this conflict with an earlier guess?
-                # RPC function types are exempt because RPCs are dynamically typed.
                 try:
                     attributes[attr_name].unify(attr_value_type)
                 except types.UnificationError as e:
@@ -611,10 +641,10 @@ class Stitcher:
         line     = function.__code__.co_firstlineno
         name     = function.__code__.co_name
 
-        source_line = linecache.getline(filename, line)
-        while source_line.lstrip().startswith("@"):
+        source_line = linecache.getline(filename, line).lstrip()
+        while source_line.startswith("@") or source_line == "":
             line += 1
-            source_line = linecache.getline(filename, line)
+            source_line = linecache.getline(filename, line).lstrip()
 
         if "<lambda>" in function.__qualname__:
             column = 0 # can't get column of lambda
@@ -694,29 +724,22 @@ class Stitcher:
             # Let the rest of the program decide.
             return types.TVar()
 
-    def _quote_foreign_function(self, function, loc, syscall, flags):
+    def _quote_syscall(self, function, loc):
         signature = inspect.signature(function)
 
         arg_types = OrderedDict()
         optarg_types = OrderedDict()
         for param in signature.parameters.values():
-            if param.kind not in (inspect.Parameter.POSITIONAL_ONLY,
-                                  inspect.Parameter.POSITIONAL_OR_KEYWORD):
-                # We pretend we don't see *args, kwpostargs=..., **kwargs.
-                # Since every method can be still invoked without any arguments
-                # going into *args and the slots after it, this is always safe,
-                # if sometimes constraining.
-                #
-                # Accepting POSITIONAL_ONLY is OK, because the compiler
-                # desugars the keyword arguments into positional ones internally.
-                continue
+            if param.kind != inspect.Parameter.POSITIONAL_OR_KEYWORD:
+                diag = diagnostic.Diagnostic("error",
+                    "system calls must only use positional arguments; '{argument}' isn't",
+                    {"argument": param.name},
+                    self._function_loc(function),
+                    notes=self._call_site_note(loc, is_syscall=True))
+                self.engine.process(diag)
 
             if param.default is inspect.Parameter.empty:
-                arg_types[param.name] = self._type_of_param(function, loc, param,
-                                                            is_syscall=syscall is not None)
-            elif syscall is None:
-                optarg_types[param.name] = self._type_of_param(function, loc, param,
-                                                               is_syscall=False)
+                arg_types[param.name] = self._type_of_param(function, loc, param, is_syscall=True)
             else:
                 diag = diagnostic.Diagnostic("error",
                     "system call argument '{argument}' must not have a default value",
@@ -727,10 +750,8 @@ class Stitcher:
 
         if signature.return_annotation is not inspect.Signature.empty:
             ret_type = self._extract_annot(function, signature.return_annotation,
-                                           "return type", loc, is_syscall=syscall is not None)
-        elif syscall is None:
-            ret_type = builtins.TNone()
-        else: # syscall is not None
+                                           "return type", loc, is_syscall=True)
+        else:
             diag = diagnostic.Diagnostic("error",
                 "system call must have a return type annotation", {},
                 self._function_loc(function),
@@ -738,15 +759,27 @@ class Stitcher:
             self.engine.process(diag)
             ret_type = types.TVar()
 
-        if syscall is None:
-            function_type = types.TRPCFunction(arg_types, optarg_types, ret_type,
-                                               service=self.object_map.store(function))
-        else:
-            function_type = types.TCFunction(arg_types, ret_type,
-                                             name=syscall, flags=flags)
-
+        function_type = types.TCFunction(arg_types, ret_type,
+                                         name=function.artiq_embedded.syscall,
+                                         flags=function.artiq_embedded.flags)
         self.functions[function] = function_type
+        return function_type
 
+    def _quote_rpc(self, callee, loc):
+        ret_type = builtins.TNone()
+
+        if isinstance(callee, pytypes.BuiltinFunctionType):
+            pass
+        elif isinstance(callee, pytypes.FunctionType):
+            signature = inspect.signature(callee)
+            if signature.return_annotation is not inspect.Signature.empty:
+                ret_type = self._extract_annot(callee, signature.return_annotation,
+                                               "return type", loc, is_syscall=False)
+        else:
+            assert False
+
+        function_type = types.TRPC(ret_type, service=self.object_map.store(callee))
+        self.functions[callee] = function_type
         return function_type
 
     def _quote_function(self, function, loc):
@@ -780,9 +813,7 @@ class Stitcher:
                 elif function.artiq_embedded.syscall is not None:
                     # Insert a storage-less global whose type instructs the compiler
                     # to perform a system call instead of a regular call.
-                    self._quote_foreign_function(function, loc,
-                                                 syscall=function.artiq_embedded.syscall,
-                                                 flags=function.artiq_embedded.flags)
+                    self._quote_syscall(function, loc)
                 elif function.artiq_embedded.forbidden is not None:
                     diag = diagnostic.Diagnostic("fatal",
                         "this function cannot be called as an RPC", {},
@@ -792,17 +823,15 @@ class Stitcher:
                 else:
                     assert False
             else:
-                # Insert a storage-less global whose type instructs the compiler
-                # to perform an RPC instead of a regular call.
-                self._quote_foreign_function(function, loc, syscall=None, flags=None)
+                self._quote_rpc(function, loc)
 
-        function_type = self.functions[function]
-        if types.is_rpc_function(function_type):
-            function_type = types.instantiate(function_type)
-        return function_type
+        return self.functions[function]
 
     def _quote(self, value, loc):
         synthesizer = self._synthesizer(loc)
         node = synthesizer.quote(value)
         synthesizer.finalize()
+        if len(synthesizer.diagnostics) > 0:
+            for warning in synthesizer.diagnostics:
+                self.engine.process(warning)
         return node

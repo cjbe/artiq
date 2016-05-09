@@ -1,3 +1,5 @@
+from time import sleep
+
 from artiq.experiment import *
 from artiq.test.hardware_testbench import ExperimentCase
 
@@ -57,6 +59,61 @@ class DefaultArgTest(ExperimentCase):
     def test_default_arg(self):
         exp = self.create(_DefaultArg)
         self.assertEqual(exp.run(), 42)
+
+
+class _RPC(EnvExperiment):
+    def build(self):
+        self.setattr_device("core")
+
+    def args(self, *args) -> TInt32:
+        return len(args)
+
+    def kwargs(self, x="", **kwargs) -> TInt32:
+        return len(kwargs)
+
+    @kernel
+    def args0(self):
+        return self.args()
+
+    @kernel
+    def args1(self):
+        return self.args("A")
+
+    @kernel
+    def args2(self):
+        return self.args("A", 1)
+
+    @kernel
+    def kwargs0(self):
+        return self.kwargs()
+
+    @kernel
+    def kwargs1(self):
+        return self.kwargs(a="A")
+
+    @kernel
+    def kwargs2(self):
+        return self.kwargs(a="A", b=1)
+
+    @kernel
+    def args1kwargs2(self):
+        return self.kwargs("X", a="A", b=1)
+
+    @kernel
+    def builtin(self):
+        sleep(1.0)
+
+class RPCTest(ExperimentCase):
+    def test_args(self):
+        exp = self.create(_RPC)
+        self.assertEqual(exp.args0(), 0)
+        self.assertEqual(exp.args1(), 1)
+        self.assertEqual(exp.args2(), 2)
+        self.assertEqual(exp.kwargs0(), 0)
+        self.assertEqual(exp.kwargs1(), 1)
+        self.assertEqual(exp.kwargs2(), 2)
+        self.assertEqual(exp.args1kwargs2(), 2)
+        exp.builtin()
 
 
 class _Payload1MB(EnvExperiment):

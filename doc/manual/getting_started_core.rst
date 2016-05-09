@@ -74,20 +74,6 @@ RPC functions must always return a value of the same type. When they return a no
 
 The ``break_realtime`` call is necessary to waive the real-time requirements of the LED state change (as the ``input_led_state`` function can take an arbitrarily long time). This will become clearer later as we explain timing control.
 
-Algorithmic features
---------------------
-
-A number of Python algorithmic features can be used inside a kernel for compilation and execution on the core device. They include ``for`` and ``while`` loops, conditionals (``if``, ``else``, ``elif``), functions, exceptions (without parameter), and statically typed variables of the following types:
-
-* Booleans
-* 32-bit signed integers (default size)
-* 64-bit signed integers (use ``int(n, width=64)`` to convert)
-* Signed rational numbers with 64-bit numerator and 64-bit denominator
-* Double-precision floating point numbers
-* Lists of the above types. Lists can be arbitrarily nested.
-
-For a demonstration of some of these features, see the ``mandelbrot.py`` example.
-
 Real-time I/O
 -------------
 
@@ -143,7 +129,7 @@ Try reducing the period of the generated waveform until the CPU cannot keep up w
 RTIO analyzer
 -------------
 
-The core device records the real-time IO waveforms into a circular buffer. It is possible to dump any Python object so that it appears alongside the waveforms using the ``rtio_log`` function, which accepts a channel name (i.e. a log target) as the first argument: ::
+The core device records the real-time I/O waveforms into a circular buffer. It is possible to dump any Python object so that it appears alongside the waveforms using the ``rtio_log`` function, which accepts a channel name (i.e. a log target) as the first argument: ::
 
     from artiq.experiment import *
 

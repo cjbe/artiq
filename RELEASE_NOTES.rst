@@ -3,6 +3,12 @@
 Release notes
 =============
 
+1.0rc4
+------
+
+* setattr_argument and setattr_device add their key to kernel_invariants.
+
+
 1.0rc3
 ------
 

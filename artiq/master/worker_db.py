@@ -3,10 +3,7 @@ import importlib
 import logging
 import os
 import tempfile
-import time
 import re
-
-import h5py
 
 from artiq.protocols.sync_struct import Notifier
 from artiq.protocols.pc_rpc import AutoTarget, Client, BestEffortClient
@@ -158,15 +155,6 @@ class DeviceManager:
         self.active_devices.clear()
 
 
-def get_hdf5_output(start_time, rid, name):
-    dirname = os.path.join("results",
-                           time.strftime("%Y-%m-%d", start_time),
-                           time.strftime("%H-%M", start_time))
-    filename = "{:09}-{}.h5".format(rid, name)
-    os.makedirs(dirname, exist_ok=True)
-    return h5py.File(os.path.join(dirname, filename), "w")
-
-
 class DatasetManager:
     def __init__(self, ddb):
         self.broadcast = Notifier(dict())
@@ -200,6 +188,5 @@ class DatasetManager:
             return self.ddb.get(key)
 
     def write_hdf5(self, f):
-        g = f.create_group("datasets")
         for k, v in self.local.items():
-            g[k] = v
+            f[k] = v

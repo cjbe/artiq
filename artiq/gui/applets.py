@@ -290,6 +290,7 @@ class AppletsDock(QtWidgets.QDockWidget):
         if uid is None:
             uid = next(iter(set(range(len(self.applet_uids) + 1))
                             - self.applet_uids))
+        assert uid not in self.applet_uids
         self.applet_uids.add(uid)
 
         row = self.table.rowCount()
@@ -329,7 +330,6 @@ class AppletsDock(QtWidgets.QDockWidget):
                 dock.close()
             self.applet_uids.remove(item.applet_uid)
             self.table.removeRow(row)
-
 
     async def stop(self):
         for row in range(self.table.rowCount()):
