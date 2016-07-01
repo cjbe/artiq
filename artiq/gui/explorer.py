@@ -61,7 +61,7 @@ class _OpenFileDialog(QtWidgets.QDialog):
         except:
             logger.error("Failed to list directory '%s'",
                          self.explorer.current_directory, exc_info=True)
-            self.explorer.current_directory = ""
+            return
         for name in sorted(contents, key=lambda x: (x[-1] not in "\\/", x)):
             if name[-1] in "\\/":
                 icon = QtWidgets.QStyle.SP_DirIcon
@@ -296,3 +296,11 @@ class ExplorerDock(QtWidgets.QDockWidget):
 
     def update_cur_rev(self, cur_rev):
         self.revision.setText(cur_rev)
+
+    def save_state(self):
+        return {
+            "current_directory": self.current_directory
+        }
+
+    def restore_state(self, state):
+        self.current_directory = state["current_directory"]

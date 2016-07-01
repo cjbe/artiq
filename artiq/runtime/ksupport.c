@@ -335,6 +335,38 @@ void exception_handler(unsigned long vect, unsigned long *regs,
         vect, pc, ea);
 }
 
+static void now_init(void)
+{
+    struct msg_base request;
+    struct msg_now_init_reply *reply;
+
+    request.type = MESSAGE_TYPE_NOW_INIT_REQUEST;
+    mailbox_send_and_wait(&request);
+
+    reply = mailbox_wait_and_receive();
+    if(reply->type != MESSAGE_TYPE_NOW_INIT_REPLY) {
+        core_log("Malformed MESSAGE_TYPE_NOW_INIT_REQUEST reply type %d\n",
+                 reply->type);
+        while(1);
+    }
+    now = reply->now;
+    mailbox_acknowledge();
+
+    if(now < 0) {
+        rtio_init();
+        now = rtio_get_counter() + (272000 << CONFIG_RTIO_FINE_TS_WIDTH);
+    }
+}
+
+static void now_save(void)
+{
+    struct msg_now_save request;
+
+    request.type = MESSAGE_TYPE_NOW_SAVE;
+    request.now = now;
+    mailbox_send_and_wait(&request);
+}
+
 int main(void);
 int main(void)
 {
@@ -368,9 +400,9 @@ int main(void)
 
         mailbox_send_and_wait(&load_reply);
 
-        now = now_init();
+        now_init();
         kernel_run();
-        now_save(now);
+        now_save();
 
         attribute_writeback(typeinfo);
 
@@ -387,8 +419,11 @@ int main(void)
 /* called from __artiq_personality */
 void __artiq_terminate(struct artiq_exception *artiq_exn,
                        struct artiq_backtrace_item *backtrace,
-                       size_t backtrace_size) {
+                       size_t backtrace_size)
+{
     struct msg_exception msg;
+
+    now_save();
 
     msg.type = MESSAGE_TYPE_EXCEPTION;
     msg.exception = artiq_exn;
@@ -399,44 +434,10 @@ void __artiq_terminate(struct artiq_exception *artiq_exn,
     while(1);
 }
 
-void ksupport_abort() {
+void ksupport_abort()
+{
     artiq_raise_from_c("InternalError", "abort() called; check device log for details",
                        0, 0, 0);
-}
-
-long long int now_init(void)
-{
-    struct msg_base request;
-    struct msg_now_init_reply *reply;
-    long long int now;
-
-    request.type = MESSAGE_TYPE_NOW_INIT_REQUEST;
-    mailbox_send_and_wait(&request);
-
-    reply = mailbox_wait_and_receive();
-    if(reply->type != MESSAGE_TYPE_NOW_INIT_REPLY) {
-        core_log("Malformed MESSAGE_TYPE_NOW_INIT_REQUEST reply type %d\n",
-                 reply->type);
-        while(1);
-    }
-    now = reply->now;
-    mailbox_acknowledge();
-
-    if(now < 0) {
-        rtio_init();
-        now = rtio_get_counter() + (272000 << CONFIG_RTIO_FINE_TS_WIDTH);
-    }
-
-    return now;
-}
-
-void now_save(long long int now)
-{
-    struct msg_now_save request;
-
-    request.type = MESSAGE_TYPE_NOW_SAVE;
-    request.now = now;
-    mailbox_send_and_wait(&request);
 }
 
 int watchdog_set(int ms)
@@ -474,6 +475,7 @@ void send_rpc(int service, const char *tag, ...)
 {
     struct msg_rpc_send request;
 
+    request.now = now;
     if(service != 0)
         request.type = MESSAGE_TYPE_RPC_SEND;
     else
@@ -485,7 +487,8 @@ void send_rpc(int service, const char *tag, ...)
     va_end(request.args);
 }
 
-int recv_rpc(void *slot) {
+int recv_rpc(void *slot)
+{
     struct msg_rpc_recv_request request;
     struct msg_rpc_recv_reply *reply;
 
@@ -524,7 +527,8 @@ struct type_desc {
     void **objects;
 };
 
-void attribute_writeback(void *utypes) {
+void attribute_writeback(void *utypes)
+{
     struct type_desc **types = (struct type_desc **)utypes;
     while(*types) {
         struct type_desc *type = *types++;

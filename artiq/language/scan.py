@@ -14,11 +14,9 @@ Iterating multiple times on the same scan object is possible, with the scan
 yielding the same values each time. Iterating concurrently on the
 same scan object (e.g. via nested loops) is also supported, and the
 iterators are independent from each other.
-
-Scan objects are supported both on the host and the core device.
 """
 
-from random import Random, shuffle
+import random
 import inspect
 
 from artiq.language.core import *
@@ -89,12 +87,16 @@ class LinearScan(ScanObject):
 class RandomScan(ScanObject):
     """A scan object that yields a fixed number of randomly ordered evenly
     spaced values in a range."""
-    def __init__(self, start, stop, npoints, seed=0):
+    def __init__(self, start, stop, npoints, seed=None):
         self.start = start
         self.stop = stop
         self.npoints = npoints
         self.sequence = list(LinearScan(start, stop, npoints))
-        shuffle(self.sequence, Random(seed).random)
+        if seed is None:
+            rf = random.random
+        else:
+            rf = Random(seed).random
+        random.shuffle(self.sequence, rf)
 
     @portable
     def __iter__(self):
@@ -137,6 +139,9 @@ class Scannable:
     """An argument (as defined in :class:`artiq.language.environment`) that
     takes a scan object.
 
+    For arguments with units, use both the unit parameter (a string for
+    display) and the scale parameter (a numerical scale for experiments).
+
     :param global_min: The minimum value taken by the scanned variable, common
         to all scan modes. The user interface takes this value to set the
         range of its input widgets.
@@ -145,9 +150,9 @@ class Scannable:
         up/down buttons in a user interface. The default is the scale divided
         by 10.
     :param unit: A string representing the unit of the scanned variable, for
-        user interface (UI) purposes.
-    :param scale: The scale of value for UI purposes. The displayed value is
-        divided by the scale.
+        display purposes only.
+    :param scale: A numerical scaling factor by which the displayed values
+        are multiplied when referenced in the experiment.
     :param ndecimals: The number of decimals a UI should use.
     """
     def __init__(self, default=NoDefault, unit="", scale=1.0,

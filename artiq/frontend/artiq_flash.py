@@ -5,6 +5,7 @@ import argparse
 import os
 import subprocess
 import tempfile
+import site
 
 from artiq import __artiq_dir__ as artiq_dir
 from artiq.frontend.bit2bin import bit2bin
@@ -76,6 +77,12 @@ def main():
         raise SystemExit("Binaries directory '{}' does not exist"
                          .format(opts.dir))
 
+    conda_prefix_path = site.getsitepackages()[0]
+    if os.name == "nt":
+        scripts_path = os.path.join(conda_prefix_path, "Library", "share", "openocd", "scripts")
+    else:
+        scripts_path = os.path.join(conda_prefix_path, "share", "openocd", "scripts")
+
     conv = False
 
     prog = []
@@ -88,7 +95,7 @@ def main():
                       "/usr/local/share/migen", "/usr/share/migen"]:
                 proxy_ = os.path.join(p, proxy_base)
                 if os.access(proxy_, os.R_OK):
-                    proxy = "jtagspi_init 0 {}".format(proxy_)
+                    proxy = "jtagspi_init 0 {{{}}}".format(proxy_)
                     break
             if not proxy:
                 raise SystemExit(
@@ -97,22 +104,22 @@ def main():
         elif action == "gateware":
             bin = os.path.join(opts.dir, "top.bin")
             if not os.access(bin, os.R_OK):
-                bin = tempfile.mkstemp()[1]
+                bin_handle, bin = tempfile.mkstemp()
                 bit = os.path.join(opts.dir, "top.bit")
                 conv = True
-            prog.append("jtagspi_program {} 0x{:x}".format(
+            prog.append("jtagspi_program {{{}}} 0x{:x}".format(
                 bin, config["gateware"]))
         elif action == "bios":
-            prog.append("jtagspi_program {} 0x{:x}".format(
+            prog.append("jtagspi_program {{{}}} 0x{:x}".format(
                 os.path.join(opts.dir, "bios.bin"), config["bios"]))
         elif action == "runtime":
-            prog.append("jtagspi_program {} 0x{:x}".format(
+            prog.append("jtagspi_program {{{}}} 0x{:x}".format(
                 os.path.join(opts.dir, "runtime.fbi"), config["runtime"]))
         elif action == "storage":
-            prog.append("jtagspi_program {} 0x{:x}".format(
+            prog.append("jtagspi_program {{{}}} 0x{:x}".format(
                 opts.storage, config["storage"]))
         elif action == "load":
-            prog.append("pld load 0 {}".format(
+            prog.append("pld load 0 {{{}}}".format(
                 os.path.join(opts.dir, "top.bit")))
         elif action == "start":
             prog.append(config["start"])
@@ -121,9 +128,10 @@ def main():
     prog.append("exit")
     try:
         if conv:
-            bit2bin(bit, bin)
+            bit2bin(bit, bin_handle)
         subprocess.check_call([
             "openocd",
+            "-s", scripts_path,
             "-f", os.path.join("board", opts.target + ".cfg"),
             "-c", "; ".join(prog),
         ])

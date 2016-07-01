@@ -65,8 +65,8 @@ class CoreDDS:
         """Starts a DDS command batch. All DDS commands are buffered
         after this call, until ``batch_exit`` is called.
 
-        The time of execution of the DDS commands is the time of entering the
-        batch (as closely as hardware permits)."""
+        The time of execution of the DDS commands is the time cursor position
+        when the batch is entered."""
         dds_batch_enter(now_mu())
 
     @kernel
@@ -83,6 +83,8 @@ class _DDSGeneric:
 
     This class should not be used directly, instead, use the chip-specific
     drivers such as ``AD9858`` and ``AD9914``.
+
+    The time cursor is not modified by any function in this class.
 
     :param bus: name of the DDS bus device that this DDS is connected to.
     :param channel: channel number of the DDS device to control.
@@ -125,16 +127,16 @@ class _DDSGeneric:
         word."""
         return pow/2**self.pow_width
 
-    @portable
+    @portable(flags=["fast-math"])
     def amplitude_to_asf(self, amplitude):
         """Returns amplitude scale factor corresponding to given amplitude."""
         return round(amplitude*0x0fff)
 
-    @portable
+    @portable(flags=["fast-math"])
     def asf_to_amplitude(self, asf):
         """Returns the amplitude corresponding to the given amplitude scale
            factor."""
-        return round(amplitude*0x0fff)
+        return asf/0x0fff
 
     @kernel
     def init(self):
@@ -178,6 +180,9 @@ class _DDSGeneric:
         is 32, whereas the phase offset word width depends on the type of DDS
         chip and can be retrieved via the ``pow_width`` attribute. The amplitude
         width is 12.
+
+        The "frequency update" pulse is sent to the DDS with a fixed latency
+        with respect to the current position of the time cursor.
 
         :param frequency: frequency to generate.
         :param phase: adds an offset, in turns, to the phase.

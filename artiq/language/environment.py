@@ -85,10 +85,16 @@ class NumberValue(_SimpleArgProcessor):
     The simplest way to represent an integer argument is
     ``NumberValue(step=1, ndecimals=0)``.
 
-    :param unit: A string representing the unit of the value, for user
-        interface (UI) purposes.
-    :param scale: The scale of value for UI purposes. The displayed value is
-        divided by the scale.
+    For arguments with units, use both the unit parameter (a string for
+    display) and the scale parameter (a numerical scale for experiments).
+    For example, ``NumberValue(1, unit="ms", scale=1*ms)`` will display as
+    1 ms in the GUI window because of the unit setting, and appear as the
+    numerical value 0.001 in the code because of the scale setting.
+
+    :param unit: A string representing the unit of the value, for display
+        purposes only.
+    :param scale: A numerical scaling factor by which the displayed value is
+        multiplied when referenced in the experiment.
     :param step: The step with which the value should be modified by up/down
         buttons in a UI. The default is the scale divided by 10.
     :param min: The minimum value of the argument.
@@ -285,7 +291,12 @@ class HasEnvironment:
         a given position in a NumPy array)
 
         If the dataset was created in broadcast mode, the modification is
-        immediately transmitted."""
+        immediately transmitted.
+
+        If the index is a tuple of integers, it is interpreted as
+        ``slice(*index)``.
+        If the index is a tuple of tuples, each sub-tuple is interpreted
+        as ``slice(*sub_tuple)`` (multi-dimensional slicing)."""
         if self.__parent is not None:
             self.__parent.mutate_dataset(key, index, value)
         if self.__dataset_mgr is None:

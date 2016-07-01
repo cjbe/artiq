@@ -87,6 +87,7 @@ struct msg_watchdog_clear {
 
 struct msg_rpc_send {
     int type;
+    long long int now;
     int service;
     const char *tag;
     va_list args;
@@ -101,13 +102,6 @@ struct msg_rpc_recv_reply {
     int type;
     int alloc_size;
     struct artiq_exception *exception;
-};
-
-struct msg_rpc_batch {
-    int type;
-    int service;
-    const char *tag;
-    void *ptr;
 };
 
 struct msg_cache_get_request {

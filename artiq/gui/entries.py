@@ -5,7 +5,6 @@ from PyQt5 import QtCore, QtGui, QtWidgets
 
 from artiq.gui.tools import LayoutWidget, disable_scroll_wheel
 from artiq.gui.scanwidget import ScanWidget
-from artiq.gui.scientific_spinbox import ScientificSpinBox
 
 
 logger = logging.getLogger(__name__)
@@ -158,7 +157,7 @@ class _RangeScan(LayoutWidget):
         disable_scroll_wheel(scanner)
         self.addWidget(scanner, 0, 0, -1, 1)
 
-        start = ScientificSpinBox()
+        start = QtWidgets.QDoubleSpinBox()
         start.setStyleSheet("QDoubleSpinBox {color:blue}")
         start.setMinimumSize(110, 0)
         start.setSizePolicy(QtWidgets.QSizePolicy(
@@ -172,11 +171,15 @@ class _RangeScan(LayoutWidget):
         disable_scroll_wheel(npoints)
         self.addWidget(npoints, 1, 1)
 
-        stop = ScientificSpinBox()
+        stop = QtWidgets.QDoubleSpinBox()
         stop.setStyleSheet("QDoubleSpinBox {color:red}")
         stop.setMinimumSize(110, 0)
         disable_scroll_wheel(stop)
         self.addWidget(stop, 2, 1)
+
+        apply_properties(start)
+        apply_properties(stop)
+        apply_properties(scanner)
 
         def update_start(value):
             state["start"] = value*scale
@@ -199,9 +202,6 @@ class _RangeScan(LayoutWidget):
         scanner.setStart(state["start"]/scale)
         scanner.setNum(state["npoints"])
         scanner.setStop(state["stop"]/scale)
-        apply_properties(start)
-        apply_properties(stop)
-        apply_properties(scanner)
 
 
 class _ExplicitScan(LayoutWidget):
@@ -212,14 +212,14 @@ class _ExplicitScan(LayoutWidget):
         self.addWidget(QtWidgets.QLabel("Sequence:"), 0, 0)
         self.addWidget(self.value, 0, 1)
 
-        float_regexp = "[-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?"
+        float_regexp = r"(([+-]?\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?)"
         regexp = "(float)?( +float)* *".replace("float", float_regexp)
-        self.value.setValidator(QtGui.QRegExpValidator(QtCore.QRegExp(regexp),
-                                                       self.value))
+        self.value.setValidator(QtGui.QRegExpValidator(QtCore.QRegExp(regexp)))
 
         self.value.setText(" ".join([str(x) for x in state["sequence"]]))
         def update(text):
-            state["sequence"] = [float(x) for x in text.split()]
+            if self.value.hasAcceptableInput():
+                state["sequence"] = [float(x) for x in text.split()]
         self.value.textEdited.connect(update)
 
 

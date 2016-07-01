@@ -24,10 +24,19 @@ This flash storage space can be accessed by using ``artiq_coreconfig`` (see: :re
 FPGA board ports
 ****************
 
+All boards have a serial interface running at 115200bps 8-N-1 that can be used for debugging.
+
 KC705
 -----
 
 The main target board for the ARTIQ core device is the KC705 development board from Xilinx. It supports the NIST QC1 hardware via an adapter, and the NIST CLOCK and QC2 hardware (FMC).
+
+Common problems
++++++++++++++++
+
+* The SW13 switches on the board need to be set to 00001.
+* When connected, QC1 and CLOCK adapters break the JTAG chain due to TDI not being connect to TDO on the FMC mezzanine.
+* On some boards, the JTAG USB connector is not correctly soldered.
 
 NIST QC1
 ++++++++
@@ -104,9 +113,7 @@ With the QC2 hardware, the TTL lines are mapped as follows:
 +--------------------+-----------------------+--------------+
 | RTIO channel       | TTL line              | Capability   |
 +====================+=======================+==============+
-| 0-15, 20-35        | TTL0-15, TTL20-35     | Input+Output |
-+--------------------+-----------------------+--------------+
-| 16-19, 36-39       | TTL16-19, TTL36-39    | Output       |
+| 0-39               | TTL0-39               | Input+Output |
 +--------------------+-----------------------+--------------+
 | 40                 | SMA_GPIO_N            | Input+Output |
 +--------------------+-----------------------+--------------+
@@ -150,6 +157,10 @@ Pipistrello
 The low-cost Pipistrello FPGA board can be used as a lower-cost but slower alternative. Since the device does not have a native network interface, a PPP session is run over the serial port (which is then run over USB). To establish the PPP session with the core device, giving it the IP address 10.0.0.2, as root execute::
 
     pppd /dev/ttyUSB1 115200 noauth nodetach local nocrtscts novj 10.0.0.1:10.0.0.2
+
+.. warning:: Windows is not supported.
+
+.. warning:: The Pipistrello draws a high current over USB, and that current increases when the FPGA design is active. If you experience problems such as intermittent board freezes or USB errors, try connecting it to a self-powered USB hub.
 
 When plugged to an adapter, the NIST QC1 hardware can be used. The TTL lines are mapped to RTIO channels as follows:
 
