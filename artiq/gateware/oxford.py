@@ -81,9 +81,45 @@ fmc_adapter_io = [
     ("in", 5, Pins("HPC:LA11_P"), IOStandard("LVTTL")),
     ("in", 6, Pins("HPC:LA11_N"), IOStandard("LVTTL")),
     ("in", 7, Pins("HPC:LA16_N"), IOStandard("LVTTL")),
-    
-    
+
+    # HPC : JI
+    ("h", 0, Pins("HPC:LA29_N"), IOStandard("LVTTL")),
+    ("h", 1, Pins("HPC:LA29_P"), IOStandard("LVTTL")),
+    ("h", 2, Pins("HPC:LA25_N"), IOStandard("LVTTL")),
+    ("h", 3, Pins("HPC:LA25_P"), IOStandard("LVTTL")),
+    ("h", 4, Pins("HPC:LA28_N"), IOStandard("LVTTL")),
+    ("h", 5, Pins("HPC:LA28_P"), IOStandard("LVTTL")),
+    ("h", 6, Pins("HPC:LA24_N"), IOStandard("LVTTL")),
+    ("h", 7, Pins("HPC:LA24_P"), IOStandard("LVTTL")),
+
+    # HPC : JK
+    ("e", 0, Pins("HPC:LA33_N"), IOStandard("LVTTL")),
+    ("e", 1, Pins("HPC:LA33_P"), IOStandard("LVTTL")),
+    ("e", 2, Pins("HPC:LA30_P"), IOStandard("LVTTL")),
+    ("e", 3, Pins("HPC:LA31_P"), IOStandard("LVTTL")),
+    ("e", 4, Pins("HPC:LA32_N"), IOStandard("LVTTL")),
+    ("e", 5, Pins("HPC:LA32_P"), IOStandard("LVTTL")),
+    ("e", 6, Pins("HPC:LA30_N"), IOStandard("LVTTL")),
+    ("e", 7, Pins("HPC:LA31_N"), IOStandard("LVTTL")),
+
+
     # LEDs on FMC LPC
     ("ledFrontPanel", 0, Pins("LPC:LA17_CC_N"), IOStandard("LVTTL")),
-    ("ledFrontPanel", 1, Pins("LPC:LA17_CC_P"), IOStandard("LVTTL")),    
+    ("ledFrontPanel", 1, Pins("LPC:LA17_CC_P"), IOStandard("LVTTL")),
+
+    # Clock input/output on FMC LPC
+    ("ext_clk0_p", 0, Pins("LPC:CLK0_M2C_P"), IOStandard("LVDS_25")),
+    ("ext_clk0_n", 0, Pins("LPC:CLK0_M2C_N"), IOStandard("LVDS_25")),
+
+    # LVDS? on ?PC
+    ("tdc_in", 0,
+        Subsignal("p", Pins("AJ26"), IOStandard("LVDS_25")),
+        Subsignal("n", Pins("AK26"), IOStandard("LVDS_25"))
+    ),
+
+    # LVDS? on ?PC
+    ("tdc_in", 1,
+        Subsignal("p", Pins("AJ28"), IOStandard("LVDS_25")),
+        Subsignal("n", Pins("AJ29"), IOStandard("LVDS_25"))
+    ),
 ]
