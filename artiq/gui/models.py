@@ -1,11 +1,10 @@
 from PyQt5 import QtCore
 
-from artiq.protocols.sync_struct import Subscriber
+from artiq.protocols.sync_struct import Subscriber, process_mod
 
 
-class ModelSubscriber(Subscriber):
-    def __init__(self, notifier_name, model_factory):
-        Subscriber.__init__(self, notifier_name, self._create_model)
+class ModelManager:
+    def __init__(self, model_factory):
         self.model = None
         self._model_factory = model_factory
         self._setmodel_callbacks = []
@@ -20,6 +19,29 @@ class ModelSubscriber(Subscriber):
         self._setmodel_callbacks.append(cb)
         if self.model is not None:
             cb(self.model)
+
+
+class ModelSubscriber(ModelManager, Subscriber):
+    def __init__(self, notifier_name, model_factory):
+        ModelManager.__init__(self, model_factory)
+        Subscriber.__init__(self, notifier_name, self._create_model)
+
+
+class LocalModelManager(ModelManager):
+    def __init__(self, model_factory):
+        ModelManager.__init__(self, model_factory)
+        self.notify_cbs = []
+
+    def update(self, mod):
+        process_mod(self.model, mod)
+        for notify_cb in self.notify_cbs:
+            notify_cb(mod)
+
+    def init(self, struct):
+        self._create_model(struct)
+        mod = {"action": "init", "struct": struct}
+        for notify_cb in self.notify_cbs:
+            notify_cb(mod)
 
 
 class _SyncSubstruct:
@@ -370,19 +392,27 @@ class DictSyncTreeSepModel(QtCore.QAbstractItemModel):
         return key
 
     def data(self, index, role):
-        if not index.isValid() or role != QtCore.Qt.DisplayRole:
+        if not index.isValid() or (role != QtCore.Qt.DisplayRole
+                                   and role != QtCore.Qt.ToolTipRole):
             return None
         else:
             column = index.column()
-            if column == 0:
+            if column == 0 and role == QtCore.Qt.DisplayRole:
                 return index.internalPointer().name
             else:
                 key = self.index_to_key(index)
                 if key is None:
                     return None
                 else:
-                    return self.convert(key, self.backing_store[key],
-                                        column)
+                    if role == QtCore.Qt.DisplayRole:
+                        convert = self.convert
+                    else:
+                        convert = self.convert_tooltip
+                    return convert(key, self.backing_store[key],
+                                   column)
 
     def convert(self, k, v, column):
         raise NotImplementedError
+
+    def convert_tooltip(self, k, v, column):
+        return None

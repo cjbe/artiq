@@ -13,6 +13,7 @@ from prettytable import PrettyTable
 
 from artiq.protocols.pc_rpc import Client
 from artiq.protocols.sync_struct import Subscriber
+from artiq.protocols.broadcast import Receiver
 from artiq.protocols import pyon
 from artiq.tools import short_format
 
@@ -60,9 +61,9 @@ def get_argparser():
                             help="increase logging level of the experiment")
     parser_add.add_argument("-q", "--quiet", default=0, action="count",
                             help="decrease logging level of the experiment")
-    parser_add.add_argument("file",
+    parser_add.add_argument("file", metavar="FILE",
                             help="file containing the experiment to run")
-    parser_add.add_argument("arguments", nargs="*",
+    parser_add.add_argument("arguments", metavar="ARGUMENTS", nargs="*",
                             help="run arguments")
 
     parser_delete = subparsers.add_parser("delete",
@@ -70,16 +71,19 @@ def get_argparser():
                                                "from the schedule")
     parser_delete.add_argument("-g", action="store_true",
                                help="request graceful termination")
-    parser_delete.add_argument("rid", type=int,
+    parser_delete.add_argument("rid", metavar="RID", type=int,
                                help="run identifier (RID)")
 
     parser_set_dataset = subparsers.add_parser(
         "set-dataset", help="add or modify a dataset")
-    parser_set_dataset.add_argument("name", help="name of the dataset")
-    parser_set_dataset.add_argument("value",
+    parser_set_dataset.add_argument("name", metavar="NAME",
+                                    help="name of the dataset")
+    parser_set_dataset.add_argument("value", metavar="VALUE",
                                     help="value in PYON format")
     parser_set_dataset.add_argument("-p", "--persist", action="store_true",
                                     help="make the dataset persistent")
+    parser_set_dataset.add_argument("-n", "--no-persist", action="store_true",
+                                    help="make the dataset non-persistent")
 
     parser_del_dataset = subparsers.add_parser(
         "del-dataset", help="delete a dataset")
@@ -88,7 +92,7 @@ def get_argparser():
     parser_show = subparsers.add_parser(
         "show", help="show schedule, log, devices or datasets")
     parser_show.add_argument(
-        "what",
+        "what", metavar="WHAT",
         help="select object to show: schedule/log/devices/datasets")
 
     subparsers.add_parser(
@@ -98,7 +102,8 @@ def get_argparser():
         "scan-repository", help="trigger a repository (re)scan")
     parser_scan_repos.add_argument("--async", action="store_true",
                                    help="trigger scan and return immediately")
-    parser_scan_repos.add_argument("revision", default=None, nargs="?",
+    parser_scan_repos.add_argument("revision", metavar="REVISION",
+                                   default=None, nargs="?",
                                    help="use a specific repository revision "
                                         "(defaults to head)")
 
@@ -149,7 +154,16 @@ def _action_delete(remote, args):
 
 
 def _action_set_dataset(remote, args):
-    remote.set(args.name, pyon.decode(args.value), args.persist)
+    if args.persist and args.no_persist:
+        print("Options --persist and --no-persist cannot be specified "
+              "at the same time")
+        sys.exit(1)
+    persist = None
+    if args.persist:
+        persist = True
+    if args.no_persist:
+        persist = False
+    remote.set(args.name, pyon.decode(args.value), persist)
 
 
 def _action_del_dataset(remote, args):
@@ -223,8 +237,6 @@ def _show_datasets(datasets):
 
 
 def _run_subscriber(host, port, subscriber):
-    if port is None:
-        port = 3250
     loop = asyncio.get_event_loop()
     try:
         loop.run_until_complete(subscriber.connect(host, port))
@@ -246,7 +258,8 @@ def _show_dict(args, notifier_name, display_fun):
         return d
     subscriber = Subscriber(notifier_name, init_d,
                             lambda mod: display_fun(d))
-    _run_subscriber(args.server, args.port, subscriber)
+    port = 3250 if args.port is None else args.port
+    _run_subscriber(args.server, port, subscriber)
 
 
 def _print_log_record(record):
@@ -255,30 +268,10 @@ def _print_log_record(record):
     print(level, source, t, message)
 
 
-class _LogPrinter:
-    def __init__(self, init):
-        for record in init:
-            _print_log_record(record)
-
-    def append(self, record):
-        _print_log_record(record)
-
-    def insert(self, i, record):
-        _print_log_record(record)
-
-    def pop(self, i=-1):
-        pass
-
-    def __delitem__(self, x):
-        pass
-
-    def __setitem__(self, k, v):
-        pass
-
-
 def _show_log(args):
-    subscriber = Subscriber("log", _LogPrinter)
-    _run_subscriber(args.server, args.port, subscriber)
+    subscriber = Receiver("log", [_print_log_record])
+    port = 1067 if args.port is None else args.port
+    _run_subscriber(args.server, port, subscriber)
 
 
 def main():

@@ -5,7 +5,7 @@ objects. Its main features are:
 * Human-readable format compatible with the Python syntax.
 * Each object is serialized on a single line, with only ASCII characters.
 * Supports all basic Python data structures: None, booleans, integers,
-  floats, strings, tuples, lists, dictionaries.
+  floats, complex numbers, strings, tuples, lists, dictionaries.
 * Those data types are accurately reconstructed (unlike JSON where e.g. tuples
   become lists, and dictionary keys are turned into strings).
 * Supports Numpy arrays.
@@ -25,14 +25,13 @@ import tempfile
 
 import numpy
 
-from ..language.core import int as wrapping_int
-
 
 _encode_map = {
     type(None): "none",
     bool: "bool",
     int: "number",
     float: "number",
+    complex: "number",
     str: "str",
     bytes: "bytes",
     tuple: "tuple",
@@ -40,20 +39,29 @@ _encode_map = {
     set: "set",
     dict: "dict",
     slice: "slice",
-    wrapping_int: "number",
     Fraction: "fraction",
     OrderedDict: "ordereddict",
     numpy.ndarray: "nparray"
 }
 
 _numpy_scalar = {
-    "int8", "int16", "int32", "int64", "uint8", "uint16", "uint32", "uint64",
-    "float16", "float32", "float64"
+    "int8", "int16", "int32", "int64",
+    "uint8", "uint16", "uint32", "uint64",
+    "float16", "float32", "float64",
+    "complex64", "complex128",
 }
 
 
 for _t in _numpy_scalar:
     _encode_map[getattr(numpy, _t)] = "npscalar"
+
+
+_str_translation = {
+    ord("\""): "\\\"",
+    ord("\\"): "\\\\",
+    ord("\n"): "\\n",
+    ord("\r"): "\\r",
+}
 
 
 class _Encoder:
@@ -78,11 +86,7 @@ class _Encoder:
 
     def encode_str(self, x):
         # Do not use repr() for JSON compatibility.
-        tt = {
-              ord("\""): "\\\"", ord("\\"): "\\\\",
-              ord("\n"): "\\n", ord("\r"): "\\r"
-        }
-        return "\"" + x.translate(tt) + "\""
+        return "\"" + x.translate(_str_translation) + "\""
 
     def encode_bytes(self, x):
         return repr(x)
@@ -136,27 +140,28 @@ class _Encoder:
                                          self.encode(x.denominator))
 
     def encode_ordereddict(self, x):
-        return "OrderedDict("+ self.encode(list(x.items())) +")"
+        return "OrderedDict(" + self.encode(list(x.items())) + ")"
 
     def encode_nparray(self, x):
         r = "nparray("
         r += self.encode(x.shape) + ", "
-        r += self.encode(str(x.dtype)) + ", "
-        r += self.encode(base64.b64encode(x).decode())
+        r += self.encode(x.dtype.str) + ", "
+        r += self.encode(base64.b64encode(x.data))
         r += ")"
         return r
 
     def encode_npscalar(self, x):
         r = "npscalar("
-        r += "\"" + type(x).__name__ + "\", "
-        r += self.encode(base64.b64encode(x).decode())
+        r += self.encode(x.dtype.str) + ", "
+        r += self.encode(base64.b64encode(x.data))
         r += ")"
         return r
 
     def encode(self, x):
         ty = _encode_map.get(type(x), None)
         if ty is None:
-            raise TypeError(repr(x) + " is not PYON serializable")
+            raise TypeError("`{!r}` ({}) is not PYON serializable"
+                            .format(x, type(x)))
         return getattr(self, "encode_" + ty)(x)
 
 
@@ -184,12 +189,12 @@ _eval_dict = {
     "true": True,
     "slice": slice,
 
-    "int": wrapping_int,
     "Fraction": Fraction,
     "OrderedDict": OrderedDict,
     "nparray": _nparray,
     "npscalar": _npscalar
 }
+
 
 def decode(s):
     """Parses a string in the Python syntax, reconstructs the corresponding

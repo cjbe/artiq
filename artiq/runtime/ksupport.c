@@ -1,6 +1,7 @@
 #include <stdarg.h>
 #include <string.h>
 #include <stdio.h>
+#include <generated/csr.h>
 
 #include <link.h>
 #include <dlfcn.h>
@@ -96,6 +97,7 @@ static const struct symbol runtime_exports[] = {
     {"__artiq_raise", &__artiq_raise},
     {"__artiq_reraise", &__artiq_reraise},
     {"strcmp", &strcmp},
+    {"strlen", &strlen},
     {"abort", &ksupport_abort},
 
     /* proxified syscalls */
@@ -111,16 +113,20 @@ static const struct symbol runtime_exports[] = {
     {"recv_rpc", &recv_rpc},
 
     /* direct syscalls */
+    {"rtio_init", &rtio_init},
     {"rtio_get_counter", &rtio_get_counter},
     {"rtio_log", &rtio_log},
     {"rtio_output", &rtio_output},
     {"rtio_input_timestamp", &rtio_input_timestamp},
     {"rtio_input_data", &rtio_input_data},
 
+#if ((defined CONFIG_RTIO_DDS_COUNT) && (CONFIG_RTIO_DDS_COUNT > 0))
     {"dds_init", &dds_init},
+    {"dds_init_sync", &dds_init_sync},
     {"dds_batch_enter", &dds_batch_enter},
     {"dds_batch_exit", &dds_batch_exit},
     {"dds_set", &dds_set},
+#endif
 
     {"i2c_init", &i2c_init},
     {"i2c_start", &i2c_start},
@@ -351,11 +357,6 @@ static void now_init(void)
     }
     now = reply->now;
     mailbox_acknowledge();
-
-    if(now < 0) {
-        rtio_init();
-        now = rtio_get_counter() + (272000 << CONFIG_RTIO_FINE_TS_WIDTH);
-    }
 }
 
 static void now_save(void)
@@ -475,7 +476,6 @@ void send_rpc(int service, const char *tag, ...)
 {
     struct msg_rpc_send request;
 
-    request.now = now;
     if(service != 0)
         request.type = MESSAGE_TYPE_RPC_SEND;
     else

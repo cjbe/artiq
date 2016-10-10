@@ -1,6 +1,8 @@
 .. Always keep doc/manual/introduction.rst synchronized with this file, with the exception of the logo.
 
-.. image:: doc/logo/artiq.png
+.. Absolute so that it works on github and on pypi
+.. image:: https://raw.githubusercontent.com/m-labs/artiq/master/doc/logo/artiq.png
+  :target: https://m-labs.hk/artiq
 
 ARTIQ (Advanced Real-Time Infrastructure for Quantum physics) is the next-generation control system for quantum information experiments.
 It is developed by `M-Labs <https://m-labs.hk>`_ for and in partnership with the `Ion Storage Group at NIST <http://www.nist.gov/pml/div688/grp10/index.cfm>`_ as free software.
@@ -26,4 +28,7 @@ Technologies employed include `Python <https://www.python.org/>`_, `Migen <https
 
 Website: https://m-labs.hk/artiq
 
-Copyright (C) 2014-2016 M-Labs Limited. Licensed under GNU GPL version 3.
+`Cite ARTIQ <http://dx.doi.org/10.5281/zenodo.51303>`_ as ``Bourdeauducq, Sébastien et al. (2016). ARTIQ 1.0. Zenodo. 10.5281/zenodo.51303``.
+
+Copyright (C) 2014-2016 M-Labs Limited.
+Licensed under GNU GPL version 3 or any later version.

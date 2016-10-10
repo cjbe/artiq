@@ -1,10 +1,10 @@
 .. _install-from-source:
 
-Installing from source
-======================
+Installing ARTIQ from source
+============================
 
 .. note::
-    This method is only recommended for developers and advanced users. An easier way to install ARTIQ is via the Anaconda packages (see :ref:`Installing ARTIQ <install-from-conda>`).
+	This method is only recommended for developers and advanced users. An easier way to install ARTIQ is via the Anaconda packages (see :ref:`Installing ARTIQ <install-from-conda>`).
 
 
 Preparing the build environment for the core device
@@ -28,7 +28,7 @@ and the ARTIQ kernels.
         $ cd ~/artiq-dev
         $ wget https://ftp.gnu.org/gnu/binutils/binutils-2.26.tar.bz2
         $ tar xvf binutils-2.26.tar.bz2
-        $ rm binutils-2.26.tar.bz2
+        $ cd binutils-2.26
 
         $ mkdir build
         $ cd build
@@ -43,10 +43,9 @@ and the ARTIQ kernels.
 * Install LLVM and Clang: ::
 
         $ cd ~/artiq-dev
-        $ git clone https://github.com/openrisc/llvm-or1k
-        $ cd llvm-or1k/tools
-        $ git clone https://github.com/openrisc/clang-or1k clang
-        $ cd ..
+        $ git clone -b artiq-3.8 https://github.com/m-labs/llvm-or1k
+        $ cd llvm-or1k
+        $ git clone -b artiq-3.8 https://github.com/m-labs/clang-or1k tools/clang
 
         $ mkdir build
         $ cd build
@@ -96,11 +95,25 @@ These steps are required to generate gateware bitstream (``.bit``) files, build 
 
 * :ref:`Download and install OpenOCD <install-openocd>`.
 
+* Download and install ``asyncserial``: ::
+
+        $ cd ~/artiq-dev
+        $ git clone https://www.github.com/m-labs/asyncserial
+        $ cd asyncserial
+        $ python3.5 setup.py develop --user
+
 * Download and install MiSoC: ::
 
         $ cd ~/artiq-dev
         $ git clone --recursive https://github.com/m-labs/misoc
         $ cd misoc
+        $ python3.5 setup.py develop --user
+
+* Download and install ``pythonparser``: ::
+
+        $ cd ~/artiq-dev
+        $ git clone https://www.github.com/m-labs/pythonparser
+        $ cd pythonparser
         $ python3.5 setup.py develop --user
 
 * Download and install ARTIQ: ::
@@ -130,7 +143,7 @@ These steps are required to generate gateware bitstream (``.bit``) files, build 
 
     * For KC705::
 
-        $ python3.5 -m artiq.gateware.targets.kc705 -H qc1  # or qc2
+        $ python3.5 -m artiq.gateware.targets.kc705 -H nist_qc1  # or nist_qc2
 
     .. note:: Add ``--toolchain vivado`` if you wish to use Vivado instead of ISE.
 
@@ -170,7 +183,7 @@ Installing the host-side software
         $ cd ~/artiq-dev
         $ git clone https://github.com/m-labs/llvmlite
         $ cd llvmlite
-        $ git checkout artiq
+        $ git checkout artiq-3.8
         $ LLVM_CONFIG=/usr/local/llvm-or1k/bin/llvm-config python3.5 setup.py install --user
 
 * Install ARTIQ: ::

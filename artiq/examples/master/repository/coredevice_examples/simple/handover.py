@@ -8,9 +8,10 @@ class Handover(EnvExperiment):
 
     @kernel
     def blink_once(self):
-        self.led.pulse(250*ms)
         delay(250*ms)
+        self.led.pulse(250*ms)
 
     def run(self):
+        self.core.reset()
         while True:
             self.blink_once()

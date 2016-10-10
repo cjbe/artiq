@@ -300,7 +300,6 @@ void session_startup_kernel(void)
 {
     struct msg_base *umsg;
 
-    now = -1;
     watchdog_init();
     if(!kloader_start_startup_kernel())
         return;
@@ -341,14 +340,12 @@ void session_start(void)
     out_packet_reset();
 
     kloader_stop();
-    now = -1;
     user_kernel_state = USER_KERNEL_NONE;
 }
 
 void session_end(void)
 {
     kloader_stop();
-    now = -1;
     watchdog_init();
     kloader_start_idle_kernel();
 }
@@ -610,6 +607,7 @@ static void skip_rpc_value(const char **tag) {
         }
 
         case 'l':
+        case 'a':
             skip_rpc_value(tag);
             break;
 
@@ -653,6 +651,7 @@ static int sizeof_rpc_value(const char **tag)
             return sizeof(char *);
 
         case 'l': // list(elt='a)
+        case 'a': // array(elt='a)
             skip_rpc_value(tag);
             return sizeof(struct { int32_t length; struct {} *elements; });
 
@@ -736,7 +735,8 @@ static int receive_rpc_value(const char **tag, void **slot)
             break;
         }
 
-        case 'l': { // list(elt='a)
+        case 'l':   // list(elt='a)
+        case 'a': { // array(elt='a)
             struct { int32_t length; struct {} *elements; } *list = *slot;
             list->length = in_packet_int32();
 
@@ -827,7 +827,8 @@ static int send_rpc_value(const char **tag, void **value)
             return out_packet_string(*((*(const char***)value)++));
         }
 
-        case 'l': { // list(elt='a)
+        case 'l':   // list(elt='a)
+        case 'a': { // array(elt='a)
             struct { uint32_t length; struct {} *elements; } *list = *value;
             void *element = list->elements;
 
@@ -987,12 +988,6 @@ static int process_kmsg(struct msg_base *umsg)
         case MESSAGE_TYPE_RPC_SEND:
         case MESSAGE_TYPE_RPC_BATCH: {
             struct msg_rpc_send *msg = (struct msg_rpc_send *)umsg;
-
-            /*
-             * save now in case the RPC stops the kernel
-             * (e.g. pause with preemption)
-             */
-            now = msg->now;
 
             if(!send_rpc_request(msg->service, msg->tag, msg->args)) {
                 core_log("Failed to send RPC request (service %d, tag %s)\n",

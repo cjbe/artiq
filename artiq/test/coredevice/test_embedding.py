@@ -1,3 +1,4 @@
+import numpy
 from time import sleep
 
 from artiq.experiment import *
@@ -11,6 +12,7 @@ class _Roundtrip(EnvExperiment):
     @kernel
     def roundtrip(self, obj, fn):
         fn(obj)
+
 
 class RoundtripTest(ExperimentCase):
     def assertRoundtrip(self, obj):
@@ -27,8 +29,8 @@ class RoundtripTest(ExperimentCase):
         self.assertRoundtrip(False)
 
     def test_int(self):
-        self.assertRoundtrip(42)
-        self.assertRoundtrip(int(42, width=64))
+        self.assertRoundtrip(numpy.int32(42))
+        self.assertRoundtrip(numpy.int64(42))
 
     def test_float(self):
         self.assertRoundtrip(42.0)
@@ -38,6 +40,9 @@ class RoundtripTest(ExperimentCase):
 
     def test_list(self):
         self.assertRoundtrip([10])
+
+    def test_array(self):
+        self.assertRoundtrip(numpy.array([10]))
 
     def test_object(self):
         obj = object()
@@ -57,6 +62,7 @@ class _DefaultArg(EnvExperiment):
     @kernel
     def run(self):
         return self.test()
+
 
 class DefaultArgTest(ExperimentCase):
     def test_default_arg(self):
@@ -103,8 +109,17 @@ class _RPC(EnvExperiment):
         return self.kwargs("X", a="A", b=1)
 
     @kernel
+    def numpy_things(self):
+        return (numpy.int32(10), numpy.int64(20), numpy.array([42,]))
+
+    @kernel
+    def numpy_full(self):
+        return numpy.full(10, 20)
+
+    @kernel
     def builtin(self):
         sleep(1.0)
+
 
 class RPCTest(ExperimentCase):
     def test_args(self):
@@ -116,7 +131,25 @@ class RPCTest(ExperimentCase):
         self.assertEqual(exp.kwargs1(), 1)
         self.assertEqual(exp.kwargs2(), 2)
         self.assertEqual(exp.args1kwargs2(), 2)
+        self.assertEqual(exp.numpy_things(),
+                         (numpy.int32(10), numpy.int64(20), numpy.array([42,])))
+        self.assertTrue((exp.numpy_full() == numpy.full(10, 20)).all())
         exp.builtin()
+
+
+class _Annotation(EnvExperiment):
+    def build(self):
+        self.setattr_device("core")
+
+    @kernel
+    def overflow(self, x: TInt64) -> TBool:
+        return (x << 32) != 0
+
+
+class AnnotationTest(ExperimentCase):
+    def test_annotation(self):
+        exp = self.create(_Annotation)
+        self.assertEqual(exp.overflow(1), True)
 
 
 class _Payload1MB(EnvExperiment):
@@ -130,6 +163,7 @@ class _Payload1MB(EnvExperiment):
     def run(self):
         data = [0 for _ in range(1000000//4)]
         self.devnull(data)
+
 
 class LargePayloadTest(ExperimentCase):
     def test_1MB(self):

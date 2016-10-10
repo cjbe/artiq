@@ -5,10 +5,18 @@ import argparse
 import os
 import subprocess
 import tempfile
-import site
+import shutil
 
 from artiq import __artiq_dir__ as artiq_dir
 from artiq.frontend.bit2bin import bit2bin
+
+
+scripts_path = ["share", "openocd", "scripts"]
+if os.name == "nt":
+    scripts_path.insert(0, "Library")
+scripts_path = os.path.abspath(os.path.join(
+    os.path.dirname(shutil.which("openocd")),
+    "..", *scripts_path))
 
 
 def get_argparser():
@@ -37,11 +45,13 @@ Prerequisites:
 """)
     parser.add_argument("-t", "--target", default="kc705",
                         help="target board, default: %(default)s")
-    parser.add_argument("-m", "--adapter", default="clock",
+    parser.add_argument("-m", "--adapter", default="nist_clock",
                         help="target adapter, default: %(default)s")
+    parser.add_argument("--target-file", default=None,
+                        help="use alternative OpenOCD target file")
     parser.add_argument("-f", "--storage", help="write file to storage area")
     parser.add_argument("-d", "--dir", help="look for files in this directory")
-    parser.add_argument("ACTION", nargs="*",
+    parser.add_argument("action", metavar="ACTION", nargs="*",
                         default="proxy gateware bios runtime start".split(),
                         help="actions to perform, default: %(default)s")
     return parser
@@ -77,17 +87,11 @@ def main():
         raise SystemExit("Binaries directory '{}' does not exist"
                          .format(opts.dir))
 
-    conda_prefix_path = site.getsitepackages()[0]
-    if os.name == "nt":
-        scripts_path = os.path.join(conda_prefix_path, "Library", "share", "openocd", "scripts")
-    else:
-        scripts_path = os.path.join(conda_prefix_path, "share", "openocd", "scripts")
-
     conv = False
 
     prog = []
     prog.append("init")
-    for action in opts.ACTION:
+    for action in opts.action:
         if action == "proxy":
             proxy_base = "bscan_spi_{}.bit".format(config["chip"])
             proxy = None
@@ -129,10 +133,14 @@ def main():
     try:
         if conv:
             bit2bin(bit, bin_handle)
+        if opts.target_file is None:
+            target_file = os.path.join("board", opts.target + ".cfg")
+        else:
+            target_file = opts.target_file
         subprocess.check_call([
             "openocd",
             "-s", scripts_path,
-            "-f", os.path.join("board", opts.target + ".cfg"),
+            "-f", target_file,
             "-c", "; ".join(prog),
         ])
     finally:

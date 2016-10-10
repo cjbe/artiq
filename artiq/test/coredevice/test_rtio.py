@@ -24,6 +24,7 @@ class RTT(EnvExperiment):
 
     @kernel
     def run(self):
+        self.core.reset()
         self.ttl_inout.output()
         delay(1*us)
         with interleave:
@@ -48,6 +49,7 @@ class Loopback(EnvExperiment):
 
     @kernel
     def run(self):
+        self.core.reset()
         self.loop_in.input()
         self.loop_out.off()
         delay(1*us)
@@ -71,9 +73,10 @@ class ClockGeneratorLoopback(EnvExperiment):
 
     @kernel
     def run(self):
+        self.core.reset()
         self.loop_clock_in.input()
         self.loop_clock_out.stop()
-        delay(1*us)
+        delay(10*us)
         with parallel:
             self.loop_clock_in.gate_rising(10*us)
             with sequential:
@@ -89,6 +92,7 @@ class PulseRate(EnvExperiment):
 
     @kernel
     def run(self):
+        self.core.reset()
         dt = seconds_to_mu(300*ns)
         while True:
             for i in range(10000):
@@ -113,6 +117,7 @@ class PulseRateDDS(EnvExperiment):
 
     @kernel
     def run(self):
+        self.core.reset()
         dt = seconds_to_mu(5*us)
         while True:
             delay(10*ms)
@@ -143,17 +148,18 @@ class Watchdog(EnvExperiment):
 
 
 class LoopbackCount(EnvExperiment):
-    def build(self):
+    def build(self, npulses):
         self.setattr_device("core")
         self.setattr_device("loop_in")
         self.setattr_device("loop_out")
-        self.setattr_argument("npulses")
+        self.npulses = npulses
 
     def set_count(self, count):
         self.set_dataset("count", count)
 
     @kernel
     def run(self):
+        self.core.reset()
         self.loop_in.input()
         self.loop_out.output()
         delay(5*us)
@@ -173,6 +179,7 @@ class Underflow(EnvExperiment):
 
     @kernel
     def run(self):
+        self.core.reset()
         while True:
             delay(25*ns)
             self.ttl_out.pulse(25*ns)
@@ -185,6 +192,7 @@ class SequenceError(EnvExperiment):
 
     @kernel
     def run(self):
+        self.core.reset()
         t = now_mu()
         self.ttl_out.pulse(25*us)
         at_mu(t)
@@ -198,6 +206,7 @@ class Collision(EnvExperiment):
 
     @kernel
     def run(self):
+        self.core.reset()
         delay(5*ms)  # make sure we won't get underflow
         for i in range(16):
             self.ttl_out_serdes.pulse_mu(1)
@@ -211,6 +220,7 @@ class AddressCollision(EnvExperiment):
 
     @kernel
     def run(self):
+        self.core.reset()
         self.loop_in.input()
         self.loop_in.pulse(10*us)
 
@@ -221,6 +231,7 @@ class TimeKeepsRunning(EnvExperiment):
 
     @kernel
     def run(self):
+        self.core.reset()
         self.set_dataset("time_at_start", now_mu())
 
 
@@ -290,7 +301,7 @@ class CoredeviceTest(ExperimentCase):
         rate = self.dataset_mgr.get("pulse_rate")
         print(rate)
         self.assertGreater(rate, 1*us)
-        self.assertLess(rate, 6*us)
+        self.assertLess(rate, 6.2*us)
 
     def test_loopback_count(self):
         npulses = 2
@@ -324,8 +335,6 @@ class CoredeviceTest(ExperimentCase):
     def test_time_keeps_running(self):
         self.execute(TimeKeepsRunning)
         t1 = self.dataset_mgr.get("time_at_start")
-
-        self.device_mgr.get("comm").close()  # start a new session
         self.execute(TimeKeepsRunning)
         t2 = self.dataset_mgr.get("time_at_start")
 
@@ -347,9 +356,9 @@ class CoredeviceTest(ExperimentCase):
 
 
 class RPCTiming(EnvExperiment):
-    def build(self):
+    def build(self, repeats=100):
         self.setattr_device("core")
-        self.setattr_argument("repeats", PYONValue(100))
+        self.repeats = repeats
 
     def nop(self):
         pass
@@ -378,4 +387,4 @@ class RPCTest(ExperimentCase):
         self.execute(RPCTiming)
         self.assertGreater(self.dataset_mgr.get("rpc_time_mean"), 100*ns)
         self.assertLess(self.dataset_mgr.get("rpc_time_mean"), 15*ms)
-        self.assertLess(self.dataset_mgr.get("rpc_time_stddev"), 1*ms)
+        self.assertLess(self.dataset_mgr.get("rpc_time_stddev"), 2*ms)

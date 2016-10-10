@@ -12,33 +12,39 @@ import h5py
 
 from llvmlite_artiq import binding as llvm
 
-from artiq.language.environment import EnvExperiment
+from artiq.language.environment import EnvExperiment, ProcessArgumentManager
+from artiq.language.types import TBool
 from artiq.master.databases import DeviceDB, DatasetDB
 from artiq.master.worker_db import DeviceManager, DatasetManager
 from artiq.coredevice.core import CompileError, host_only
-from artiq.compiler.embedding import ObjectMap
+from artiq.compiler.embedding import EmbeddingMap
 from artiq.compiler.targets import OR1KTarget
+from artiq.compiler import import_cache
 from artiq.tools import *
 
+
 logger = logging.getLogger(__name__)
+
 
 class StubObject:
     def __setattr__(self, name, value):
         pass
 
-class StubObjectMap:
+
+class StubEmbeddingMap:
     def __init__(self):
         stub_object = StubObject()
-        self.forward_map = defaultdict(lambda: stub_object)
-        self.forward_map[1] = lambda _: None # return RPC
-        self.next_id = -1
+        self.object_forward_map = defaultdict(lambda: stub_object)
+        self.object_forward_map[1] = lambda _: None # return RPC
+        self.object_current_id = -1
 
-    def retrieve(self, object_id):
-        return self.forward_map[object_id]
+    def retrieve_object(self, object_id):
+        return self.object_forward_map[object_id]
 
-    def store(self, value):
-        self.forward_map[self.next_id] = value
-        self.next_id -= 1
+    def store_object(self, value):
+        self.object_forward_map[self.object_current_id] = value
+        self.object_current_id -= 1
+
 
 class FileRunner(EnvExperiment):
     def build(self):
@@ -51,13 +57,15 @@ class FileRunner(EnvExperiment):
 
         self.core.comm.load(kernel_library)
         self.core.comm.run()
-        self.core.comm.serve(StubObjectMap(),
+        self.core.comm.serve(StubEmbeddingMap(),
             lambda addresses: self.target.symbolize(kernel_library, addresses))
+
 
 class ELFRunner(FileRunner):
     def compile(self):
         with open(self.file, "rb") as f:
             return f.read()
+
 
 class LLVMIRRunner(FileRunner):
     def compile(self):
@@ -65,7 +73,8 @@ class LLVMIRRunner(FileRunner):
             llmodule = llvm.parse_assembly(f.read())
         llmodule.verify()
         return self.target.link([self.target.assemble(llmodule)],
-                                init_fn='__modinit__')
+                                init_fn="__modinit__")
+
 
 class LLVMBitcodeRunner(FileRunner):
     def compile(self):
@@ -73,7 +82,7 @@ class LLVMBitcodeRunner(FileRunner):
             llmodule = llvm.parse_bitcode(f.read())
         llmodule.verify()
         return self.target.link([self.target.assemble(llmodule)],
-                                init_fn='__modinit__')
+                                init_fn="__modinit__")
 
 
 class DummyScheduler:
@@ -100,6 +109,9 @@ class DummyScheduler:
     def get_status(self):
         return dict()
 
+    def check_pause(self, rid=None) -> TBool:
+        return False
+
     @host_only
     def pause(self):
         pass
@@ -121,9 +133,9 @@ def get_argparser(with_file=True):
                         help="write results to specified HDF5 file"
                              " (default: print them)")
     if with_file:
-        parser.add_argument("file",
+        parser.add_argument("file", metavar="FILE",
                             help="file containing the experiment to run")
-    parser.add_argument("arguments", nargs="*",
+    parser.add_argument("arguments", metavar="ARGUMENTS", nargs="*",
                         help="run arguments")
 
     return parser
@@ -147,6 +159,7 @@ def _build_experiment(device_mgr, dataset_mgr, args):
         elif is_bc:
             return LLVMBitcodeRunner(device_mgr, dataset_mgr, file=args.file)
         else:
+            import_cache.install_hook()
             module = file_import(args.file, prefix="artiq_run_")
         file = args.file
     else:
@@ -160,7 +173,8 @@ def _build_experiment(device_mgr, dataset_mgr, args):
         "arguments": arguments
     }
     device_mgr.virtual_devices["scheduler"].expid = expid
-    return exp(device_mgr, dataset_mgr, **arguments)
+    argument_mgr = ProcessArgumentManager(arguments)
+    return exp((device_mgr, dataset_mgr, argument_mgr))
 
 
 def run(with_file=False):

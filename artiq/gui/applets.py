@@ -1,13 +1,17 @@
 import logging
 import asyncio
 import sys
+import string
 import shlex
+import os
+import subprocess
 from functools import partial
 from itertools import count
 
 from PyQt5 import QtCore, QtGui, QtWidgets
 
 from artiq.protocols.pipe_ipc import AsyncioParentComm
+from artiq.protocols.logging import LogParser
 from artiq.protocols import pyon
 from artiq.gui.tools import QDockWidgetCloseDetect
 
@@ -77,13 +81,14 @@ class AppletIPCServer(AsyncioParentComm):
         finally:
             self.datasets_sub.notify_cbs.remove(self._on_mod)
 
-    def start(self, embed_cb, fix_initial_size_cb):
+    def start_server(self, embed_cb, fix_initial_size_cb):
         self.server_task = asyncio.ensure_future(
             self.serve(embed_cb, fix_initial_size_cb))
 
-    async def stop(self):
-        self.server_task.cancel()
-        await asyncio.wait([self.server_task])
+    async def stop_server(self):
+        if hasattr(self, "server_task"):
+            self.server_task.cancel()
+            await asyncio.wait([self.server_task])
 
 
 class _AppletDock(QDockWidgetCloseDetect):
@@ -105,29 +110,44 @@ class _AppletDock(QDockWidgetCloseDetect):
         self.applet_name = name
         self.setWindowTitle("Applet: " + name)
 
+    def _get_log_source(self):
+        return "applet({})".format(self.applet_name)
+
     async def start(self):
         if self.starting_stopping:
             return
         self.starting_stopping = True
-
-        self.ipc = AppletIPCServer(self.datasets_sub)
-        if "{ipc_address}" not in self.command:
-            logger.warning("IPC address missing from command for %s",
-                           self.applet_name)
-        command = self.command.format(
-            python=sys.executable.replace("\\", "\\\\"),
-            ipc_address=self.ipc.get_address().replace("\\", "\\\\")
-        )
-        logger.debug("starting command %s for %s", command, self.applet_name)
         try:
-            await self.ipc.create_subprocess(*shlex.split(command),
-                                             start_new_session=True)
-        except:
-            logger.warning("Applet %s failed to start", self.applet_name,
-                           exc_info=True)
-        self.ipc.start(self.embed, self.fix_initial_size)
-
-        self.starting_stopping = False
+            self.ipc = AppletIPCServer(self.datasets_sub)
+            if "$ipc_address" not in self.command:
+                logger.warning("IPC address missing from command for %s",
+                               self.applet_name)
+            command_tpl = string.Template(self.command)
+            command = command_tpl.safe_substitute(
+                python=sys.executable.replace("\\", "\\\\"),
+                ipc_address=self.ipc.get_address().replace("\\", "\\\\")
+            )
+            logger.debug("starting command %s for %s", command, self.applet_name)
+            env = os.environ.copy()
+            env["PYTHONUNBUFFERED"] = "1"
+            try:
+                await self.ipc.create_subprocess(
+                    *shlex.split(command),
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    env=env, start_new_session=True)
+            except:
+                logger.warning("Applet %s failed to start", self.applet_name,
+                               exc_info=True)
+                return
+            asyncio.ensure_future(
+                LogParser(self._get_log_source).stream_task(
+                    self.ipc.process.stdout))
+            asyncio.ensure_future(
+                LogParser(self._get_log_source).stream_task(
+                    self.ipc.process.stderr))
+            self.ipc.start_server(self.embed, self.fix_initial_size)
+        finally:
+            self.starting_stopping = False
 
     def embed(self, win_id):
         logger.debug("capturing window 0x%x for %s", win_id, self.applet_name)
@@ -147,18 +167,19 @@ class _AppletDock(QDockWidgetCloseDetect):
         self.starting_stopping = True
 
         if hasattr(self, "ipc"):
-            await self.ipc.stop()
-            self.ipc.write_pyon({"action": "terminate"})
-            try:
-                await asyncio.wait_for(self.ipc.process.wait(), 2.0)
-            except:
-                logger.warning("Applet %s failed to exit, killing",
-                               self.applet_name)
+            await self.ipc.stop_server()
+            if hasattr(self.ipc, "process"):
+                self.ipc.write_pyon({"action": "terminate"})
                 try:
-                    self.ipc.process.kill()
-                except ProcessLookupError:
-                    pass
-                await self.ipc.process.wait()
+                    await asyncio.wait_for(self.ipc.process.wait(), 2.0)
+                except:
+                    logger.warning("Applet %s failed to exit, killing",
+                                   self.applet_name)
+                    try:
+                        self.ipc.process.kill()
+                    except ProcessLookupError:
+                        pass
+                    await self.ipc.process.wait()
             del self.ipc
 
         if hasattr(self, "embed_widget"):
@@ -176,21 +197,106 @@ class _AppletDock(QDockWidgetCloseDetect):
 
 
 _templates = [
-    ("Big number", "{python} -m artiq.applets.big_number "
-                   "--embed {ipc_address} NUMBER_DATASET"),
-    ("Histogram", "{python} -m artiq.applets.plot_hist "
-                  "--embed {ipc_address} COUNTS_DATASET "
+    ("Big number", "$python -m artiq.applets.big_number "
+                   "--embed $ipc_address NUMBER_DATASET"),
+    ("Histogram", "$python -m artiq.applets.plot_hist "
+                  "--embed $ipc_address COUNTS_DATASET "
                   "--x BIN_BOUNDARIES_DATASET"),
-    ("XY", "{python} -m artiq.applets.plot_xy "
-           "--embed {ipc_address} Y_DATASET --x X_DATASET "
+    ("XY", "$python -m artiq.applets.plot_xy "
+           "--embed $ipc_address Y_DATASET --x X_DATASET "
            "--error ERROR_DATASET --fit FIT_DATASET"),
-    ("XY + Histogram", "{python} -m artiq.applets.plot_xy_hist "
-                       "--embed {ipc_address} X_DATASET "
+    ("XY + Histogram", "$python -m artiq.applets.plot_xy_hist "
+                       "--embed $ipc_address X_DATASET "
                        "HIST_BIN_BOUNDARIES_DATASET "
                        "HISTS_COUNTS_DATASET"),
-    ("Image", "{python} -m artiq.applets.image "
-                  "--embed {ipc_address} IMG_DATASET"),
+    ("Image", "$python -m artiq.applets.image "
+                  "--embed $ipc_address IMG_DATASET"),
 ]
+
+
+# Based on:
+# http://blog.elentok.com/2011/08/autocomplete-textbox-for-multiple.html
+
+class _AutoCompleteEdit(QtWidgets.QLineEdit):
+    def __init__(self, parent, completer):
+        QtWidgets.QLineEdit.__init__(self, parent)
+        self._completer = completer
+        self._completer.setWidget(self)
+        self._completer.activated.connect(self._insert_completion)
+
+    def _insert_completion(self, completion):
+        parents = self._completer.completionPrefix()
+        idx = max(parents.rfind("."), parents.rfind("/"))
+        if idx >= 0:
+            parents = parents[:idx+1]
+            completion = parents + completion
+
+        text = self.text()
+        cursor = self.cursorPosition()
+
+        word_start = cursor - 1
+        while word_start >= 0 and text[word_start] != " ":
+            word_start -= 1
+        word_start += 1
+        word_end = cursor
+        while word_end < len(text) and text[word_end] != " ":
+            word_end += 1
+
+        self.setText(text[:word_start] + completion + text[word_end:])
+        self.setCursorPosition(word_start + len(completion))
+
+    def _update_completer_popup_items(self, completion_prefix):
+        self._completer.setCompletionPrefix(completion_prefix)
+        self._completer.popup().setCurrentIndex(
+            self._completer.completionModel().index(0, 0))
+
+    def _text_before_cursor(self):
+        text = self.text()
+        text_before_cursor = ""
+        i = self.cursorPosition() - 1
+        while i >= 0 and text[i] != " ":
+            text_before_cursor = text[i] + text_before_cursor
+            i -= 1
+        return text_before_cursor
+
+    def keyPressEvent(self, event):
+        QtWidgets.QLineEdit.keyPressEvent(self, event)
+        completion_prefix = self._text_before_cursor()
+        if completion_prefix != self._completer.completionPrefix():
+            self._update_completer_popup_items(completion_prefix)
+        if completion_prefix:
+            self._completer.complete()
+        else:
+            self._completer.popup().hide()
+
+
+class _CompleterDelegate(QtWidgets.QStyledItemDelegate):
+    def createEditor(self, parent, option, index):
+        completer = QtWidgets.QCompleter()
+        completer.splitPath = lambda path: path.replace("/", ".").split(".")
+        completer.setModelSorting(
+            QtWidgets.QCompleter.CaseSensitivelySortedModel)
+        completer.setCompletionRole(QtCore.Qt.DisplayRole)
+        if hasattr(self, "model"):
+            # "TODO: Optimize updates in the source model"
+            #    - Qt (qcompleter.cpp), never ceasing to disappoint.
+            # HACK:
+            # In the meantime, block dataChanged signals from the model.
+            # dataChanged never changes the content of the QCompleter in our
+            # case, but causes unnecessary flickering and trashing of the user
+            # selection when datasets are modified due to Qt's naive handler.
+            # Doing this is of course convoluted due to Qt's arrogance
+            # about private fields and not letting users knows what
+            # slots are connected to signals, but thanks to the complicated
+            # model system there is a short dirty hack in this particular case.
+            nodatachanged_model = QtCore.QIdentityProxyModel()
+            nodatachanged_model.setSourceModel(self.model)
+            completer.setModel(nodatachanged_model)
+            nodatachanged_model.dataChanged.disconnect()
+        return _AutoCompleteEdit(parent, completer)
+
+    def set_model(self, model):
+        self.model = model
 
 
 class AppletsDock(QtWidgets.QDockWidget):
@@ -217,6 +323,10 @@ class AppletsDock(QtWidgets.QDockWidget):
         self.table.verticalHeader().hide()
         self.table.setTextElideMode(QtCore.Qt.ElideNone)
         self.setWidget(self.table)
+
+        completer_delegate = _CompleterDelegate()
+        self.table.setItemDelegateForColumn(2, completer_delegate)
+        datasets_sub.add_setmodel_callback(completer_delegate.set_model)
 
         self.table.setContextMenuPolicy(QtCore.Qt.ActionsContextMenu)
         new_action = QtWidgets.QAction("New applet", self.table)
@@ -265,6 +375,10 @@ class AppletsDock(QtWidgets.QDockWidget):
                         name = name.text()
                     dock = self.create(item.applet_uid, name, command)
                     item.applet_dock = dock
+                    if item.applet_geometry is not None:
+                        dock.restoreGeometry(item.applet_geometry)
+                        # geometry is now handled by main window state
+                        item.applet_geometry = None
                     self.dock_to_checkbox[dock] = item
             else:
                 dock = item.applet_dock
@@ -281,9 +395,10 @@ class AppletsDock(QtWidgets.QDockWidget):
                     dock.command = new_value
 
     def on_dock_closed(self, dock):
-        asyncio.ensure_future(dock.terminate())
         checkbox_item = self.dock_to_checkbox[dock]
         checkbox_item.applet_dock = None
+        checkbox_item.applet_geometry = dock.saveGeometry()
+        asyncio.ensure_future(dock.terminate())
         del self.dock_to_checkbox[dock]
         checkbox_item.setCheckState(QtCore.Qt.Unchecked)
 
@@ -302,6 +417,7 @@ class AppletsDock(QtWidgets.QDockWidget):
         checkbox.setCheckState(QtCore.Qt.Unchecked)
         checkbox.applet_uid = uid
         checkbox.applet_dock = None
+        checkbox.applet_geometry = None
         self.table.setItem(row, 0, checkbox)
         self.table.setItem(row, 1, QtWidgets.QTableWidgetItem())
         self.table.setItem(row, 2, QtWidgets.QTableWidgetItem())
@@ -344,11 +460,14 @@ class AppletsDock(QtWidgets.QDockWidget):
             enabled = self.table.item(row, 0).checkState() == QtCore.Qt.Checked
             name = self.table.item(row, 1).text()
             command = self.table.item(row, 2).text()
-            state.append((uid, enabled, name, command))
+            geometry = self.table.item(row, 0).applet_geometry
+            if geometry is not None:
+                geometry = bytes(geometry)
+            state.append((uid, enabled, name, command, geometry))
         return state
 
     def restore_state(self, state):
-        for uid, enabled, name, command in state:
+        for uid, enabled, name, command, geometry in state:
             row = self.new(uid)
             item = QtWidgets.QTableWidgetItem()
             item.setText(name)
@@ -356,5 +475,8 @@ class AppletsDock(QtWidgets.QDockWidget):
             item = QtWidgets.QTableWidgetItem()
             item.setText(command)
             self.table.setItem(row, 2, item)
+            if geometry is not None:
+                geometry = QtCore.QByteArray(geometry)
+                self.table.item(row, 0).applet_geometry = geometry
             if enabled:
                 self.table.item(row, 0).setCheckState(QtCore.Qt.Checked)

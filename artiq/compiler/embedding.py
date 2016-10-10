@@ -5,7 +5,7 @@ the references to the host objects and translates the functions
 annotated as ``@kernel`` when they are referenced.
 """
 
-import sys, os, re, linecache, inspect, textwrap, types as pytypes
+import sys, os, re, linecache, inspect, textwrap, types as pytypes, numpy
 from collections import OrderedDict, defaultdict
 
 from pythonparser import ast, algorithm, source, diagnostic, parse_buffer
@@ -19,37 +19,120 @@ from .transforms import ASTTypedRewriter, Inferencer, IntMonomorphizer
 from .transforms.asttyped_rewriter import LocalExtractor
 
 
-class ObjectMap:
+class SpecializedFunction:
+    def __init__(self, instance_type, host_function):
+        self.instance_type = instance_type
+        self.host_function = host_function
+
+    def __eq__(self, other):
+        if isinstance(other, tuple):
+            return (self.instance_type == other[0] or
+                    self.host_function == other[1])
+        else:
+            return (self.instance_type == other.instance_type or
+                    self.host_function == other.host_function)
+
+    def __ne__(self, other):
+        return not self == other
+
+    def __hash__(self):
+        return hash((self.instance_type, self.host_function))
+
+
+class EmbeddingMap:
     def __init__(self):
-        self.current_key = 0
-        self.forward_map = {}
-        self.reverse_map = {}
+        self.object_current_key = 0
+        self.object_forward_map = {}
+        self.object_reverse_map = {}
+        self.module_map = {}
+        self.type_map = {}
+        self.function_map = {}
 
-    def store(self, obj_ref):
+    # Modules
+    def store_module(self, module, module_type):
+        self.module_map[module] = module_type
+
+    def retrieve_module(self, module):
+        return self.module_map[module]
+
+    def has_module(self, module):
+        return module in self.module_map
+
+    # Types
+    def store_type(self, host_type, instance_type, constructor_type):
+        self._rename_type(instance_type)
+        self.type_map[host_type] = (instance_type, constructor_type)
+
+    def retrieve_type(self, host_type):
+        return self.type_map[host_type]
+
+    def has_type(self, host_type):
+        return host_type in self.type_map
+
+    def _rename_type(self, new_instance_type):
+        # Generally, user-defined types that have exact same name (which is to say, classes
+        # defined inside functions) do not pose a problem to the compiler. The two places which
+        # cannot handle this are:
+        #  1. {TInstance,TConstructor}.__hash__
+        #  2. LLVM type names
+        # Since handling #2 requires renaming on ARTIQ side anyway, it's more straightforward
+        # to do it once when embedding (since non-embedded code cannot define classes in
+        # functions). Also, easier to debug.
+        n = 0
+        for host_type in self.type_map:
+            instance_type, constructor_type = self.type_map[host_type]
+            if instance_type.name == new_instance_type.name:
+                n += 1
+                new_instance_type.name = "{}.{}".format(new_instance_type.name, n)
+
+    # Functions
+    def store_function(self, function, ir_function_name):
+        self.function_map[function] = ir_function_name
+
+    def retrieve_function(self, function):
+        return self.function_map[function]
+
+    def specialize_function(self, instance_type, host_function):
+        return SpecializedFunction(instance_type, host_function)
+
+    # Objects
+    def store_object(self, obj_ref):
         obj_id = id(obj_ref)
-        if obj_id in self.reverse_map:
-            return self.reverse_map[obj_id]
+        if obj_id in self.object_reverse_map:
+            return self.object_reverse_map[obj_id]
 
-        self.current_key += 1
-        self.forward_map[self.current_key] = obj_ref
-        self.reverse_map[obj_id] = self.current_key
-        return self.current_key
+        self.object_current_key += 1
+        self.object_forward_map[self.object_current_key] = obj_ref
+        self.object_reverse_map[obj_id] = self.object_current_key
+        return self.object_current_key
 
-    def retrieve(self, obj_key):
-        return self.forward_map[obj_key]
+    def retrieve_object(self, obj_key):
+        return self.object_forward_map[obj_key]
+
+    def iter_objects(self):
+        for obj_id in self.object_forward_map.keys():
+            obj_ref = self.object_forward_map[obj_id]
+            if isinstance(obj_ref, (pytypes.FunctionType, pytypes.MethodType,
+                                    pytypes.BuiltinFunctionType, pytypes.ModuleType,
+                                    SpecializedFunction)):
+                continue
+            elif isinstance(obj_ref, type):
+                _, obj_typ = self.type_map[obj_ref]
+            else:
+                obj_typ, _ = self.type_map[type(obj_ref)]
+            yield obj_id, obj_ref, obj_typ
 
     def has_rpc(self):
         return any(filter(lambda x: inspect.isfunction(x) or inspect.ismethod(x),
-                          self.forward_map.values()))
+                          self.object_forward_map.values()))
 
-    def __iter__(self):
-        return iter(self.forward_map.keys())
 
 class ASTSynthesizer:
-    def __init__(self, object_map, type_map, value_map, quote_function=None, expanded_from=None):
+    def __init__(self, embedding_map, value_map, quote_function=None, expanded_from=None):
         self.source = ""
         self.source_buffer = source.Buffer(self.source, "<synthesized>")
-        self.object_map, self.type_map, self.value_map = object_map, type_map, value_map
+        self.embedding_map = embedding_map
+        self.value_map = value_map
         self.quote_function = quote_function
         self.expanded_from = expanded_from
         self.diagnostics = []
@@ -75,6 +158,22 @@ class ASTSynthesizer:
             typ = builtins.TBool()
             return asttyped.NameConstantT(value=value, type=typ,
                                           loc=self._add(repr(value)))
+        elif value is numpy.int32:
+            typ = builtins.fn_int32()
+            return asttyped.NameConstantT(value=None, type=typ,
+                                          loc=self._add("numpy.int32"))
+        elif value is numpy.int64:
+            typ = builtins.fn_int64()
+            return asttyped.NameConstantT(value=None, type=typ,
+                                          loc=self._add("numpy.int64"))
+        elif value is numpy.array:
+            typ = builtins.fn_array()
+            return asttyped.NameConstantT(value=None, type=typ,
+                                          loc=self._add("numpy.array"))
+        elif value is numpy.full:
+            typ = builtins.fn_make_array()
+            return asttyped.NameConstantT(value=None, type=typ,
+                                          loc=self._add("numpy.full"))
         elif isinstance(value, (int, float)):
             if isinstance(value, int):
                 typ = builtins.TInt()
@@ -82,8 +181,12 @@ class ASTSynthesizer:
                 typ = builtins.TFloat()
             return asttyped.NumT(n=value, ctx=None, type=typ,
                                  loc=self._add(repr(value)))
-        elif isinstance(value, language_core.int):
-            typ = builtins.TInt(width=types.TValue(value.width))
+        elif isinstance(value, numpy.int32):
+            typ = builtins.TInt32()
+            return asttyped.NumT(n=int(value), ctx=None, type=typ,
+                                 loc=self._add(repr(value)))
+        elif isinstance(value, numpy.int64):
+            typ = builtins.TInt64()
             return asttyped.NumT(n=int(value), ctx=None, type=typ,
                                  loc=self._add(repr(value)))
         elif isinstance(value, str):
@@ -100,8 +203,21 @@ class ASTSynthesizer:
             return asttyped.ListT(elts=elts, ctx=None, type=builtins.TList(),
                                   begin_loc=begin_loc, end_loc=end_loc,
                                   loc=begin_loc.join(end_loc))
+        elif isinstance(value, numpy.ndarray):
+            begin_loc = self._add("numpy.array([")
+            elts = []
+            for index, elt in enumerate(value):
+                elts.append(self.quote(elt))
+                if index < len(value) - 1:
+                    self._add(", ")
+            end_loc   = self._add("])")
+
+            return asttyped.ListT(elts=elts, ctx=None, type=builtins.TArray(),
+                                  begin_loc=begin_loc, end_loc=end_loc,
+                                  loc=begin_loc.join(end_loc))
         elif inspect.isfunction(value) or inspect.ismethod(value) or \
-                isinstance(value, pytypes.BuiltinFunctionType):
+                isinstance(value, pytypes.BuiltinFunctionType) or \
+                isinstance(value, SpecializedFunction):
             if inspect.ismethod(value):
                 quoted_self   = self.quote(value.__self__)
                 function_type = self.quote_function(value.__func__, self.expanded_from)
@@ -112,7 +228,7 @@ class ASTSynthesizer:
                 loc         = quoted_self.loc.join(name_loc)
                 return asttyped.QuoteT(value=value, type=method_type,
                                        self_loc=quoted_self.loc, loc=loc)
-            else:
+            else: # function
                 function_type = self.quote_function(value, self.expanded_from)
 
                 quote_loc   = self._add('`')
@@ -120,6 +236,21 @@ class ASTSynthesizer:
                 unquote_loc = self._add('`')
                 loc         = quote_loc.join(unquote_loc)
                 return asttyped.QuoteT(value=value, type=function_type, loc=loc)
+        elif isinstance(value, pytypes.ModuleType):
+            if self.embedding_map.has_module(value):
+                module_type = self.embedding_map.retrieve_module(value)
+            else:
+                module_type = types.TModule(value.__name__, OrderedDict())
+                module_type.attributes['__objectid__'] = builtins.TInt32()
+                self.embedding_map.store_module(value, module_type)
+
+            quote_loc   = self._add('`')
+            repr_loc    = self._add(repr(value))
+            unquote_loc = self._add('`')
+            loc         = quote_loc.join(unquote_loc)
+
+            self.value_map[module_type].append((value, loc))
+            return asttyped.QuoteT(value=value, type=module_type, loc=loc)
         else:
             quote_loc   = self._add('`')
             repr_loc    = self._add(repr(value))
@@ -131,8 +262,8 @@ class ASTSynthesizer:
             else:
                 typ = type(value)
 
-            if typ in self.type_map:
-                instance_type, constructor_type = self.type_map[typ]
+            if self.embedding_map.has_type(typ):
+                instance_type, constructor_type = self.embedding_map.retrieve_type(typ)
 
                 if hasattr(value, 'kernel_invariants') and \
                         value.kernel_invariants != instance_type.constant_attributes:
@@ -167,7 +298,7 @@ class ASTSynthesizer:
                     if hasattr(typ, 'artiq_builtin'):
                         exception_id = 0
                     else:
-                        exception_id = self.object_map.store(typ)
+                        exception_id = self.embedding_map.store_object(typ)
                     instance_type = builtins.TException("{}.{}".format(typ.__module__,
                                                                        typ.__qualname__),
                                                         id=exception_id)
@@ -180,7 +311,7 @@ class ASTSynthesizer:
                 constructor_type.attributes['__objectid__'] = builtins.TInt32()
                 instance_type.constructor = constructor_type
 
-                self.type_map[typ] = instance_type, constructor_type
+                self.embedding_map.store_type(typ, instance_type, constructor_type)
 
                 if hasattr(value, 'kernel_invariants'):
                     assert isinstance(value.kernel_invariants, set)
@@ -284,6 +415,53 @@ class StitchingASTTypedRewriter(ASTTypedRewriter):
         self.host_environment = host_environment
         self.quote = quote
 
+    def match_annotation(self, annot):
+        if isinstance(annot, ast.Name):
+            if annot.id == "TNone":
+                return builtins.TNone()
+            if annot.id == "TBool":
+                return builtins.TBool()
+            if annot.id == "TInt32":
+                return builtins.TInt(types.TValue(32))
+            if annot.id == "TInt64":
+                return builtins.TInt(types.TValue(64))
+            if annot.id == "TFloat":
+                return builtins.TFloat()
+            if annot.id == "TStr":
+                return builtins.TStr()
+            if annot.id == "TRange32":
+                return builtins.TRange(builtins.TInt(types.TValue(32)))
+            if annot.id == "TRange64":
+                return builtins.TRange(builtins.TInt(types.TValue(64)))
+            if annot.id == "TVar":
+                return types.TVar()
+        elif (isinstance(annot, ast.Call) and
+              annot.keywords is None and
+              annot.starargs is None and
+              annot.kwargs is None and
+              isinstance(annot.func, ast.Name)):
+            if annot.func.id == "TList" and len(annot.args) == 1:
+                elttyp = self.match_annotation(annot.args[0])
+                if elttyp is not None:
+                    return builtins.TList()
+                else:
+                    return None
+
+        if annot is not None:
+            diag = diagnostic.Diagnostic("error",
+                "unrecognized type annotation", {},
+                annot.loc)
+            self.engine.process(diag)
+
+    def visit_arg(self, node):
+        typ = self._find_name(node.arg, node.loc)
+        annottyp = self.match_annotation(node.annotation)
+        if annottyp is not None:
+            typ.unify(annottyp)
+        return asttyped.argT(type=typ,
+                             arg=node.arg, annotation=None,
+                             arg_loc=node.arg_loc, colon_loc=node.colon_loc, loc=node.loc)
+
     def visit_quoted_function(self, node, function):
         extractor = LocalExtractor(env_stack=self.env_stack, engine=self.engine)
         extractor.visit(node)
@@ -351,7 +529,7 @@ class StitchingInferencer(Inferencer):
         self.quote = quote
         self.attr_type_cache = {}
 
-    def _compute_value_type(self, object_value, object_type, object_loc, attr_name, loc):
+    def _compute_attr_type(self, object_value, object_type, object_loc, attr_name, loc):
         if not hasattr(object_value, attr_name):
             if attr_name.startswith('_'):
                 names = set(filter(lambda name: not name.startswith('_'),
@@ -390,7 +568,7 @@ class StitchingInferencer(Inferencer):
             #         def f(self): pass
             # we want f to be defined on the class, not on the instance.
             attributes = object_type.constructor.attributes
-            attr_value = attr_value.__func__
+            attr_value = SpecializedFunction(object_type, attr_value.__func__)
         else:
             attributes = object_type.attributes
 
@@ -455,7 +633,7 @@ class StitchingInferencer(Inferencer):
                 attributes, attr_value_type = self.attr_type_cache[attr_type_key]
             except KeyError:
                 attributes, attr_value_type = \
-                    self._compute_value_type(object_value, object_type, object_loc, attr_name, loc)
+                    self._compute_attr_type(object_value, object_type, object_loc, attr_name, loc)
                 self.attr_type_cache[attr_type_key] = attributes, attr_value_type
 
             if attr_name not in attributes:
@@ -516,15 +694,17 @@ class Stitcher:
         self.name = ""
         self.typedtree = []
         self.inject_at = 0
+        self.globals = {}
+
+        # We don't want some things from the prelude as they are provided in
+        # the host Python namespace and gain special meaning when quoted.
         self.prelude = prelude.globals()
         self.prelude.pop("print")
-        self.globals = {}
+        self.prelude.pop("array")
 
         self.functions = {}
 
-        self.function_map = {}
-        self.object_map = ObjectMap()
-        self.type_map = {}
+        self.embedding_map = EmbeddingMap()
         self.value_map = defaultdict(lambda: [])
 
     def stitch_call(self, function, args, kwargs, callback=None):
@@ -556,25 +736,34 @@ class Stitcher:
         # do one last pass unconditionally.
         inferencer.visit(self.typedtree)
 
-        # For every host class we embed, fill in the function slots
-        # with their corresponding closures.
-        for instance_type, constructor_type in list(self.type_map.values()):
-            # Do we have any direct reference to a constructor?
-            if len(self.value_map[constructor_type]) > 0:
-                # Yes, use it.
-                constructor, _constructor_loc = self.value_map[constructor_type][0]
-            else:
-                # No, extract one from a reference to an instance.
-                instance, _instance_loc = self.value_map[instance_type][0]
-                constructor = type(instance)
+        # After we've discovered every referenced attribute, check if any kernel_invariant
+        # specifications refers to ones we didn't encounter.
+        for host_type in self.embedding_map.type_map:
+            instance_type, constructor_type = self.embedding_map.type_map[host_type]
+            if not hasattr(instance_type, "constant_attributes"):
+                # Exceptions lack user-definable attributes.
+                continue
 
-            for attr in constructor_type.attributes:
-                if types.is_function(constructor_type.attributes[attr]):
-                    synthesizer = self._synthesizer()
-                    ast = synthesizer.assign_attribute(constructor, attr,
-                                                       getattr(constructor, attr))
-                    synthesizer.finalize()
-                    self._inject(ast)
+            for attribute in instance_type.constant_attributes:
+                if attribute in instance_type.attributes:
+                    # Fast path; if the ARTIQ Python type has the attribute, then every observed
+                    # value is guaranteed to have it too.
+                    continue
+
+                for value, loc in self.value_map[instance_type]:
+                    if hasattr(value, attribute):
+                        continue
+
+                    diag = diagnostic.Diagnostic("warning",
+                        "object {value} of type {typ} declares attribute '{attr}' as "
+                        "kernel invariant, but the instance referenced here does not "
+                        "have this attribute",
+                        {"value": repr(value),
+                         "typ": types.TypePrinter().name(instance_type, max_depth=0),
+                         "attr": attribute},
+                        loc)
+                    self.engine.process(diag)
+
         # After we have found all functions, synthesize a module to hold them.
         source_buffer = source.Buffer("", "<synthesized>")
         self.typedtree = asttyped.ModuleT(
@@ -587,17 +776,21 @@ class Stitcher:
 
     def _synthesizer(self, expanded_from=None):
         return ASTSynthesizer(expanded_from=expanded_from,
-                              object_map=self.object_map,
-                              type_map=self.type_map,
+                              embedding_map=self.embedding_map,
                               value_map=self.value_map,
                               quote_function=self._quote_function)
 
     def _quote_embedded_function(self, function, flags):
-        if not hasattr(function, "artiq_embedded"):
-            raise ValueError("{} is not an embedded function".format(repr(function)))
+        if isinstance(function, SpecializedFunction):
+            host_function = function.host_function
+        else:
+            host_function = function
+
+        if not hasattr(host_function, "artiq_embedded"):
+            raise ValueError("{} is not an embedded function".format(repr(host_function)))
 
         # Extract function source.
-        embedded_function = function.artiq_embedded.function
+        embedded_function = host_function.artiq_embedded.function
         source_code = inspect.getsource(embedded_function)
         filename = embedded_function.__code__.co_filename
         module_name = embedded_function.__globals__['__name__']
@@ -626,11 +819,17 @@ class Stitcher:
         function_node = parser.file_input().body[0]
 
         # Mangle the name, since we put everything into a single module.
-        function_node.name = "{}.{}".format(module_name, function.__qualname__)
+        full_function_name = "{}.{}".format(module_name, host_function.__qualname__)
+        if isinstance(function, SpecializedFunction):
+            instance_type = function.instance_type
+            function_node.name = "_Z{}{}I{}{}Ezz".format(len(full_function_name), full_function_name,
+                                                         len(instance_type.name), instance_type.name)
+        else:
+            function_node.name = "_Z{}{}zz".format(len(full_function_name), full_function_name)
 
         # Record the function in the function map so that LLVM IR generator
         # can handle quoting it.
-        self.function_map[function] = function_node.name
+        self.embedding_map.store_function(function, function_node.name)
 
         # Memoize the function type before typing it to handle recursive
         # invocations.
@@ -773,69 +972,80 @@ class Stitcher:
         self.functions[function] = function_type
         return function_type
 
-    def _quote_rpc(self, callee, loc):
+    def _quote_rpc(self, function, loc):
+        if isinstance(function, SpecializedFunction):
+            host_function = function.host_function
+        else:
+            host_function = function
         ret_type = builtins.TNone()
 
-        if isinstance(callee, pytypes.BuiltinFunctionType):
+        if isinstance(host_function, pytypes.BuiltinFunctionType):
             pass
-        elif isinstance(callee, pytypes.FunctionType) or isinstance(callee, pytypes.MethodType):
-            if isinstance(callee, pytypes.FunctionType):
-                signature = inspect.signature(callee)
+        elif (isinstance(host_function, pytypes.FunctionType) or \
+              isinstance(host_function, pytypes.MethodType)):
+            if isinstance(host_function, pytypes.FunctionType):
+                signature = inspect.signature(host_function)
             else:
                 # inspect bug?
-                signature = inspect.signature(callee.__func__)
+                signature = inspect.signature(host_function.__func__)
             if signature.return_annotation is not inspect.Signature.empty:
-                ret_type = self._extract_annot(callee, signature.return_annotation,
+                ret_type = self._extract_annot(host_function, signature.return_annotation,
                                                "return type", loc, is_syscall=False)
         else:
             assert False
 
-        function_type = types.TRPC(ret_type, service=self.object_map.store(callee))
-        self.functions[callee] = function_type
+        function_type = types.TRPC(ret_type,
+                                   service=self.embedding_map.store_object(host_function))
+        self.functions[function] = function_type
         return function_type
 
     def _quote_function(self, function, loc):
-        if function not in self.functions:
-            if hasattr(function, "artiq_embedded"):
-                if function.artiq_embedded.function is not None:
-                    if function.__name__ == "<lambda>":
-                        note = diagnostic.Diagnostic("note",
-                            "lambda created here", {},
-                            self._function_loc(function.artiq_embedded.function))
-                        diag = diagnostic.Diagnostic("fatal",
-                            "lambdas cannot be used as kernel functions", {},
-                            loc,
-                            notes=[note])
-                        self.engine.process(diag)
+        if isinstance(function, SpecializedFunction):
+            host_function = function.host_function
+        else:
+            host_function = function
 
-                    core_name = function.artiq_embedded.core_name
-                    if core_name is not None and self.dmgr.get(core_name) != self.core:
-                        note = diagnostic.Diagnostic("note",
-                            "called from this function", {},
-                            loc)
-                        diag = diagnostic.Diagnostic("fatal",
-                            "this function runs on a different core device '{name}'",
-                            {"name": function.artiq_embedded.core_name},
-                            self._function_loc(function.artiq_embedded.function),
-                            notes=[note])
-                        self.engine.process(diag)
+        if function in self.functions:
+            pass
+        elif not hasattr(host_function, "artiq_embedded"):
+            self._quote_rpc(function, loc)
+        elif host_function.artiq_embedded.function is not None:
+            if host_function.__name__ == "<lambda>":
+                note = diagnostic.Diagnostic("note",
+                    "lambda created here", {},
+                    self._function_loc(host_function.artiq_embedded.function))
+                diag = diagnostic.Diagnostic("fatal",
+                    "lambdas cannot be used as kernel functions", {},
+                    loc,
+                    notes=[note])
+                self.engine.process(diag)
 
-                    self._quote_embedded_function(function,
-                                                  flags=function.artiq_embedded.flags)
-                elif function.artiq_embedded.syscall is not None:
-                    # Insert a storage-less global whose type instructs the compiler
-                    # to perform a system call instead of a regular call.
-                    self._quote_syscall(function, loc)
-                elif function.artiq_embedded.forbidden is not None:
-                    diag = diagnostic.Diagnostic("fatal",
-                        "this function cannot be called as an RPC", {},
-                        self._function_loc(function),
-                        notes=self._call_site_note(loc, is_syscall=False))
-                    self.engine.process(diag)
-                else:
-                    assert False
-            else:
-                self._quote_rpc(function, loc)
+            core_name = host_function.artiq_embedded.core_name
+            if core_name is not None and self.dmgr.get(core_name) != self.core:
+                note = diagnostic.Diagnostic("note",
+                    "called from this function", {},
+                    loc)
+                diag = diagnostic.Diagnostic("fatal",
+                    "this function runs on a different core device '{name}'",
+                    {"name": host_function.artiq_embedded.core_name},
+                    self._function_loc(host_function.artiq_embedded.function),
+                    notes=[note])
+                self.engine.process(diag)
+
+            self._quote_embedded_function(function,
+                                          flags=host_function.artiq_embedded.flags)
+        elif host_function.artiq_embedded.syscall is not None:
+            # Insert a storage-less global whose type instructs the compiler
+            # to perform a system call instead of a regular call.
+            self._quote_syscall(function, loc)
+        elif host_function.artiq_embedded.forbidden is not None:
+            diag = diagnostic.Diagnostic("fatal",
+                "this function cannot be called as an RPC", {},
+                self._function_loc(host_function),
+                notes=self._call_site_note(loc, is_syscall=False))
+            self.engine.process(diag)
+        else:
+            assert False
 
         return self.functions[function]
 

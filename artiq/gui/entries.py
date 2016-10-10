@@ -5,12 +5,13 @@ from PyQt5 import QtCore, QtGui, QtWidgets
 
 from artiq.gui.tools import LayoutWidget, disable_scroll_wheel
 from artiq.gui.scanwidget import ScanWidget
+from artiq.gui.scientific_spinbox import ScientificSpinBox
 
 
 logger = logging.getLogger(__name__)
 
 
-class _StringEntry(QtWidgets.QLineEdit):
+class StringEntry(QtWidgets.QLineEdit):
     def __init__(self, argument):
         QtWidgets.QLineEdit.__init__(self)
         self.setText(argument["state"])
@@ -27,7 +28,7 @@ class _StringEntry(QtWidgets.QLineEdit):
         return procdesc.get("default", "")
 
 
-class _BooleanEntry(QtWidgets.QCheckBox):
+class BooleanEntry(QtWidgets.QCheckBox):
     def __init__(self, argument):
         QtWidgets.QCheckBox.__init__(self)
         self.setChecked(argument["state"])
@@ -44,7 +45,7 @@ class _BooleanEntry(QtWidgets.QCheckBox):
         return procdesc.get("default", False)
 
 
-class _EnumerationEntry(QtWidgets.QComboBox):
+class EnumerationEntry(QtWidgets.QComboBox):
     def __init__(self, argument):
         QtWidgets.QComboBox.__init__(self)
         disable_scroll_wheel(self)
@@ -68,14 +69,50 @@ class _EnumerationEntry(QtWidgets.QComboBox):
             return procdesc["choices"][0]
 
 
-class _NumberEntry(QtWidgets.QDoubleSpinBox):
+class NumberEntryInt(QtWidgets.QSpinBox):
     def __init__(self, argument):
-        QtWidgets.QDoubleSpinBox.__init__(self)
+        QtWidgets.QSpinBox.__init__(self)
+        disable_scroll_wheel(self)
+        procdesc = argument["desc"]
+        self.setSingleStep(procdesc["step"])
+        if procdesc["min"] is not None:
+            self.setMinimum(procdesc["min"])
+        else:
+            self.setMinimum(-((1 << 31) - 1))
+        if procdesc["max"] is not None:
+            self.setMaximum(procdesc["max"])
+        else:
+            self.setMaximum((1 << 31) - 1)
+        if procdesc["unit"]:
+            self.setSuffix(" " + procdesc["unit"])
+
+        self.setValue(argument["state"])
+        def update(value):
+            argument["state"] = value
+        self.valueChanged.connect(update)
+
+    @staticmethod
+    def state_to_value(state):
+        return state
+
+    @staticmethod
+    def default_state(procdesc):
+        if "default" in procdesc:
+            return procdesc["default"]
+        else:
+            return 0
+
+
+class NumberEntryFloat(ScientificSpinBox):
+    def __init__(self, argument):
+        ScientificSpinBox.__init__(self)
         disable_scroll_wheel(self)
         procdesc = argument["desc"]
         scale = procdesc["scale"]
         self.setDecimals(procdesc["ndecimals"])
+        self.setPrecision()
         self.setSingleStep(procdesc["step"]/scale)
+        self.setRelativeStep()
         if procdesc["min"] is not None:
             self.setMinimum(procdesc["min"]/scale)
         else:
@@ -109,9 +146,10 @@ class _NoScan(LayoutWidget):
         LayoutWidget.__init__(self)
 
         scale = procdesc["scale"]
-        self.value = QtWidgets.QDoubleSpinBox()
+        self.value = ScientificSpinBox()
         disable_scroll_wheel(self.value)
         self.value.setDecimals(procdesc["ndecimals"])
+        self.value.setPrecision()
         if procdesc["global_min"] is not None:
             self.value.setMinimum(procdesc["global_min"]/scale)
         else:
@@ -121,6 +159,7 @@ class _NoScan(LayoutWidget):
         else:
             self.value.setMaximum(float("inf"))
         self.value.setSingleStep(procdesc["global_step"]/scale)
+        self.value.setRelativeStep()
         if procdesc["unit"]:
             self.value.setSuffix(" " + procdesc["unit"])
         self.addWidget(QtWidgets.QLabel("Value:"), 0, 0)
@@ -130,6 +169,19 @@ class _NoScan(LayoutWidget):
         def update(value):
             state["value"] = value*scale
         self.value.valueChanged.connect(update)
+
+        self.repetitions = QtWidgets.QSpinBox()
+        self.repetitions.setMinimum(1)
+        self.repetitions.setMaximum((1 << 31) - 1)
+        disable_scroll_wheel(self.repetitions)
+        self.addWidget(QtWidgets.QLabel("Repetitions:"), 1, 0)
+        self.addWidget(self.repetitions, 1, 1)
+
+        self.repetitions.setValue(state["repetitions"])
+
+        def update_repetitions(value):
+            state["repetitions"] = value
+        self.repetitions.valueChanged.connect(update_repetitions)
 
 
 class _RangeScan(LayoutWidget):
@@ -157,7 +209,7 @@ class _RangeScan(LayoutWidget):
         disable_scroll_wheel(scanner)
         self.addWidget(scanner, 0, 0, -1, 1)
 
-        start = QtWidgets.QDoubleSpinBox()
+        start = ScientificSpinBox()
         start.setStyleSheet("QDoubleSpinBox {color:blue}")
         start.setMinimumSize(110, 0)
         start.setSizePolicy(QtWidgets.QSizePolicy(
@@ -171,31 +223,41 @@ class _RangeScan(LayoutWidget):
         disable_scroll_wheel(npoints)
         self.addWidget(npoints, 1, 1)
 
-        stop = QtWidgets.QDoubleSpinBox()
+        stop = ScientificSpinBox()
         stop.setStyleSheet("QDoubleSpinBox {color:red}")
         stop.setMinimumSize(110, 0)
         disable_scroll_wheel(stop)
         self.addWidget(stop, 2, 1)
 
         apply_properties(start)
+        start.setPrecision()
+        start.setRelativeStep()
         apply_properties(stop)
+        stop.setPrecision()
+        stop.setRelativeStep()
         apply_properties(scanner)
 
         def update_start(value):
             state["start"] = value*scale
             scanner.setStart(value)
+            if start.value() != value:
+                start.setValue(value)
 
         def update_stop(value):
             state["stop"] = value*scale
             scanner.setStop(value)
+            if stop.value() != value:
+                stop.setValue(value)
 
         def update_npoints(value):
             state["npoints"] = value
             scanner.setNum(value)
+            if npoints.value() != value:
+                npoints.setValue(value)
 
-        scanner.startChanged.connect(start.setValue)
-        scanner.numChanged.connect(npoints.setValue)
-        scanner.stopChanged.connect(stop.setValue)
+        scanner.startChanged.connect(update_start)
+        scanner.numChanged.connect(update_npoints)
+        scanner.stopChanged.connect(update_stop)
         start.valueChanged.connect(update_start)
         npoints.valueChanged.connect(update_npoints)
         stop.valueChanged.connect(update_stop)
@@ -223,7 +285,7 @@ class _ExplicitScan(LayoutWidget):
         self.value.textEdited.connect(update)
 
 
-class _ScanEntry(LayoutWidget):
+class ScanEntry(LayoutWidget):
     def __init__(self, argument):
         LayoutWidget.__init__(self)
         self.argument = argument
@@ -255,6 +317,10 @@ class _ScanEntry(LayoutWidget):
         selected = argument["state"]["selected"]
         self.radiobuttons[selected].setChecked(True)
 
+    def disable(self):
+        self.radiobuttons["NoScan"].setChecked(True)
+        self.widgets["NoScan"].repetitions.setValue(1)
+
     @staticmethod
     def state_to_value(state):
         selected = state["selected"]
@@ -267,26 +333,29 @@ class _ScanEntry(LayoutWidget):
         scale = procdesc["scale"]
         state = {
             "selected": "NoScan",
-            "NoScan": {"value": 0.0},
+            "NoScan": {"value": 0.0, "repetitions": 1},
             "LinearScan": {"start": 0.0, "stop": 100.0*scale, "npoints": 10},
             "RandomScan": {"start": 0.0, "stop": 100.0*scale, "npoints": 10},
             "ExplicitScan": {"sequence": []}
         }
         if "default" in procdesc:
-            default = procdesc["default"]
-            ty = default["ty"]
-            state["selected"] = ty
-            if ty == "NoScan":
-                state["NoScan"]["value"] = default["value"]
-            elif ty == "LinearScan" or ty == "RandomScan":
-                for d in state["LinearScan"], state["RandomScan"]:
-                    d["start"] = default["start"]
-                    d["stop"] = default["stop"]
-                    d["npoints"] = default["npoints"]
-            elif ty == "ExplicitScan":
-                state["ExplicitScan"]["sequence"] = default["sequence"]
-            else:
-                logger.warning("unknown default type: %s", ty)
+            defaults = procdesc["default"]
+            if not isinstance(defaults, list):
+                defaults = [defaults]
+            state["selected"] = defaults[0]["ty"]
+            for default in reversed(defaults):
+                ty = default["ty"]
+                if ty == "NoScan":
+                    state[ty]["value"] = default["value"]
+                    state[ty]["repetitions"] = default["repetitions"]
+                elif ty == "LinearScan" or ty == "RandomScan":
+                    state[ty]["start"] = default["start"]
+                    state[ty]["stop"] = default["stop"]
+                    state[ty]["npoints"] = default["npoints"]
+                elif ty == "ExplicitScan":
+                    state[ty]["sequence"] = default["sequence"]
+                else:
+                    logger.warning("unknown default type: %s", ty)
         return state
 
     def _scan_type_toggled(self):
@@ -297,11 +366,21 @@ class _ScanEntry(LayoutWidget):
                 break
 
 
-argty_to_entry = {
-    "PYONValue": _StringEntry,
-    "BooleanValue": _BooleanEntry,
-    "EnumerationValue": _EnumerationEntry,
-    "NumberValue": _NumberEntry,
-    "StringValue": _StringEntry,
-    "Scannable": _ScanEntry
-}
+def procdesc_to_entry(procdesc):
+    ty = procdesc["ty"]
+    if ty == "NumberValue":
+        is_int = (procdesc["ndecimals"] == 0
+                  and int(procdesc["step"]) == procdesc["step"]
+                  and procdesc["scale"] == 1)
+        if is_int:
+            return NumberEntryInt
+        else:
+            return NumberEntryFloat
+    else:
+        return {
+            "PYONValue": StringEntry,
+            "BooleanValue": BooleanEntry,
+            "EnumerationValue": EnumerationEntry,
+            "StringValue": StringEntry,
+            "Scannable": ScanEntry
+        }[ty]

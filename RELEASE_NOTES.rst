@@ -3,6 +3,80 @@
 Release notes
 =============
 
+2.0
+---
+
+No further notes.
+
+
+2.0rc2
+------
+
+No further notes.
+
+
+2.0rc1
+------
+
+* The format of the influxdb pattern file is simplified. The procedure to
+  edit patterns is also changed to modifying the pattern file and calling:
+  ``artiq_rpctool.py ::1 3248 call scan_patterns`` (or restarting the bridge)
+  The patterns can be converted to the new format using this code snippet::
+
+    from artiq.protocols import pyon
+    patterns = pyon.load_file("influxdb_patterns.pyon")
+    for p in patterns:
+        print(p)
+
+* The "GUI" has been renamed the "dashboard".
+* When flashing NIST boards, use "-m nist_qcX" or "-m nist_clock" instead of
+  just "-m qcX" or "-m clock" (#290).
+* Applet command lines now use templates (e.g. $python) instead of formats
+  (e.g. {python}).
+* On Windows, GUI applications no longer open a console. For debugging
+  purposes, the console messages can still be displayed by running the GUI
+  applications this way::
+
+    python3.5 -m artiq.frontend.artiq_browser
+    python3.5 -m artiq.frontend.artiq_dashboard
+
+  (you may need to replace python3.5 with python)
+  Please always include the console output when reporting a GUI crash.
+* The result folders are formatted "%Y-%m-%d/%H instead of "%Y-%m-%d/%H-%M".
+  (i.e. grouping by day and then by hour, instead of by day and then by minute)
+* The ``parent`` keyword argument of ``HasEnvironment`` (and ``EnvExperiment``)
+  has been replaced. Pass the parent as first argument instead.
+* During experiment examination (and a fortiori repository scan), the values of
+  all arguments are set to ``None`` regardless of any default values supplied.
+* In the dashboard's experiment windows, partial or full argument recomputation
+  takes into account the repository revision field.
+* By default, ``NumberValue`` and ``Scannable`` infer the scale from the unit
+  for common units.
+* By default, artiq_client keeps the current persist flag on the master.
+* GUI state files for the browser and the dashboard are stores in "standard"
+  locations for each operating system. Those are
+  ``~/.config/artiq/2/artiq_*.pyon`` on Linux and
+  ``C:\Users\<username>\AppData\Local\m-labs\artiq\2\artiq_*.pyon`` on
+  Windows 7.
+* The position of the time cursor is kept across experiments and RTIO resets
+  are manual and explicit (inter-experiment seamless handover).
+* All integers manipulated by kernels are numpy integers (numpy.int32,
+  numpy.int64). If you pass an integer as a RPC argument, the target function
+  receives a numpy type.
+
+
+1.3
+---
+
+No further notes.
+
+
+1.2
+---
+
+No further notes.
+
+
 1.1
 ---
 

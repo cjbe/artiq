@@ -2,13 +2,13 @@ from collections import OrderedDict
 from inspect import isclass
 
 from artiq.protocols import pyon
+from artiq.language import units
 
 
 __all__ = ["NoDefault",
            "PYONValue", "BooleanValue", "EnumerationValue",
            "NumberValue", "StringValue",
-           "HasEnvironment",
-           "Experiment", "EnvExperiment", "is_experiment"]
+           "HasEnvironment", "Experiment", "EnvExperiment"]
 
 
 class NoDefault:
@@ -24,6 +24,10 @@ class DefaultMissing(Exception):
 
 class _SimpleArgProcessor:
     def __init__(self, default=NoDefault):
+        # If default is a list, it means multiple defaults are specified, with
+        # decreasing priority.
+        if isinstance(default, list):
+            raise NotImplementedError
         if default is not NoDefault:
             self.default_value = default
 
@@ -76,7 +80,6 @@ class EnumerationValue(_SimpleArgProcessor):
         d["choices"] = self.choices
         return d
 
-
 class NumberValue(_SimpleArgProcessor):
     """An argument that can take a numerical value.
 
@@ -85,14 +88,20 @@ class NumberValue(_SimpleArgProcessor):
     The simplest way to represent an integer argument is
     ``NumberValue(step=1, ndecimals=0)``.
 
-    For arguments with units, use both the unit parameter (a string for
-    display) and the scale parameter (a numerical scale for experiments).
-    For example, ``NumberValue(1, unit="ms", scale=1*ms)`` will display as
-    1 ms in the GUI window because of the unit setting, and appear as the
+    When ``scale`` is not specified, and the unit is a common one (i.e.
+    defined in ``artiq.language.units``), then the scale is obtained from
+    the unit using a simple string match. For example, milliseconds (``"ms"``)
+    units set the scale to 0.001. No unit (default) corresponds to a scale of
+    1.0.
+
+    For arguments with uncommon or complex units, use both the unit parameter
+    (a string for display) and the scale parameter (a numerical scale for
+    experiments).
+    For example, ``NumberValue(1, unit="xyz", scale=0.001)`` will display as
+    1 xyz in the GUI window because of the unit setting, and appear as the
     numerical value 0.001 in the code because of the scale setting.
 
-    :param unit: A string representing the unit of the value, for display
-        purposes only.
+    :param unit: A string representing the unit of the value.
     :param scale: A numerical scaling factor by which the displayed value is
         multiplied when referenced in the experiment.
     :param step: The step with which the value should be modified by up/down
@@ -101,8 +110,17 @@ class NumberValue(_SimpleArgProcessor):
     :param max: The maximum value of the argument.
     :param ndecimals: The number of decimals a UI should use.
     """
-    def __init__(self, default=NoDefault, unit="", scale=1.0,
+    def __init__(self, default=NoDefault, unit="", scale=None,
                  step=None, min=None, max=None, ndecimals=2):
+        if scale is None:
+            if unit == "":
+                scale = 1.0
+            else:
+                try:
+                    scale = getattr(units, unit)
+                except AttributeError:
+                    raise KeyError("Unit {} is unknown, you must specify "
+                                   "the scale manually".format(unit))
         if step is None:
             step = scale/10.0
         if default is not NoDefault:
@@ -151,53 +169,65 @@ class StringValue(_SimpleArgProcessor):
     pass
 
 
+class TraceArgumentManager:
+    def __init__(self):
+        self.requested_args = OrderedDict()
+
+    def get(self, key, processor, group):
+        self.requested_args[key] = processor, group
+        return None
+
+
+class ProcessArgumentManager:
+    def __init__(self, unprocessed_arguments):
+        self.unprocessed_arguments = unprocessed_arguments
+
+    def get(self, key, processor, group):
+        if key in self.unprocessed_arguments:
+            r = processor.process(self.unprocessed_arguments[key])
+        else:
+            r = processor.default()
+        return r
+
+
 class HasEnvironment:
     """Provides methods to manage the environment of an experiment (arguments,
     devices, datasets)."""
-    def __init__(self, device_mgr=None, dataset_mgr=None, *, parent=None,
-                 default_arg_none=False, enable_processors=False, **kwargs):
-        self.requested_args = OrderedDict()
+    def __init__(self, managers_or_parent, *args, **kwargs):
+        if isinstance(managers_or_parent, tuple):
+            self.__device_mgr = managers_or_parent[0]
+            self.__dataset_mgr = managers_or_parent[1]
+            self.__argument_mgr = managers_or_parent[2]
+        else:
+            self.__device_mgr = managers_or_parent.__device_mgr
+            self.__dataset_mgr = managers_or_parent.__dataset_mgr
+            self.__argument_mgr = managers_or_parent.__argument_mgr
 
-        self.__device_mgr = device_mgr
-        self.__dataset_mgr = dataset_mgr
-        self.__parent = parent
-        self.__default_arg_none = default_arg_none
-        self.__enable_processors = enable_processors
-
-        self.__kwargs = kwargs
         self.__in_build = True
-        self.build()
+        self.build(*args, **kwargs)
         self.__in_build = False
-        for key in self.__kwargs.keys():
-            if key not in self.requested_args:
-                raise TypeError("Got unexpected argument: " + key)
-        del self.__kwargs
 
     def build(self):
-        """Must be implemented by the user to request arguments.
+        """Should be implemented by the user to request arguments.
 
         Other initialization steps such as requesting devices may also be
         performed here.
 
-        When the repository is scanned, any requested devices and arguments
-        are set to ``None``.
+        There are two situations where the requested devices are replaced by
+        ``DummyDevice()`` and arguments are set to their defaults (or ``None``)
+        instead: when the repository is scanned to build the list of
+        available experiments and when the dataset browser ``artiq_browser``
+        is used to open or run the analysis stage of an experiment. Do not
+        rely on being able to operate on devices or arguments in ``build()``.
 
         Datasets are read-only in this method.
-        """
-        raise NotImplementedError
 
-    def managers(self):
-        """Returns the device manager and the dataset manager, in this order.
+        Leftover positional and keyword arguments from the constructor are
+        forwarded to this method. This is intended for experiments that are
+        only meant to be executed programmatically (not from the GUI)."""
+        pass
 
-        This is the same order that the constructor takes them, allowing
-        sub-objects to be created with this idiom to pass the environment
-        around: ::
-
-            sub_object = SomeLibrary(*self.managers())
-        """
-        return self.__device_mgr, self.__dataset_mgr
-
-    def get_argument(self, key, processor=None, group=None):
+    def get_argument(self, key, processor, group=None):
         """Retrieves and returns the value of an argument.
 
         This function should only be called from ``build``.
@@ -211,25 +241,7 @@ class HasEnvironment:
         if not self.__in_build:
             raise TypeError("get_argument() should only "
                             "be called from build()")
-        if self.__parent is not None and key not in self.__kwargs:
-            return self.__parent.get_argument(key, processor, group)
-        if processor is None:
-            processor = PYONValue()
-        self.requested_args[key] = processor, group
-        try:
-            argval = self.__kwargs[key]
-        except KeyError:
-            try:
-                return processor.default()
-            except DefaultMissing:
-                if self.__default_arg_none:
-                    return None
-                else:
-                    raise
-        if self.__enable_processors:
-            return processor.process(argval)
-        else:
-            return argval
+        return self.__argument_mgr.get(key, processor, group)
 
     def setattr_argument(self, key, processor=None, group=None):
         """Sets an argument as attribute. The names of the argument and of the
@@ -242,18 +254,10 @@ class HasEnvironment:
 
     def get_device_db(self):
         """Returns the full contents of the device database."""
-        if self.__parent is not None:
-            return self.__parent.get_device_db()
-        if self.__device_mgr is None:
-            raise ValueError("Device manager not present")
         return self.__device_mgr.get_device_db()
 
     def get_device(self, key):
         """Creates and returns a device driver."""
-        if self.__parent is not None:
-            return self.__parent.get_device(key)
-        if self.__device_mgr is None:
-            raise ValueError("Device manager not present")
         return self.__device_mgr.get(key)
 
     def setattr_device(self, key):
@@ -279,11 +283,6 @@ class HasEnvironment:
         :param save: the data is saved into the local storage of the current
             run (archived as a HDF5 file).
         """
-        if self.__parent is not None:
-            self.__parent.set_dataset(key, value, broadcast, persist, save)
-            return
-        if self.__dataset_mgr is None:
-            raise ValueError("Dataset manager not present")
         self.__dataset_mgr.set(key, value, broadcast, persist, save)
 
     def mutate_dataset(self, key, index, value):
@@ -297,11 +296,6 @@ class HasEnvironment:
         ``slice(*index)``.
         If the index is a tuple of tuples, each sub-tuple is interpreted
         as ``slice(*sub_tuple)`` (multi-dimensional slicing)."""
-        if self.__parent is not None:
-            self.__parent.mutate_dataset(key, index, value)
-            return
-        if self.__dataset_mgr is None:
-            raise ValueError("Dataset manager not present")
         self.__dataset_mgr.mutate(key, index, value)
 
     def get_dataset(self, key, default=NoDefault):
@@ -314,10 +308,6 @@ class HasEnvironment:
         If the dataset does not exist, returns the default value. If no default
         is provided, raises ``KeyError``.
         """
-        if self.__parent is not None:
-            return self.__parent.get_dataset(key, default)
-        if self.__dataset_mgr is None:
-            raise ValueError("Dataset manager not present")
         try:
             return self.__dataset_mgr.get(key)
         except KeyError:

@@ -12,6 +12,7 @@ def globals():
         "int":                  builtins.fn_int(),
         "float":                builtins.fn_float(),
         "list":                 builtins.fn_list(),
+        "array":                builtins.fn_array(),
         "range":                builtins.fn_range(),
 
         # Exception constructors
@@ -23,6 +24,8 @@ def globals():
         # Built-in Python functions
         "len":                  builtins.fn_len(),
         "round":                builtins.fn_round(),
+        "min":                  builtins.fn_min(),
+        "max":                  builtins.fn_max(),
         "print":                builtins.fn_print(),
 
         # ARTIQ decorators

@@ -477,9 +477,13 @@ class ARTIQIRGenerator(algorithm.Visitor):
             self.continue_target = old_continue
 
     def iterable_len(self, value, typ=_size_type):
-        if builtins.is_list(value.type):
+        if builtins.is_listish(value.type):
+            if isinstance(value, ir.Constant):
+                name = None
+            else:
+                name = "{}.len".format(value.name)
             return self.append(ir.Builtin("len", [value], typ,
-                                          name="{}.len".format(value.name)))
+                                          name=name))
         elif builtins.is_range(value.type):
             start  = self.append(ir.GetAttr(value, "start"))
             stop   = self.append(ir.GetAttr(value, "stop"))
@@ -492,7 +496,7 @@ class ARTIQIRGenerator(algorithm.Visitor):
 
     def iterable_get(self, value, index):
         # Assuming the value is within bounds.
-        if builtins.is_list(value.type):
+        if builtins.is_listish(value.type):
             return self.append(ir.GetElem(value, index))
         elif builtins.is_range(value.type):
             start  = self.append(ir.GetAttr(value, "start"))
@@ -599,7 +603,10 @@ class ARTIQIRGenerator(algorithm.Visitor):
                 self.append(ir.Reraise())
 
     def visit_Raise(self, node):
-        self.raise_exn(self.visit(node.exc), loc=self.current_loc)
+        if node.exc is not None and types.is_exn_constructor(node.exc.type):
+            self.raise_exn(self.alloc_exn(node.exc.type.instance), loc=self.current_loc)
+        else:
+            self.raise_exn(self.visit(node.exc), loc=self.current_loc)
 
     def visit_Try(self, node):
         dispatcher = self.add_block("try.dispatch")
@@ -687,6 +694,7 @@ class ARTIQIRGenerator(algorithm.Visitor):
             handlers.append((handler, post_handler))
 
         if any(node.finalbody):
+            # Finalize and continue after try statement.
             self.final_branch = old_final_branch
 
             finalizer = self.add_block("finally")
@@ -695,13 +703,17 @@ class ARTIQIRGenerator(algorithm.Visitor):
             self.visit(node.finalbody)
             post_finalizer = self.current_block
 
-            reraise = self.add_block('try.reraise')
-            reraise.append(ir.Reraise(self.unwind_target))
+            # Finalize and reraise. Separate from previous case to expose flow
+            # to LocalAccessValidator.
+            finalizer_reraise = self.add_block("finally.reraise")
+            self.current_block = finalizer_reraise
+
+            self.visit(node.finalbody)
+            self.terminate(ir.Reraise(self.unwind_target))
 
         self.current_block = tail = self.add_block("try.tail")
         if any(node.finalbody):
             final_targets.append(tail)
-            final_targets.append(reraise)
 
             for block in final_paths:
                 block.append(ir.Branch(finalizer))
@@ -710,8 +722,7 @@ class ARTIQIRGenerator(algorithm.Visitor):
                 body.append(ir.SetLocal(final_state, "$cont", tail))
                 body.append(ir.Branch(finalizer))
 
-            cleanup.append(ir.SetLocal(final_state, "$cont", reraise))
-            cleanup.append(ir.Branch(finalizer))
+            cleanup.append(ir.Branch(finalizer_reraise))
 
             for handler, post_handler in handlers:
                 if not post_handler.is_terminated():
@@ -1306,7 +1317,7 @@ class ARTIQIRGenerator(algorithm.Visitor):
                     loc=node.right.loc)
 
             return self.append(ir.Arith(node.op, lhs, rhs))
-        elif isinstance(node.op, ast.Add): # list + list, tuple + tuple
+        elif isinstance(node.op, ast.Add): # list + list, tuple + tuple, str + str
             lhs, rhs = self.visit(node.left), self.visit(node.right)
             if types.is_tuple(node.left.type) and types.is_tuple(node.right.type):
                 elts = []
@@ -1315,11 +1326,15 @@ class ARTIQIRGenerator(algorithm.Visitor):
                 for index, elt in enumerate(node.right.type.elts):
                     elts.append(self.append(ir.GetAttr(rhs, index)))
                 return self.append(ir.Alloc(elts, node.type))
-            elif builtins.is_list(node.left.type) and builtins.is_list(node.right.type):
+            elif builtins.is_listish(node.left.type) and builtins.is_listish(node.right.type):
                 lhs_length = self.iterable_len(lhs)
                 rhs_length = self.iterable_len(rhs)
 
                 result_length = self.append(ir.Arith(ast.Add(loc=None), lhs_length, rhs_length))
+                if builtins.is_str(node.left.type):
+                    result_last   = result_length
+                    result_length = self.append(ir.Arith(ast.Add(loc=None), result_length,
+                                                         ir.Constant(1, self._size_type)))
                 result = self.append(ir.Alloc([result_length], node.type))
 
                 # Copy lhs
@@ -1343,14 +1358,18 @@ class ARTIQIRGenerator(algorithm.Visitor):
                     lambda index: self.append(ir.Compare(ast.Lt(loc=None), index, rhs_length)),
                     body_gen)
 
+                if builtins.is_str(node.left.type):
+                    self.append(ir.SetElem(result, result_last,
+                                           ir.Constant(0, builtins.TInt(types.TValue(8)))))
+
                 return result
             else:
                 assert False
         elif isinstance(node.op, ast.Mult): # list * int, int * list
             lhs, rhs = self.visit(node.left), self.visit(node.right)
-            if builtins.is_list(lhs.type) and builtins.is_int(rhs.type):
+            if builtins.is_listish(lhs.type) and builtins.is_int(rhs.type):
                 lst, num = lhs, rhs
-            elif builtins.is_int(lhs.type) and builtins.is_list(rhs.type):
+            elif builtins.is_int(lhs.type) and builtins.is_listish(rhs.type):
                 lst, num = rhs, lhs
             else:
                 assert False
@@ -1405,7 +1424,7 @@ class ARTIQIRGenerator(algorithm.Visitor):
                     result = self.append(ir.Select(result, elt_result,
                                                    ir.Constant(False, builtins.TBool())))
             return result
-        elif builtins.is_list(lhs.type) and builtins.is_list(rhs.type):
+        elif builtins.is_listish(lhs.type) and builtins.is_listish(rhs.type):
             head = self.current_block
             lhs_length = self.iterable_len(lhs)
             rhs_length = self.iterable_len(rhs)
@@ -1599,7 +1618,7 @@ class ARTIQIRGenerator(algorithm.Visitor):
                 return self.append(ir.Coerce(arg, node.type))
             else:
                 assert False
-        elif types.is_builtin(typ, "list"):
+        elif types.is_builtin(typ, "list") or types.is_builtin(typ, "array"):
             if len(node.args) == 0 and len(node.keywords) == 0:
                 length = ir.Constant(0, builtins.TInt32())
                 return self.append(ir.Alloc([length], node.type))
@@ -1660,6 +1679,35 @@ class ARTIQIRGenerator(algorithm.Visitor):
                 return self.append(ir.Builtin("round", [arg], node.type))
             else:
                 assert False
+        elif types.is_builtin(typ, "min"):
+            if len(node.args) == 2 and len(node.keywords) == 0:
+                arg0, arg1 = map(self.visit, node.args)
+                cond = self.append(ir.Compare(ast.Lt(loc=None), arg0, arg1))
+                return self.append(ir.Select(cond, arg0, arg1))
+            else:
+                assert False
+        elif types.is_builtin(typ, "max"):
+            if len(node.args) == 2 and len(node.keywords) == 0:
+                arg0, arg1 = map(self.visit, node.args)
+                cond = self.append(ir.Compare(ast.Gt(loc=None), arg0, arg1))
+                return self.append(ir.Select(cond, arg0, arg1))
+            else:
+                assert False
+        elif types.is_builtin(typ, "make_array"):
+            if len(node.args) == 2 and len(node.keywords) == 0:
+                arg0, arg1 = map(self.visit, node.args)
+
+                result = self.append(ir.Alloc([arg0], node.type))
+                def body_gen(index):
+                    self.append(ir.SetElem(result, index, arg1))
+                    return self.append(ir.Arith(ast.Add(loc=None), index,
+                                                ir.Constant(1, arg0.type)))
+                self._make_loop(ir.Constant(0, self._size_type),
+                                lambda index: self.append(ir.Compare(ast.Lt(loc=None), index, arg0)),
+                                body_gen)
+                return result
+            else:
+                assert False
         elif types.is_builtin(typ, "print"):
             self.polymorphic_print([self.visit(arg) for arg in node.args],
                                    separator=" ", suffix="\n")
@@ -1704,7 +1752,7 @@ class ARTIQIRGenerator(algorithm.Visitor):
         else:
             diag = diagnostic.Diagnostic("error",
                 "builtin function '{name}' cannot be used in this context",
-                {"name": typ.name},
+                {"name": typ.find().name},
                 node.loc)
             self.engine.process(diag)
 
@@ -1947,8 +1995,13 @@ class ARTIQIRGenerator(algorithm.Visitor):
                 else:
                     format_string += "%s"
                 args.append(value)
-            elif builtins.is_list(value.type):
-                format_string += "["; flush()
+            elif builtins.is_listish(value.type):
+                if builtins.is_list(value.type):
+                    format_string += "["; flush()
+                elif builtins.is_array(value.type):
+                    format_string += "array(["; flush()
+                else:
+                    assert False
 
                 length = self.iterable_len(value)
                 last = self.append(ir.Arith(ast.Sub(loc=None), length, ir.Constant(1, length.type)))
@@ -1971,7 +2024,10 @@ class ARTIQIRGenerator(algorithm.Visitor):
                     lambda index: self.append(ir.Compare(ast.Lt(loc=None), index, length)),
                     body_gen)
 
-                format_string += "]"
+                if builtins.is_list(value.type):
+                    format_string += "]"
+                elif builtins.is_array(value.type):
+                    format_string += "])"
             elif builtins.is_range(value.type):
                 format_string += "range("; flush()
 

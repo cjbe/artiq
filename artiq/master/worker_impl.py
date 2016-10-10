@@ -9,10 +9,14 @@ import h5py
 
 import artiq
 from artiq.protocols import pipe_ipc, pyon
+from artiq.protocols.packed_exceptions import raise_packed_exc
 from artiq.tools import multiline_log_config, file_import
-from artiq.master.worker_db import DeviceManager, DatasetManager
-from artiq.language.environment import is_experiment
+from artiq.master.worker_db import DeviceManager, DatasetManager, DummyDevice
+from artiq.language.environment import (is_experiment, TraceArgumentManager,
+                                        ProcessArgumentManager)
 from artiq.language.core import set_watchdog_factory, TerminationRequested
+from artiq.language.types import TBool
+from artiq.compiler import import_cache
 from artiq.coredevice.core import CompileError, host_only, _render_diagnostic
 from artiq import __version__ as artiq_version
 
@@ -30,11 +34,7 @@ def put_object(obj):
     ipc.write((ds + "\n").encode())
 
 
-class ParentActionError(Exception):
-    pass
-
-
-def make_parent_action(action, exception=None):
+def make_parent_action(action):
     def parent_action(*args, **kwargs):
         request = {"action": action, "args": args, "kwargs": kwargs}
         put_object(request)
@@ -47,22 +47,17 @@ def make_parent_action(action, exception=None):
         if reply["status"] == "ok":
             return reply["data"]
         else:
-            if exception is None:
-                exn = ParentActionError(reply["exception"])
-            else:
-                exn = exception(reply["message"])
-            exn.parent_traceback = reply["traceback"]
-            raise exn
+            raise_packed_exc(reply["exception"])
     return parent_action
 
 
 class ParentDeviceDB:
     get_device_db = make_parent_action("get_device_db")
-    get = make_parent_action("get_device", KeyError)
+    get = make_parent_action("get_device")
 
 
 class ParentDatasetDB:
-    get = make_parent_action("get_dataset", KeyError)
+    get = make_parent_action("get_dataset")
     update = make_parent_action("update_dataset")
 
 
@@ -103,6 +98,13 @@ class Scheduler:
         self.expid = expid
         self.priority = priority
 
+    _check_pause = staticmethod(make_parent_action("scheduler_check_pause"))
+
+    def check_pause(self, rid=None) -> TBool:
+        if rid is None:
+            rid = self.rid
+        return self._check_pause(rid)
+
 
 def get_exp(file, class_name):
     module = file_import(file, prefix="artiq_worker_")
@@ -124,7 +126,7 @@ class ExamineDeviceMgr:
     get_device_db = make_parent_action("get_device_db")
 
     def get(name):
-        return None
+        return DummyDevice()
 
 
 def examine(device_mgr, dataset_mgr, file):
@@ -139,12 +141,11 @@ def examine(device_mgr, dataset_mgr, file):
                 name = exp_class.__doc__.splitlines()[0].strip()
                 if name[-1] == ".":
                     name = name[:-1]
-            exp_inst = exp_class(device_mgr, dataset_mgr,
-                                 default_arg_none=True,
-                                 enable_processors=True)
+            argument_mgr = TraceArgumentManager()
+            exp_class((device_mgr, dataset_mgr, argument_mgr))
             arginfo = OrderedDict(
                 (k, (proc.describe(), group))
-                for k, (proc, group) in exp_inst.requested_args.items())
+                for k, (proc, group) in argument_mgr.requested_args.items())
             register_experiment(class_name, name, arginfo)
 
 
@@ -191,6 +192,8 @@ def main():
                                virtual_devices={"scheduler": Scheduler()})
     dataset_mgr = DatasetManager(ParentDatasetDB)
 
+    import_cache.install_hook()
+
     try:
         while True:
             obj = get_object()
@@ -212,12 +215,11 @@ def main():
                     rid, obj["pipeline_name"], expid, obj["priority"])
                 dirname = os.path.join("results",
                                        time.strftime("%Y-%m-%d", start_time),
-                                       time.strftime("%H-%M", start_time))
+                                       time.strftime("%H", start_time))
                 os.makedirs(dirname, exist_ok=True)
                 os.chdir(dirname)
-                exp_inst = exp(
-                    device_mgr, dataset_mgr, enable_processors=True,
-                    **expid["arguments"])
+                argument_mgr = ProcessArgumentManager(expid["arguments"])
+                exp_inst = exp((device_mgr, dataset_mgr, argument_mgr))
                 put_object({"action": "completed"})
             elif action == "prepare":
                 exp_inst.prepare()

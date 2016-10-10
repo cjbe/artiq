@@ -5,6 +5,8 @@
 #include <generated/csr.h>
 #include <generated/mem.h>
 
+#if ((defined CONFIG_RTIO_DDS_COUNT) && (CONFIG_RTIO_DDS_COUNT > 0))
+
 /* Maximum number of commands in a batch */
 #define DDS_MAX_BATCH 16
 
@@ -36,6 +38,7 @@
 #define DDS_FTWH   0x2f
 #define DDS_POW    0x31
 #define DDS_ASF    0x33
+#define DDS_USR0   0x6d
 #define DDS_FUD    0x80
 #define DDS_GPIO   0x81
 #endif
@@ -55,9 +58,13 @@ enum {
 };
 
 void dds_init(long long int timestamp, int bus_channel, int channel);
+void dds_init_sync(long long int timestamp, int bus_channel, int channel,
+    int sync_delay);
 void dds_batch_enter(long long int timestamp);
 void dds_batch_exit(void);
 void dds_set(long long int timestamp, int bus_channel, int channel,
     unsigned int ftw, unsigned int pow, int phase_mode, unsigned int amplitude);
+
+#endif /* CONFIG_RTIO_DDS_COUNT */
 
 #endif /* __DDS_H */

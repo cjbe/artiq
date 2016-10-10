@@ -10,12 +10,15 @@
 static void rtio_output_blind(int channel, int addr, int data)
 {
     rtio_chan_sel_write(channel);
+#ifdef CSR_RTIO_O_ADDRESS_ADDR
     rtio_o_address_write(addr);
+#endif
     rtio_o_data_write(data);
     rtio_o_timestamp_write(rtio_get_counter() + TIME_BUFFER);
     rtio_o_we_write(1);
 }
 
+#if ((defined CONFIG_RTIO_DDS_COUNT) && (CONFIG_RTIO_DDS_COUNT > 0))
 static void dds_write(int bus_channel, int addr, int data)
 {
     rtio_output_blind(bus_channel, addr, data);
@@ -37,6 +40,7 @@ static int dds_read(int bus_channel, int addr)
     rtio_i_re_write(1);
     return r;
 }
+#endif
 
 static void send_ready(void)
 {
@@ -71,6 +75,7 @@ void bridge_main(void)
                 mailbox_acknowledge();
                 break;
             }
+#if ((defined CONFIG_RTIO_DDS_COUNT) && (CONFIG_RTIO_DDS_COUNT > 0))
             case MESSAGE_TYPE_BRG_DDS_SEL: {
                 struct msg_brg_dds_sel *msg;
 
@@ -117,6 +122,7 @@ void bridge_main(void)
                 mailbox_acknowledge();
                 break;
             }
+#endif /* CONFIG_RTIO_DDS_COUNT */
             default:
                 mailbox_acknowledge();
                 break;

@@ -37,6 +37,10 @@ class CompileError(Exception):
         return "\n" + _render_diagnostic(self.diagnostic, colored=colors_supported)
 
 
+@syscall
+def rtio_init() -> TNone:
+    raise NotImplementedError("syscall not simulated")
+
 @syscall(flags={"nounwind", "nowrite"})
 def rtio_get_counter() -> TInt64:
     raise NotImplementedError("syscall not simulated")
@@ -91,8 +95,9 @@ class Core:
             library = target.compile_and_link([module])
             stripped_library = target.strip(library)
 
-            return stitcher.object_map, stripped_library, \
-                   lambda addresses: target.symbolize(library, addresses)
+            return stitcher.embedding_map, stripped_library, \
+                   lambda addresses: target.symbolize(library, addresses), \
+                   lambda symbols: target.demangle(symbols)
         except diagnostic.Error as error:
             raise CompileError(error.diagnostic) from error
 
@@ -102,7 +107,8 @@ class Core:
             nonlocal result
             result = new_result
 
-        object_map, kernel_library, symbolizer = self.compile(function, args, kwargs, set_result)
+        embedding_map, kernel_library, symbolizer, demangler = \
+            self.compile(function, args, kwargs, set_result)
 
         if self.first_run:
             self.comm.check_ident()
@@ -111,7 +117,7 @@ class Core:
 
         self.comm.load(kernel_library)
         self.comm.run()
-        self.comm.serve(object_map, symbolizer)
+        self.comm.serve(embedding_map, symbolizer, demangler)
 
         return result
 
@@ -120,9 +126,20 @@ class Core:
         return rtio_get_counter()
 
     @kernel
+    def reset(self):
+        """Clear RTIO FIFOs, release RTIO PHY reset, and set the time cursor
+        at the current value of the hardware RTIO counter plus a margin of
+        125000 machine units."""
+        rtio_init()
+        at_mu(rtio_get_counter() + 125000)
+
+    @kernel
     def break_realtime(self):
-        """Set the timeline to the current value of the hardware RTIO counter
-        plus a margin of 125000 machine units."""
+        """Set the time cursor after the current value of the hardware RTIO
+        counter plus a margin of 125000 machine units.
+
+        If the time cursor is already after that position, this function
+        does nothing."""
         min_now = rtio_get_counter() + 125000
         if now_mu() < min_now:
             at_mu(min_now)

@@ -394,6 +394,10 @@ class Inferencer(algorithm.Visitor):
                     self._unify(left.type, right.type,
                                 left.loc, right.loc)
                     return left.type, left.type, right.type
+            elif builtins.is_str(left.type) or builtins.is_str(right.type):
+                self._unify(left.type, right.type,
+                            left.loc, right.loc)
+                return left.type, left.type, right.type
             else:
                 return self._coerce_numeric((left, right), lambda typ: (typ, typ, typ))
         elif isinstance(op, ast.Mult):
@@ -579,11 +583,11 @@ class Inferencer(algorithm.Visitor):
             valid_forms = lambda: [
                 valid_form("{exn}() -> {exn}".format(exn=typ.name)),
                 valid_form("{exn}(message:str) -> {exn}".format(exn=typ.name)),
-                valid_form("{exn}(message:str, param1:int(width=64)) -> {exn}".format(exn=typ.name)),
-                valid_form("{exn}(message:str, param1:int(width=64), "
-                           "param2:int(width=64)) -> {exn}".format(exn=typ.name)),
-                valid_form("{exn}(message:str, param1:int(width=64), "
-                           "param2:int(width=64), param3:int(width=64)) "
+                valid_form("{exn}(message:str, param1:numpy.int64) -> {exn}".format(exn=typ.name)),
+                valid_form("{exn}(message:str, param1:numpy.int64, "
+                           "param2:numpy.int64) -> {exn}".format(exn=typ.name)),
+                valid_form("{exn}(message:str, param1:numpy.int64, "
+                           "param2:numpy.int64, param3:numpy.int64) "
                            "-> {exn}".format(exn=typ.name)),
             ]
 
@@ -620,9 +624,9 @@ class Inferencer(algorithm.Visitor):
                         node.loc, None)
         elif types.is_builtin(typ, "int"):
             valid_forms = lambda: [
-                valid_form("int() -> int(width='a)"),
-                valid_form("int(x:'a) -> int(width='b) where 'a is numeric"),
-                valid_form("int(x:'a, width='b:<int literal>) -> int(width='b) where 'a is numeric")
+                valid_form("int() -> numpy.int?"),
+                valid_form("int(x:'a) -> numpy.int?"),
+                valid_form("int(x:'a, width=?) -> numpy.int?")
             ]
 
             self._unify(node.type, builtins.TInt(),
@@ -671,14 +675,25 @@ class Inferencer(algorithm.Visitor):
                 pass
             else:
                 diagnose(valid_forms())
-        elif types.is_builtin(typ, "list"):
-            valid_forms = lambda: [
-                valid_form("list() -> list(elt='a)"),
-                valid_form("list(x:'a) -> list(elt='b) where 'a is iterable")
-            ]
+        elif types.is_builtin(typ, "list") or types.is_builtin(typ, "array"):
+            if types.is_builtin(typ, "list"):
+                valid_forms = lambda: [
+                    valid_form("list() -> list(elt='a)"),
+                    valid_form("list(x:'a) -> list(elt='b) where 'a is iterable")
+                ]
 
-            self._unify(node.type, builtins.TList(),
-                        node.loc, None)
+                self._unify(node.type, builtins.TList(),
+                            node.loc, None)
+            elif types.is_builtin(typ, "array"):
+                valid_forms = lambda: [
+                    valid_form("array() -> array(elt='a)"),
+                    valid_form("array(x:'a) -> array(elt='b) where 'a is iterable")
+                ]
+
+                self._unify(node.type, builtins.TArray(),
+                            node.loc, None)
+            else:
+                assert False
 
             if len(node.args) == 0 and len(node.keywords) == 0:
                 pass # []
@@ -708,18 +723,19 @@ class Inferencer(algorithm.Visitor):
                         {"type": types.TypePrinter().name(arg.type)},
                         arg.loc)
                     diag = diagnostic.Diagnostic("error",
-                        "the argument of list() must be of an iterable type", {},
+                        "the argument of {builtin}() must be of an iterable type",
+                        {"builtin": typ.find().name},
                         node.func.loc, notes=[note])
                     self.engine.process(diag)
             else:
                 diagnose(valid_forms())
         elif types.is_builtin(typ, "range"):
             valid_forms = lambda: [
-                valid_form("range(max:int(width='a)) -> range(elt=int(width='a))"),
-                valid_form("range(min:int(width='a), max:int(width='a)) "
-                           "-> range(elt=int(width='a))"),
-                valid_form("range(min:int(width='a), max:int(width='a), "
-                           "step:int(width='a)) -> range(elt=int(width='a))"),
+                valid_form("range(max:numpy.int?) -> range(elt=numpy.int?)"),
+                valid_form("range(min:numpy.int?, max:numpy.int?) "
+                           "-> range(elt=numpy.int?)"),
+                valid_form("range(min:numpy.int?, max:numpy.int?, "
+                           "step:numpy.int?) -> range(elt=numpy.int?)"),
             ]
 
             range_elt = builtins.TInt(types.TVar())
@@ -734,7 +750,7 @@ class Inferencer(algorithm.Visitor):
                 diagnose(valid_forms())
         elif types.is_builtin(typ, "len"):
             valid_forms = lambda: [
-                valid_form("len(x:'a) -> int(width='b) where 'a is iterable"),
+                valid_form("len(x:'a) -> numpy.int?"),
             ]
 
             if len(node.args) == 1 and len(node.keywords) == 0:
@@ -743,7 +759,7 @@ class Inferencer(algorithm.Visitor):
                 if builtins.is_range(arg.type):
                     self._unify(node.type, builtins.get_iterable_elt(arg.type),
                                 node.loc, None)
-                elif builtins.is_list(arg.type):
+                elif builtins.is_listish(arg.type):
                     # TODO: should be ssize_t-sized
                     self._unify(node.type, builtins.TInt32(),
                                 node.loc, None)
@@ -762,8 +778,8 @@ class Inferencer(algorithm.Visitor):
                 diagnose(valid_forms())
         elif types.is_builtin(typ, "round"):
             valid_forms = lambda: [
-                valid_form("round(x:float) -> int(width='a)"),
-                valid_form("round(x:float, width='b:<int literal>) -> int(width='b)")
+                valid_form("round(x:float) -> numpy.int?"),
+                valid_form("round(x:float, width=?) -> numpy.int?")
             ]
 
             self._unify(node.type, builtins.TInt(),
@@ -789,6 +805,37 @@ class Inferencer(algorithm.Visitor):
                             node.loc, None)
             else:
                 diagnose(valid_forms())
+        elif types.is_builtin(typ, "min") or types.is_builtin(typ, "max"):
+            fn = typ.name
+
+            valid_forms = lambda: [
+                valid_form("{}(x:numpy.int?, y:numpy.int?) -> numpy.int?".format(fn)),
+                valid_form("{}(x:float, y:float) -> float".format(fn))
+            ]
+
+            if len(node.args) == 2 and len(node.keywords) == 0:
+                arg0, arg1 = node.args
+
+                self._unify(arg0.type, arg1.type,
+                            arg0.loc, arg1.loc)
+
+                if builtins.is_int(arg0.type) or builtins.is_float(arg0.type):
+                    self._unify(arg0.type, node.type,
+                                arg0.loc, node.loc)
+                elif types.is_var(arg0.type):
+                    pass # undetermined yet
+                else:
+                    note = diagnostic.Diagnostic("note",
+                        "this expression has type {type}",
+                        {"type": types.TypePrinter().name(arg0.type)},
+                        arg0.loc)
+                    diag = diagnostic.Diagnostic("error",
+                        "the arguments of {fn}() must be of a numeric type",
+                        {"fn": fn},
+                        node.func.loc, notes=[note])
+                    self.engine.process(diag)
+            else:
+                diagnose(valid_forms())
         elif types.is_builtin(typ, "print"):
             valid_forms = lambda: [
                 valid_form("print(args...) -> None"),
@@ -800,6 +847,23 @@ class Inferencer(algorithm.Visitor):
             if len(node.keywords) == 0:
                 # We can print any arguments.
                 pass
+            else:
+                diagnose(valid_forms())
+        elif types.is_builtin(typ, "make_array"):
+            valid_forms = lambda: [
+                valid_form("numpy.full(count:int32, value:'a) -> numpy.array(elt='a)")
+            ]
+
+            self._unify(node.type, builtins.TArray(),
+                        node.loc, None)
+
+            if len(node.args) == 2 and len(node.keywords) == 0:
+                arg0, arg1 = node.args
+
+                self._unify(arg0.type, builtins.TInt32(),
+                            arg0.loc, None)
+                self._unify(arg1.type, node.type.find()["elt"],
+                            arg1.loc, None)
             else:
                 diagnose(valid_forms())
         elif types.is_builtin(typ, "rtio_log"):
@@ -827,19 +891,19 @@ class Inferencer(algorithm.Visitor):
             simple_form("at(time:float) -> None",
                         [builtins.TFloat()])
         elif types.is_builtin(typ, "now_mu"):
-            simple_form("now_mu() -> int(width=64)",
+            simple_form("now_mu() -> numpy.int64",
                         [], builtins.TInt64())
         elif types.is_builtin(typ, "delay_mu"):
-            simple_form("delay_mu(time_mu:int(width=64)) -> None",
+            simple_form("delay_mu(time_mu:numpy.int64) -> None",
                         [builtins.TInt64()])
         elif types.is_builtin(typ, "at_mu"):
-            simple_form("at_mu(time_mu:int(width=64)) -> None",
+            simple_form("at_mu(time_mu:numpy.int64) -> None",
                         [builtins.TInt64()])
         elif types.is_builtin(typ, "mu_to_seconds"):
-            simple_form("mu_to_seconds(time_mu:int(width=64)) -> float",
+            simple_form("mu_to_seconds(time_mu:numpy.int64) -> float",
                         [builtins.TInt64()], builtins.TFloat())
         elif types.is_builtin(typ, "seconds_to_mu"):
-            simple_form("seconds_to_mu(time:float) -> int(width=64)",
+            simple_form("seconds_to_mu(time:float) -> numpy.int64",
                         [builtins.TFloat()], builtins.TInt64())
         elif types.is_builtin(typ, "watchdog"):
             simple_form("watchdog(time:float) -> [builtin context manager]",
@@ -891,20 +955,27 @@ class Inferencer(algorithm.Visitor):
             typ_optargs = typ.optargs
             typ_ret     = typ.ret
         else:
-            typ = types.get_method_function(typ)
-            if types.is_var(typ):
+            typ_self    = types.get_method_self(typ)
+            typ_func    = types.get_method_function(typ)
+            if types.is_var(typ_func):
                 return # not enough info yet
-            elif types.is_rpc(typ):
-                self._unify(node.type, typ.ret,
+            elif types.is_rpc(typ_func):
+                self._unify(node.type, typ_func.ret,
                             node.loc, None)
                 return
-            elif typ.arity() == 0:
+            elif typ_func.arity() == 0:
                 return # error elsewhere
 
-            typ_arity   = typ.arity() - 1
-            typ_args    = OrderedDict(list(typ.args.items())[1:])
-            typ_optargs = typ.optargs
-            typ_ret     = typ.ret
+            method_args = list(typ_func.args.items())
+
+            self_arg_name, self_arg_type = method_args[0]
+            self._unify(self_arg_type, typ_self,
+                        node.loc, None)
+
+            typ_arity   = typ_func.arity() - 1
+            typ_args    = OrderedDict(method_args[1:])
+            typ_optargs = typ_func.optargs
+            typ_ret     = typ_func.ret
 
         passed_args = dict()
 
@@ -1290,20 +1361,13 @@ class Inferencer(algorithm.Visitor):
 
         if node.exc is not None:
             exc_type = node.exc.type
-            if not types.is_var(exc_type) and not builtins.is_exception(exc_type):
-                if types.is_exn_constructor(exc_type):
-                    notes = [diagnostic.Diagnostic("note",
-                        "this value is an exception constructor; use {suggestion} instead",
-                        {"suggestion": node.exc.loc.source() + "()"},
-                        node.exc.loc)]
-                else:
-                    notes = []
-
+            if types.is_exn_constructor(exc_type):
+                pass # short form
+            elif not types.is_var(exc_type) and not builtins.is_exception(exc_type):
                 diag = diagnostic.Diagnostic("error",
                     "cannot raise a value of type {type}, which is not an exception",
                     {"type": types.TypePrinter().name(exc_type)},
-                    node.loc,
-                    notes=notes)
+                    node.loc)
                 self.engine.process(diag)
 
     def visit_Assert(self, node):

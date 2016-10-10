@@ -3,11 +3,11 @@ import os
 import asyncio
 import logging
 import subprocess
-import traceback
 import time
 
 from artiq.protocols import pipe_ipc, pyon
 from artiq.protocols.logging import LogParser
+from artiq.protocols.packed_exceptions import current_exc_packed
 from artiq.tools import asyncio_wait_or_cancel
 
 
@@ -76,6 +76,8 @@ class Worker:
         return "worker({},{})".format(self.rid, self.filename)
 
     async def _create_process(self, log_level):
+        if self.ipc is not None:
+            return  # process already exists, recycle
         await self.io_lock.acquire()
         try:
             if self.closed.is_set():
@@ -216,12 +218,11 @@ class Worker:
             try:
                 data = func(*obj["args"], **obj["kwargs"])
                 reply = {"status": "ok", "data": data}
-            except Exception as e:
-                reply = {"status": "failed",
-                         "exception": traceback.format_exception_only(
-                             type(e), e)[0][:-1],
-                         "message": str(e),
-                         "traceback": traceback.format_tb(e.__traceback__)}
+            except:
+                reply = {
+                    "status": "failed",
+                    "exception": current_exc_packed()
+                }
             await self.io_lock.acquire()
             try:
                 await self._send(reply)

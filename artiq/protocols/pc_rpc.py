@@ -13,15 +13,16 @@ client's list.
 
 import socket
 import asyncio
-import traceback
 import threading
 import time
 import logging
 import inspect
 from operator import itemgetter
 
+from artiq.monkey_patches import *
 from artiq.protocols import pyon
 from artiq.protocols.asyncio_server import AsyncioServer as _AsyncioServer
+from artiq.protocols.packed_exceptions import *
 
 
 logger = logging.getLogger(__name__)
@@ -30,12 +31,6 @@ logger = logging.getLogger(__name__)
 class AutoTarget:
     """Use this as target value in clients for them to automatically connect
     to the target exposed by the server. Servers must have only one target."""
-    pass
-
-
-class RemoteError(Exception):
-    """Raised when a RPC failed or raised an exception on the remote (server)
-    side."""
     pass
 
 
@@ -99,6 +94,8 @@ class Client:
         in the middle of a RPC can break subsequent RPCs (from the same
         client).
     """
+    kernel_invariants = set()
+
     def __init__(self, host, port, target_name=AutoTarget, timeout=None):
         self.__socket = socket.create_connection((host, port), timeout)
 
@@ -132,6 +129,10 @@ class Client:
         identification information of the server."""
         return (self.__target_names, self.__description)
 
+    def get_local_host(self):
+        """Returns the address of the local end of the connection."""
+        return self.__socket.getsockname()[0]
+
     def close_rpc(self):
         """Closes the connection to the RPC server.
 
@@ -159,7 +160,7 @@ class Client:
         if obj["status"] == "ok":
             return obj["ret"]
         elif obj["status"] == "failed":
-            raise RemoteError(obj["message"])
+            raise_packed_exc(obj["exception"])
         else:
             raise ValueError
 
@@ -186,6 +187,8 @@ class AsyncioClient:
     Concurrent access from different asyncio tasks is supported; all calls
     use a single lock.
     """
+    kernel_invariants = set()
+
     def __init__(self):
         self.__lock = asyncio.Lock()
         self.__reader = None
@@ -224,6 +227,10 @@ class AsyncioClient:
         selected yet."""
         return self.__selected_target
 
+    def get_local_host(self):
+        """Returns the address of the local end of the connection."""
+        return self.__writer.get_extra_info("socket").getsockname()[0]
+
     def get_rpc_id(self):
         """Returns a tuple (target_names, description) containing the
         identification information of the server."""
@@ -259,7 +266,7 @@ class AsyncioClient:
             if obj["status"] == "ok":
                 return obj["ret"]
             elif obj["status"] == "failed":
-                raise RemoteError(obj["message"])
+                raise_packed_exc(obj["exception"])
             else:
                 raise ValueError
         finally:
@@ -285,8 +292,10 @@ class BestEffortClient:
     :param retry: Amount of time to wait between retries when reconnecting
         in the background.
     """
+    kernel_invariants = set()
+
     def __init__(self, host, port, target_name,
-                 firstcon_timeout=0.5, retry=5.0):
+                 firstcon_timeout=1.0, retry=5.0):
         self.__host = host
         self.__port = port
         self.__target_name = target_name
@@ -387,7 +396,7 @@ class BestEffortClient:
             if obj["status"] == "ok":
                 return obj["ret"]
             elif obj["status"] == "failed":
-                raise RemoteError(obj["message"])
+                raise_packed_exc(obj["exception"])
             else:
                 raise ValueError
 
@@ -395,6 +404,12 @@ class BestEffortClient:
         def proxy(*args, **kwargs):
             return self.__do_rpc(name, args, kwargs)
         return proxy
+
+    def get_selected_target(self):
+        raise NotImplementedError
+
+    def get_local_host(self):
+        raise NotImplementedError
 
 
 def _format_arguments(arguments):
@@ -433,6 +448,12 @@ class Server(_AsyncioServer):
     simple cases: it allows new connections to be be accepted even when the
     previous client failed to properly shut down its connection.
 
+    If a target method is a coroutine, it is awaited and its return value
+    is sent to the RPC client. If ``allow_parallel`` is true, multiple
+    target coroutines may be executed in parallel (one per RPC client),
+    otherwise a lock ensures that the calls from several clients are executed
+    sequentially.
+
     :param targets: A dictionary of objects providing the RPC methods to be
         exposed to the client. Keys are names identifying each object.
         Clients select one of these objects using its name upon connection.
@@ -442,14 +463,76 @@ class Server(_AsyncioServer):
         ``terminate`` method that unblocks any tasks waiting on
         ``wait_terminate``. This is useful to handle server termination
         requests from clients.
+    :param allow_parallel: Allow concurrent asyncio calls to the target's
+        methods.
     """
-    def __init__(self, targets, description=None, builtin_terminate=False):
+    def __init__(self, targets, description=None, builtin_terminate=False,
+                 allow_parallel=False):
         _AsyncioServer.__init__(self)
         self.targets = targets
         self.description = description
         self.builtin_terminate = builtin_terminate
         if builtin_terminate:
             self._terminate_request = asyncio.Event()
+        if allow_parallel:
+            self._noparallel = None
+        else:
+            self._noparallel = asyncio.Lock()
+
+    async def _process_action(self, target, obj):
+        if self._noparallel is not None:
+            await self._noparallel.acquire()
+        try:
+            if obj["action"] == "get_rpc_method_list":
+                members = inspect.getmembers(target, inspect.ismethod)
+                doc = {
+                    "docstring": inspect.getdoc(target),
+                    "methods": {}
+                }
+                for name, method in members:
+                    if name.startswith("_"):
+                        continue
+                    method = getattr(target, name)
+                    argspec = inspect.getfullargspec(method)
+                    doc["methods"][name] = (dict(argspec._asdict()),
+                                            inspect.getdoc(method))
+                if self.builtin_terminate:
+                    doc["methods"]["terminate"] = (
+                        {
+                            "args": ["self"],
+                            "defaults": None,
+                            "varargs": None,
+                            "varkw": None,
+                            "kwonlyargs": [],
+                            "kwonlydefaults": [],
+                        },
+                        "Terminate the server.")
+                return {"status": "ok", "ret": doc}
+            elif obj["action"] == "call":
+                logger.debug("calling %s", _PrettyPrintCall(obj))
+                if (self.builtin_terminate and obj["name"] ==
+                        "terminate"):
+                    self._terminate_request.set()
+                    return {"status": "ok", "ret": None}
+                else:
+                    method = getattr(target, obj["name"])
+                    ret = method(*obj["args"], **obj["kwargs"])
+                    if inspect.iscoroutine(ret):
+                        ret = await ret
+                    return {"status": "ok", "ret": ret}
+            else:
+                raise ValueError("Unknown action: {}"
+                                 .format(obj["action"]))
+        except asyncio.CancelledError:
+            raise
+        except:
+            return {
+                "status": "failed",
+                "exception": current_exc_packed()
+            }
+        finally:
+            if self._noparallel is not None:
+                self._noparallel.release()
 
     async def _handle_connection_cr(self, reader, writer):
         try:
@@ -472,61 +555,15 @@ class Server(_AsyncioServer):
             except KeyError:
                 return
 
+            if callable(target):
+                target = target()
+
             while True:
                 line = await reader.readline()
                 if not line:
                     break
-                obj = pyon.decode(line.decode())
-                try:
-                    if obj["action"] == "get_rpc_method_list":
-                        members = inspect.getmembers(target, inspect.ismethod)
-                        doc = {
-                            "docstring": inspect.getdoc(target),
-                            "methods": {}
-                        }
-                        for name, method in members:
-                            if name.startswith("_"):
-                                continue
-                            method = getattr(target, name)
-                            argspec = inspect.getfullargspec(method)
-                            doc["methods"][name] = (dict(argspec._asdict()),
-                                                    inspect.getdoc(method))
-                        if self.builtin_terminate:
-                            doc["methods"]["terminate"] = (
-                                {
-                                    "args": ["self"],
-                                    "defaults": None,
-                                    "varargs": None,
-                                    "varkw": None,
-                                    "kwonlyargs": [],
-                                    "kwonlydefaults": [],
-                                },
-                                "Terminate the server.")
-                        obj = {"status": "ok", "ret": doc}
-                    elif obj["action"] == "call":
-                        logger.debug("calling %s", _PrettyPrintCall(obj))
-                        if (self.builtin_terminate and obj["name"] ==
-                                "terminate"):
-                            self._terminate_request.set()
-                            obj = {"status": "ok", "ret": None}
-                        else:
-                            method = getattr(target, obj["name"])
-                            ret = method(*obj["args"], **obj["kwargs"])
-                            if inspect.iscoroutine(ret):
-                                ret = await ret
-                            obj = {"status": "ok", "ret": ret}
-                    else:
-                        raise ValueError("Unknown action: {}"
-                                         .format(obj["action"]))
-                except Exception as exc:
-                    short_exc_info = type(exc).__name__
-                    exc_str = str(exc)
-                    if exc_str:
-                        short_exc_info += ": " + exc_str.splitlines()[0]
-                    obj = {"status": "failed",
-                           "message": short_exc_info + "\n" + traceback.format_exc()}
-                line = pyon.encode(obj) + "\n"
-                writer.write(line.encode())
+                reply = await self._process_action(target, pyon.decode(line.decode()))
+                writer.write((pyon.encode(reply) + "\n").encode())
         except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
             # May happens on Windows when client disconnects
             pass

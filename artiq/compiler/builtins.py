@@ -44,6 +44,13 @@ def TInt32():
 def TInt64():
     return TInt(types.TValue(64))
 
+def _int_printer(typ, printer, depth, max_depth):
+    if types.is_var(typ["width"]):
+        return "numpy.int?"
+    else:
+        return "numpy.int{}".format(types.get_value(typ.find()["width"]))
+types.TypePrinter.custom_printers["int"] = _int_printer
+
 class TFloat(types.TMono):
     def __init__(self):
         super().__init__("float")
@@ -66,6 +73,16 @@ class TList(types.TMono):
             elt = types.TVar()
         super().__init__("list", {"elt": elt})
 
+class TArray(types.TMono):
+    def __init__(self, elt=None):
+        if elt is None:
+            elt = types.TVar()
+        super().__init__("array", {"elt": elt})
+
+def _array_printer(typ, printer, depth, max_depth):
+    return "numpy.array(elt={})".format(printer.name(typ["elt"], depth, max_depth))
+types.TypePrinter.custom_printers["array"] = _array_printer
+
 class TRange(types.TMono):
     def __init__(self, elt=None):
         if elt is None:
@@ -83,7 +100,7 @@ class TException(types.TMono):
     #    (which also serves as the EHABI type_info).
     #  * File, line and column where it was raised (str, int, int).
     #  * Message, which can contain substitutions {0}, {1} and {2} (str).
-    #  * Three 64-bit integers, parameterizing the message (int(width=64)).
+    #  * Three 64-bit integers, parameterizing the message (numpy.int64).
 
     # Keep this in sync with the function ARTIQIRGenerator.alloc_exn.
     attributes = OrderedDict([
@@ -108,6 +125,12 @@ def fn_bool():
 def fn_int():
     return types.TConstructor(TInt())
 
+def fn_int32():
+    return types.TConstructor(TInt32())
+
+def fn_int64():
+    return types.TConstructor(TInt64())
+
 def fn_float():
     return types.TConstructor(TFloat())
 
@@ -116,6 +139,9 @@ def fn_str():
 
 def fn_list():
     return types.TConstructor(TList())
+
+def fn_array():
+    return types.TConstructor(TArray())
 
 def fn_Exception():
     return types.TExceptionConstructor(TException("Exception"))
@@ -137,6 +163,15 @@ def fn_len():
 
 def fn_round():
     return types.TBuiltinFunction("round")
+
+def fn_min():
+    return types.TBuiltinFunction("min")
+
+def fn_max():
+    return types.TBuiltinFunction("max")
+
+def fn_make_array():
+    return types.TBuiltinFunction("make_array")
 
 def fn_print():
     return types.TBuiltinFunction("print")
@@ -218,6 +253,15 @@ def is_list(typ, elt=None):
     else:
         return types.is_mono(typ, "list")
 
+def is_array(typ, elt=None):
+    if elt is not None:
+        return types.is_mono(typ, "array", elt=elt)
+    else:
+        return types.is_mono(typ, "array")
+
+def is_listish(typ, elt=None):
+    return is_list(typ, elt) or is_array(typ, elt) or (elt is None and is_str(typ))
+
 def is_range(typ, elt=None):
     if elt is not None:
         return types.is_mono(typ, "range", {"elt": elt})
@@ -234,11 +278,15 @@ def is_exception(typ, name=None):
 def is_iterable(typ):
     typ = typ.find()
     return isinstance(typ, types.TMono) and \
-        typ.name in ('list', 'range')
+        typ.name in ('list', 'array', 'range')
 
 def get_iterable_elt(typ):
     if is_iterable(typ):
         return typ.find()["elt"].find()
+    elif is_str(typ):
+        return TInt(types.TValue(8))
+    else:
+        assert False
 
 def is_collection(typ):
     typ = typ.find()

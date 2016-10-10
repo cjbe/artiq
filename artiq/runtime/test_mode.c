@@ -18,6 +18,7 @@
 #include "clock.h"
 #include "test_mode.h"
 
+#ifdef CSR_LEDS_BASE
 static void leds(char *value)
 {
     char *c;
@@ -36,7 +37,9 @@ static void leds(char *value)
 
     leds_out_write(value2);
 }
+#endif
 
+#ifdef CSR_RTIO_CRG_BASE
 static void clksrc(char *value)
 {
     char *c;
@@ -55,6 +58,7 @@ static void clksrc(char *value)
 
     rtio_crg_clock_sel_write(value2);
 }
+#endif
 
 static void ttloe(char *n, char *value)
 {
@@ -103,6 +107,8 @@ static void ttlo(char *n, char *value)
 
     brg_ttlo(n2, value2);
 }
+
+#if ((defined CONFIG_RTIO_DDS_COUNT) && (CONFIG_RTIO_DDS_COUNT > 0))
 
 static int bus_channel = CONFIG_RTIO_FIRST_DDS_CHANNEL;
 
@@ -356,6 +362,7 @@ static void ddstest(char *n, char *channel)
                 do_ddstest_one(j);
     }
 }
+#endif /* CONFIG_RTIO_DDS_COUNT */
 
 #if (defined CSR_SPIFLASH_BASE && defined CONFIG_SPIFLASH_PAGE_SIZE)
 static void fsread(char *key)
@@ -561,7 +568,9 @@ static void help(void)
 {
     puts("Available commands:");
     puts("help            - this message");
+#ifdef CSR_RTIO_CRG_BASE
     puts("clksrc <n>      - select RTIO clock source");
+#endif
     puts("ttloe <n> <v>   - set TTL output enable");
     puts("ttlo <n> <v>    - set TTL output value");
     puts("ddsbus <n>      - select the DDS bus RTIO channel");
@@ -573,7 +582,9 @@ static void help(void)
     puts("ddsfud          - pulse FUD");
     puts("ddsftw <n> <d>  - write FTW");
     puts("ddstest <c> <n> - perform test sequence on DDS");
+#ifdef CSR_LEDS_BASE
     puts("leds <n>        - set LEDs");
+#endif
 #if (defined CSR_SPIFLASH_BASE && defined CONFIG_SPIFLASH_PAGE_SIZE)
     puts("fserase         - erase flash storage");
     puts("fswrite <k> <v> - write to flash storage");
@@ -640,13 +651,18 @@ static void do_command(char *c)
     token = get_token(&c);
 
     if(strcmp(token, "help") == 0) help();
+#ifdef CSR_LEDS_BASE
     else if(strcmp(token, "leds") == 0) leds(get_token(&c));
+#endif
 
+#ifdef CSR_RTIO_CRG_BASE
     else if(strcmp(token, "clksrc") == 0) clksrc(get_token(&c));
+#endif
 
     else if(strcmp(token, "ttloe") == 0) ttloe(get_token(&c), get_token(&c));
     else if(strcmp(token, "ttlo") == 0) ttlo(get_token(&c), get_token(&c));
 
+#if ((defined CONFIG_RTIO_DDS_COUNT) && (CONFIG_RTIO_DDS_COUNT > 0))
     else if(strcmp(token, "ddsbus") == 0) ddsbus(get_token(&c));
     else if(strcmp(token, "ddssel") == 0) ddssel(get_token(&c));
     else if(strcmp(token, "ddsw") == 0) ddsw(get_token(&c), get_token(&c));
@@ -656,6 +672,7 @@ static void do_command(char *c)
     else if(strcmp(token, "ddsfud") == 0) ddsfud();
     else if(strcmp(token, "ddsftw") == 0) ddsftw(get_token(&c), get_token(&c));
     else if(strcmp(token, "ddstest") == 0) ddstest(get_token(&c), get_token(&c));
+#endif
 
 #if (defined CSR_SPIFLASH_BASE && defined CONFIG_SPIFLASH_PAGE_SIZE)
     else if(strcmp(token, "fserase") == 0) fs_erase();

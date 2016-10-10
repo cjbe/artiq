@@ -1,11 +1,15 @@
 import asyncio
 import time
 from functools import partial
+import logging
 
 from PyQt5 import QtCore, QtWidgets, QtGui
 
 from artiq.gui.models import DictSyncModel
 from artiq.tools import elide
+
+
+logger = logging.getLogger(__name__)
 
 
 class Model(DictSyncModel):
@@ -55,13 +59,12 @@ class Model(DictSyncModel):
 
 
 class ScheduleDock(QtWidgets.QDockWidget):
-    def __init__(self, status_bar, schedule_ctl, schedule_sub):
+    def __init__(self, schedule_ctl, schedule_sub):
         QtWidgets.QDockWidget.__init__(self, "Schedule")
         self.setObjectName("Schedule")
         self.setFeatures(QtWidgets.QDockWidget.DockWidgetMovable |
                          QtWidgets.QDockWidget.DockWidgetFloatable)
 
-        self.status_bar = status_bar
         self.schedule_ctl = schedule_ctl
 
         self.table = QtWidgets.QTableView()
@@ -83,6 +86,10 @@ class ScheduleDock(QtWidgets.QDockWidget):
         delete_action.setShortcut("SHIFT+DELETE")
         delete_action.setShortcutContext(QtCore.Qt.WidgetShortcut)
         self.table.addAction(delete_action)
+        terminate_pipeline = QtWidgets.QAction(
+            "Gracefully terminate all in pipeline", self.table)
+        terminate_pipeline.triggered.connect(self.terminate_pipeline_clicked)
+        self.table.addAction(terminate_pipeline)
 
         self.table_model = Model(dict())
         schedule_sub.add_setmodel_callback(self.set_model)
@@ -114,11 +121,36 @@ class ScheduleDock(QtWidgets.QDockWidget):
             row = idx[0].row()
             rid = self.table_model.row_to_key[row]
             if graceful:
-                msg = "Requested termination of RID {}".format(rid)
+                logger.info("Requested termination of RID %d", rid)
             else:
-                msg = "Deleted RID {}".format(rid)
-            self.status_bar.showMessage(msg)
+                logger.info("Deleted RID %d", rid)
             asyncio.ensure_future(self.delete(rid, graceful))
+
+    async def request_term_multiple(self, rids):
+        for rid in rids:
+            try:
+                await self.schedule_ctl.request_termination(rid)
+            except:
+                # May happen if the experiment has terminated by itself
+                # while we were terminating others.
+                logger.debug("failed to request termination of RID %d",
+                             rid, exc_info=True)
+
+    def terminate_pipeline_clicked(self):
+        idx = self.table.selectedIndexes()
+        if idx:
+            row = idx[0].row()
+            selected_rid = self.table_model.row_to_key[row]
+            pipeline = self.table_model.backing_store[selected_rid]["pipeline"]
+            logger.info("Requesting termination of all "
+                "experiments in pipeline '%s'", pipeline)
+
+            rids = set()
+            for rid, info in self.table_model.backing_store.items():
+                if info["pipeline"] == pipeline:
+                    rids.add(rid)
+            asyncio.ensure_future(self.request_term_multiple(rids))
+
 
     def save_state(self):
         return bytes(self.table.horizontalHeader().saveState())

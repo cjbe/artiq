@@ -6,6 +6,7 @@ import asyncio
 import atexit
 import fnmatch
 from functools import partial
+import time
 
 import numpy as np
 import aiohttp
@@ -21,7 +22,15 @@ logger = logging.getLogger(__name__)
 
 def get_argparser():
     parser = argparse.ArgumentParser(
-        description="ARTIQ data to InfluxDB bridge")
+        description="ARTIQ data to InfluxDB bridge",
+        epilog="Pattern matching works as follows. "
+               "The default action on a key (dataset name) is to log it. "
+               "Then the patterns are traversed in order and glob-matched "
+               "with the key. "
+               "Optional + and - pattern prefixes specify whether to ignore or "
+               "log keys matching the rest of the pattern. "
+               "Default (in the absence of prefix) is to ignore. Last matched "
+               "pattern takes precedence.")
     group = parser.add_argument_group("master")
     group.add_argument(
         "--server-master", default="::1",
@@ -46,31 +55,25 @@ def get_argparser():
         "--table", default="lab", help="table name to use")
     group = parser.add_argument_group("filter")
     group.add_argument(
-        "--pattern-file", default="influxdb_patterns.pyon",
-        help="file to save the patterns in (default: %(default)s)")
+        "--pattern-file", default="influxdb_patterns.cfg",
+        help="file to load the patterns from (default: %(default)s). "
+             "If the file is not found, no patterns are loaded "
+             "(everything is logged).")
     simple_network_args(parser, [("control", "control", 3248)])
     verbosity_args(parser)
     return parser
 
 
-def influxdb_str(s):
-    return '"' + s.replace('"', '\\"') + '"'
-
-
 def format_influxdb(v):
-    if isinstance(v, bool):
-        if v:
-            return "bool", "t"
-        else:
-            return "bool", "f"
-    elif np.issubdtype(type(v), int):
-        return "int", "{}i".format(v)
-    elif np.issubdtype(type(v), float):
-        return "float", "{}".format(v)
-    elif isinstance(v, str):
-        return "str", influxdb_str(v)
-    else:
-        return "pyon", influxdb_str(pyon.encode(v))
+    if np.issubdtype(type(v), np.bool_):
+        return "bool={}".format(v)
+    if np.issubdtype(type(v), np.integer):
+        return "int={}i".format(v)
+    if np.issubdtype(type(v), np.floating):
+        return "float={}".format(v)
+    if np.issubdtype(type(v), np.str_):
+        return "str=\"{}\"".format(v.replace('"', '\\"'))
+    return "pyon=\"{}\"".format(pyon.encode(v).replace('"', '\\"'))
 
 
 class DBWriter(TaskObject):
@@ -85,19 +88,19 @@ class DBWriter(TaskObject):
 
     def update(self, k, v):
         try:
-            self._queue.put_nowait((k, v))
+            self._queue.put_nowait((k, v, time.time()))
         except asyncio.QueueFull:
             logger.warning("failed to update dataset '%s': "
                            "too many pending updates", k)
 
     async def _do(self):
         while True:
-            k, v = await self._queue.get()
+            k, v, t = await self._queue.get()
             url = self.base_url + "/write"
             params = {"u": self.user, "p": self.password, "db": self.database,
-                      "consistency": "any", "precision": "n"}
-            fmt_ty, fmt_v = format_influxdb(v)
-            data = "{},dataset={} {}={}".format(self.table, k, fmt_ty, fmt_v)
+                      "precision": "ms"}
+            data = "{},dataset={} {} {}".format(
+                self.table, k, format_influxdb(v), round(t*1e3))
             try:
                 response = await aiohttp.request(
                     "POST", url, params=params, data=data)
@@ -106,9 +109,7 @@ class DBWriter(TaskObject):
                                k, exc_info=True)
             else:
                 if response.status not in (200, 204):
-                    content = (await response.content.read()).decode()
-                    if content:
-                        content = content[:-1]  # drop \n
+                    content = (await response.content.read()).decode().strip()
                     logger.warning("got HTTP status %d "
                                    "trying to update '%s': %s",
                                    response.status, k, content)
@@ -177,14 +178,20 @@ class MasterReader(TaskObject):
 class Filter:
     def __init__(self, pattern_file):
         self.pattern_file = pattern_file
-        self.patterns = []
+        self.scan_patterns()
+
+    def scan_patterns(self):
+        """(Re)load the patterns file."""
         try:
-            self.patterns = pyon.load_file(self.pattern_file)
+            with open(self.pattern_file, "r") as f:
+                self.patterns = []
+                for line in f:
+                    line = line.rstrip()
+                    if line:
+                        self.patterns.append(line)
         except FileNotFoundError:
             logger.info("no pattern file found, logging everything")
-
-    def _save(self):
-        pyon.store_file(self.pattern_file, self.patterns)
+            self.patterns = []
 
     # Privatize so that it is not shown in artiq_rpctool list-methods.
     def _filter(self, k):
@@ -196,32 +203,6 @@ class Filter:
             if fnmatch.fnmatchcase(k, pattern):
                 take = sign
         return take == "+"
-
-    def add_pattern(self, pattern, index=None):
-        """Add a pattern.
-
-        Optional + and - pattern prefixes specify whether to ignore or log
-        keys matching the rest of the pattern.
-        Default (in the absence of prefix) is to ignore. Keys that match no
-        pattern are logged. Last matched pattern takes precedence.
-
-        The optional index parameter specifies where to insert the pattern.
-        By default, patterns are added at the end. If index is an integer, it
-        specifies the index where the pattern is inserted. If it is a string,
-        that string must match an existing pattern and the new pattern is
-        inserted immediately after it."""
-        if pattern not in self.patterns:
-            if index is None:
-                index = len(self.patterns)
-            if isinstance(index, str):
-                index = self.patterns.index(index) + 1
-            self.patterns.insert(index, pattern)
-        self._save()
-
-    def remove_pattern(self, pattern):
-        """Remove a pattern."""
-        self.patterns.remove(pattern)
-        self._save()
 
     def get_patterns(self):
         """Show existing patterns."""

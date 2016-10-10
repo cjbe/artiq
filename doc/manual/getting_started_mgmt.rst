@@ -8,7 +8,7 @@ The manipulations described in this tutorial can be carried out using a single c
 Starting your first experiment with the master
 ----------------------------------------------
 
-In the previous tutorial, we used the ``artiq_run`` utility to execute our experiments, which is a simple stand-alone tool that bypasses the ARTIQ management system. We will now see how to run an experiment using the master (the central program in the management system that schedules and executes experiments) and the GUI client (that connects to the master and controls it).
+In the previous tutorial, we used the ``artiq_run`` utility to execute our experiments, which is a simple stand-alone tool that bypasses the ARTIQ management system. We will now see how to run an experiment using the master (the central program in the management system that schedules and executes experiments) and the dashboard (that connects to the master and controls it).
 
 First, create a folder ``~/artiq-master`` and copy the file ``device_db.pyon`` (containing the device database) found in the ``examples/master`` directory from the ARTIQ sources. The master uses those files in the same way as ``artiq_run``.
 
@@ -35,21 +35,21 @@ Start the master with: ::
 
 This last command should not return, as the master keeps running.
 
-Now, start the GUI client with the following commands in another terminal: ::
+Now, start the dashboard with the following commands in another terminal: ::
 
     $ cd ~
-    $ artiq_gui
+    $ artiq_dashboard
 
-.. note:: The ``artiq_gui`` program uses a file called ``artiq_gui.pyon`` in the current directory to save and restore the GUI state (window/dock positions, last values entered by the user, etc.).
+.. note:: The ``artiq_dashboard`` program uses a file called ``artiq_dashboard.pyon`` in the current directory to save and restore the GUI state (window/dock positions, last values entered by the user, etc.).
 
-The GUI should display the list of experiments from the repository folder in a dock called "Explorer". There should be only the experiment we created. Select it and click "Submit", then look at the "Log" dock for the output from this simple experiment.
+The dashboard should display the list of experiments from the repository folder in a dock called "Explorer". There should be only the experiment we created. Select it and click "Submit", then look at the "Log" dock for the output from this simple experiment.
 
-.. note:: Multiple clients may be connected at the same time, possibly on different machines, and will be synchronized. See the ``-s`` option of ``artiq_gui`` and the ``--bind`` option of ``artiq_master`` to use the network. Both IPv4 and IPv6 are supported.
+.. note:: Multiple clients may be connected at the same time, possibly on different machines, and will be synchronized. See the ``-s`` option of ``artiq_dashboard`` and the ``--bind`` option of ``artiq_master`` to use the network. Both IPv4 and IPv6 are supported.
 
 Adding an argument
 ------------------
 
-Experiments may have arguments whose values can be set in the GUI and used in the experiment's code. Modify the experiment as follows: ::
+Experiments may have arguments whose values can be set in the dashboard and used in the experiment's code. Modify the experiment as follows: ::
 
 
     def build(self):
@@ -66,7 +66,7 @@ Use the command-line client to trigger a repository rescan: ::
 
     artiq_client scan-repository
 
-The GUI should now display a spin box that allows you to set the value of the ``count`` argument. Try submitting the experiment as before.
+The dashboard should now display a spin box that allows you to set the value of the ``count`` argument. Try submitting the experiment as before.
 
 Setting up Git integration
 --------------------------
@@ -151,7 +151,13 @@ Modify the ``run()`` method of the experiment as follows: ::
 
 .. note:: You need to import the ``time`` module, and the ``numpy`` module as ``np``.
 
-Commit, push and submit the experiment as before. While it is running, go to the "Datasets" dock of the GUI and create a new XY plot showing the new result (you need to edit the applet command line so that it retrieves the ``parabola`` dataset). Observe how the points are added one by one to the plot.
+Commit, push and submit the experiment as before. Go to the "Datasets" dock of the GUI and observe that a new dataset has been created. We will now create a new XY plot showing this new result.
+
+Plotting in the ARTIQ dashboard is achieved by programs called "applets". Applets are independent programs that add simple GUI features and are run as separate processes (to achieve goals of modularity and resilience against poorly written applets). Users may write their own applets, or use those supplied with ARTIQ (in the ``artiq.applets`` module) that cover basic plotting.
+
+Applets are configured through their command line to select parameters such as the names of the datasets to plot. The list of command-line options can be retrieved using the ``-h`` option; for example you can run ``python3.5 -m artiq.applets.plot_xy -h`` in a terminal.
+
+In our case, create a new applet from the XY template by right-clicking on the applet list, and edit the applet command line so that it retrieves the ``parabola`` dataset. Run the experiment again, and observe how the points are added one by one to the plot.
 
 After the experiment has finished executing, the results are written to a HDF5 file that resides in ``~/artiq-master/results/<date>/<hour>``. Open that file with HDFView or h5dump, and observe the data we just generated as well as the Git commit ID of the experiment (a hexadecimal hash such as ``947acb1f90ae1b8862efb489a9cc29f7d4e0c645`` that represents the data at a particular time in the Git repository). The list of Git commit IDs can be found using the ``git log`` command in ``~/artiq-work``.
 

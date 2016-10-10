@@ -29,10 +29,10 @@ Command-line client
 
 The command-line client connects to the master and permits modification and monitoring of the databases, monitoring the experiment schedule and log, and submitting experiments.
 
-GUI client
-----------
+Dashboard
+---------
 
-The GUI client connects to the master and is the main way of interacting with it. The main features of the GUI are scheduling of experiments, setting of their arguments, examining the schedule, displaying real-time results, and debugging TTL and DDS channels in real time.
+The dashboard connects to the master and is the main way of interacting with it. The main features of the dashboard are scheduling of experiments, setting of their arguments, examining the schedule, displaying real-time results, and debugging TTL and DDS channels in real time.
 
 Experiment scheduling
 *********************
@@ -65,7 +65,10 @@ When determining what experiment to begin executing next (i.e. entering the prep
 Pauses
 ------
 
-In the run stage, an experiment may yield to the scheduler by calling the ``pause`` method. If there are other experiments with higher priority (e.g. a high-priority timed experiment has reached its due date), they are preemptively executed, and then the ``pause`` method returns. Otherwise, the ``pause`` method returns immediately.
+In the run stage, an experiment may yield to the scheduler by calling the ``pause()`` method of the scheduler.
+If there are other experiments with higher priority (e.g. a high-priority timed experiment has reached its due date), they are preemptively executed, and then ``pause()`` returns.
+Otherwise, ``pause()`` returns immediately.
+To check whether ``pause()`` would in fact *not* return immediately, use :meth:`artiq.master.scheduler.Scheduler.check_pause`.
 
 The experiment must place the hardware in a safe state and disconnect from the core device (typically, by using ``self.core.comm.close()``) before calling ``pause``.
 
@@ -105,11 +108,11 @@ You may now run the master with the Git support enabled: ::
 
    $ artiq_master -g -r /path_to/experiments
 
-Push commits containing experiments to the bare repository using e.g. Git over SSH, and the new experiments should automatically appear in the GUI.
+Push commits containing experiments to the bare repository using e.g. Git over SSH, and the new experiments should automatically appear in the dashboard.
 
 .. note:: If you plan to run the ARTIQ system entirely on a single machine, you may also consider using a non-bare repository and the ``post-commit`` hook to trigger repository scans every time you commit changes (locally). The ARTIQ master never uses the repository's working directory, but only what is committed. More precisely, when scanning the repository, it fetches the last (atomically) completed commit at that time of repository scan and checks it out in a temporary folder. This commit ID is used by default when subsequently submitting experiments. There is one temporary folder by commit ID currently referenced in the system, so concurrently running experiments from different repository revisions is fully supported by the master.
 
-The GUI always runs experiments from the repository. The command-line client, by default, runs experiment from the raw filesystem (which is useful for iterating rapidly without creating many disorganized commits). If you want to use the repository instead, simply pass the ``-R`` option.
+The dashboard always runs experiments from the repository. The command-line client, by default, runs experiment from the raw filesystem (which is useful for iterating rapidly without creating many disorganized commits). If you want to use the repository instead, simply pass the ``-R`` option.
 
 Scheduler API reference
 ***********************
@@ -137,5 +140,5 @@ Front-end tool reference
    :prog: artiq_client
 
 .. argparse::
-   :ref: artiq.frontend.artiq_gui.get_argparser
-   :prog: artiq_gui
+   :ref: artiq.frontend.artiq_dashboard.get_argparser
+   :prog: artiq_dashboard

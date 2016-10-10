@@ -1,10 +1,7 @@
-from operator import itemgetter
 import importlib.machinery
-import linecache
 import logging
 import sys
 import asyncio
-import time
 import collections
 import os
 import atexit
@@ -14,13 +11,16 @@ import numpy as np
 
 from artiq.language.environment import is_experiment
 from artiq.protocols import pyon
+from artiq.appdirs import user_config_dir
+from artiq import __version__ as artiq_version
 
 
 __all__ = ["parse_arguments", "elide", "short_format", "file_import",
-           "get_experiment", "verbosity_args", "simple_network_args", "init_logger",
-           "bind_address_from_args", "atexit_register_coroutine",
-           "exc_to_warning", "asyncio_wait_or_cancel",
-           "TaskObject", "Condition", "get_windows_drives"]
+           "get_experiment", "verbosity_args", "simple_network_args",
+           "init_logger", "bind_address_from_args",
+           "atexit_register_coroutine", "exc_to_warning",
+           "asyncio_wait_or_cancel", "TaskObject", "Condition",
+           "get_windows_drives", "get_user_config_dir"]
 
 
 logger = logging.getLogger(__name__)
@@ -58,9 +58,9 @@ def short_format(v):
     if v is None:
         return "None"
     t = type(v)
-    if t is bool or np.issubdtype(t, int) or np.issubdtype(t, float):
+    if np.issubdtype(t, np.number) or np.issubdtype(t, np.bool_):
         return str(v)
-    elif t is str:
+    elif np.issubdtype(t, np.unicode_):
         return "\"" + elide(v, 50) + "\""
     else:
         r = t.__name__
@@ -72,8 +72,6 @@ def short_format(v):
 
 
 def file_import(filename, prefix="file_import_"):
-    linecache.checkcache(filename)
-
     modname = filename
     i = modname.rfind("/")
     if i > 0:
@@ -119,19 +117,21 @@ def simple_network_args(parser, default_port):
     group = parser.add_argument_group("network server")
     group.add_argument(
         "--bind", default=[], action="append",
-        help="add an hostname or IP address to bind to")
+        help="additional hostname or IP addresse to bind to; "
+        "use '*' to bind to all interfaces (default: %(default)s)")
     group.add_argument(
         "--no-localhost-bind", default=False, action="store_true",
-        help="do not implicitly bind to localhost addresses")
+        help="do not implicitly also bind to localhost addresses")
     if isinstance(default_port, int):
         group.add_argument("-p", "--port", default=default_port, type=int,
-                           help="TCP port to listen to (default: %(default)d)")
+                           help="TCP port to listen on (default: %(default)d)")
     else:
         for name, purpose, default in default_port:
-            h = ("TCP port to listen to for {} (default: {})"
-                  .format(purpose, default))
+            h = ("TCP port to listen on for {} connections (default: {})"
+                 .format(purpose, default))
             group.add_argument("--port-" + name, default=default, type=int,
-                           help=h)
+                               help=h)
+
 
 class MultilineFormatter(logging.Formatter):
     def __init__(self):
@@ -156,10 +156,13 @@ def multiline_log_config(level):
 
 
 def init_logger(args):
-    multiline_log_config(level=logging.WARNING + args.quiet*10 - args.verbose*10)
+    multiline_log_config(
+        level=logging.WARNING + args.quiet*10 - args.verbose*10)
 
 
 def bind_address_from_args(args):
+    if "*" in args.bind:
+        return None
     if args.no_localhost_bind:
         return args.bind
     else:
@@ -243,3 +246,10 @@ def get_windows_drives():
             drives.append(letter)
         bitmask >>= 1
     return drives
+
+
+def get_user_config_dir():
+    major = artiq_version.split(".")[0]
+    dir = user_config_dir("artiq", "m-labs", major)
+    os.makedirs(dir, exist_ok=True)
+    return dir

@@ -11,9 +11,11 @@ The conda package contains pre-built binaries that you can directly flash to you
     The sledgehammer called ``secureconfig`` leaves you (and root) with umask 027 and files created by root (for example through ``sudo make install``) inaccessible to you.
     The usual umask is 022.
 
+
 .. warning::
     Conda packages are supported for Linux (64-bit) and Windows (32- and 64-bit).
     Users of other operating systems (32-bit Linux, BSD, OSX ...) should and can :ref:`install from source <install-from-source>`.
+
 
 Installing Anaconda or Miniconda
 --------------------------------
@@ -66,6 +68,10 @@ This activation has to be performed in every new shell you open to make the ARTI
     Those need to be installed through the Linux distribution's mechanism.
     If GUI programs do not start because they ``could not find or load the Qt platform plugin "xcb"``, install the various ``libxcb-*`` packages through your distribution's preferred mechanism.
     The names of the libraries missing can be obtained from the output of a command like ``ldd [path-to-conda-installation]/envs/artiq-main/lib/qt5/plugins/platform/libqxcb.so``.
+
+.. note::
+    Some ARTIQ examples also require matplotlib and numba, and they must be installed manually for running those examples. They are available in conda.
+
 
 Upgrading ARTIQ
 ---------------
@@ -126,15 +132,16 @@ Then, you can flash the board:
 
 * For the Pipistrello board::
 
-    $ artiq_flash -t pipistrello -m qc1
+    $ artiq_flash -t pipistrello -m nist_qc1
 
 * For the KC705 board (selecting the appropriate hardware peripheral)::
 
-    $ artiq_flash -t kc705 -m [qc1/clock/qc2]
+    $ artiq_flash -t kc705 -m [nist_qc1/nist_clock/nist_qc2]
 
   The SW13 switches also need to be set to 00001.
 
 For the KC705, the next step is to flash the MAC and IP addresses to the board. See :ref:`those instructions <flash-mac-ip-addr>`.
+
 
 Configuring the core device
 ---------------------------
@@ -186,6 +193,8 @@ This should be done after either installation method (conda or source).
 
 .. note:: The reset button of the KC705 board is the "CPU_RST" labeled button.
 .. warning:: Both those instructions will result in the flash storage being wiped out. However you can use the test mode to change the IP/MAC without erasing everything if you skip the "fserase" command.
+
+* (optional) You may also want to set ``netmask`` and ``gateway`` in the same way that you set ``ip``.
 
 * (optional) Flash the idle kernel
 
