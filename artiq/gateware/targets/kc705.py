@@ -178,222 +178,13 @@ class _NIST_Ions(MiniSoC, AMPSoC):
             self.get_native_sdram_if())
 
 
-class NIST_QC1(_NIST_Ions):
-    """
-    NIST QC1 hardware, as used in the Penning lab, with FMC to SCSI cables
-    adapter.
-    """
-    def __init__(self, cpu_type="or1k", **kwargs):
-        _NIST_Ions.__init__(self, cpu_type, **kwargs)
-
-        platform = self.platform
-        platform.add_extension(nist_qc1.fmc_adapter_io)
-
-        self.comb += [
-            platform.request("ttl_l_tx_en").eq(1),
-            platform.request("ttl_h_tx_en").eq(1)
-        ]
-
-        rtio_channels = []
-        for i in range(2):
-            phy = ttl_serdes_7series.Inout_8X(platform.request("pmt", i))
-            self.submodules += phy
-            rtio_channels.append(rtio.Channel.from_phy(phy, ififo_depth=512))
-        for i in range(15):
-            phy = ttl_serdes_7series.Output_8X(platform.request("ttl", i))
-            self.submodules += phy
-            rtio_channels.append(rtio.Channel.from_phy(phy))
-
-        phy = ttl_serdes_7series.Inout_8X(platform.request("user_sma_gpio_n_33"))
-        self.submodules += phy
-        rtio_channels.append(rtio.Channel.from_phy(phy, ififo_depth=512))
-        phy = ttl_simple.Output(platform.request("user_led", 2))
-        self.submodules += phy
-        rtio_channels.append(rtio.Channel.from_phy(phy))
-        self.config["RTIO_REGULAR_TTL_COUNT"] = len(rtio_channels)
-
-        phy = ttl_simple.ClockGen(platform.request("ttl", 15))
-        self.submodules += phy
-        rtio_channels.append(rtio.Channel.from_phy(phy))
-
-        self.config["RTIO_FIRST_DDS_CHANNEL"] = len(rtio_channels)
-        self.config["RTIO_DDS_COUNT"] = 1
-        self.config["DDS_CHANNELS_PER_BUS"] = 8
-        self.config["DDS_AD9858"] = True
-        phy = dds.AD9858(platform.request("dds"), 8)
-        self.submodules += phy
-        rtio_channels.append(rtio.Channel.from_phy(phy,
-                                                   ofifo_depth=512,
-                                                   ififo_depth=4))
-
-        self.config["RTIO_LOG_CHANNEL"] = len(rtio_channels)
-        rtio_channels.append(rtio.LogChannel())
-
-        self.add_rtio(rtio_channels)
-        assert self.rtio.fine_ts_width <= 3
-        self.config["DDS_RTIO_CLK_RATIO"] = 8 >> self.rtio.fine_ts_width
 
 
-class NIST_CLOCK(_NIST_Ions):
-    """
-    NIST clock hardware, with old backplane and 11 DDS channels
-    """
-    def __init__(self, cpu_type="or1k", **kwargs):
-        _NIST_Ions.__init__(self, cpu_type, **kwargs)
 
-        platform = self.platform
-        platform.add_extension(nist_clock.fmc_adapter_io)
-
-        rtio_channels = []
-        for i in range(16):
-            if i % 4 == 3:
-                phy = ttl_serdes_7series.Inout_8X(platform.request("ttl", i))
-                self.submodules += phy
-                rtio_channels.append(rtio.Channel.from_phy(phy, ififo_depth=512))
-            else:
-                phy = ttl_serdes_7series.Output_8X(platform.request("ttl", i))
-                self.submodules += phy
-                rtio_channels.append(rtio.Channel.from_phy(phy))
-
-        for i in range(2):
-            phy = ttl_serdes_7series.Inout_8X(platform.request("pmt", i))
-            self.submodules += phy
-            rtio_channels.append(rtio.Channel.from_phy(phy, ififo_depth=512))
-
-        phy = ttl_serdes_7series.Inout_8X(platform.request("user_sma_gpio_n_33"))
-        self.submodules += phy
-        rtio_channels.append(rtio.Channel.from_phy(phy, ififo_depth=512))
-
-        phy = ttl_simple.Output(platform.request("user_led", 2))
-        self.submodules += phy
-        rtio_channels.append(rtio.Channel.from_phy(phy))
-
-        ams101_dac = self.platform.request("ams101_dac", 0)
-        phy = ttl_simple.Output(ams101_dac.ldac)
-        self.submodules += phy
-        rtio_channels.append(rtio.Channel.from_phy(phy))
-        self.config["RTIO_REGULAR_TTL_COUNT"] = len(rtio_channels)
-
-        phy = ttl_simple.ClockGen(platform.request("la32_p"))
-        self.submodules += phy
-        rtio_channels.append(rtio.Channel.from_phy(phy))
-
-        phy = spi.SPIMaster(ams101_dac)
-        self.submodules += phy
-        self.config["RTIO_FIRST_SPI_CHANNEL"] = len(rtio_channels)
-        rtio_channels.append(rtio.Channel.from_phy(
-            phy, ofifo_depth=4, ififo_depth=4))
-
-        for i in range(3):
-            phy = spi.SPIMaster(self.platform.request("spi", i))
-            self.submodules += phy
-            rtio_channels.append(rtio.Channel.from_phy(
-                phy, ofifo_depth=128, ififo_depth=128))
-
-        self.config["RTIO_FIRST_DDS_CHANNEL"] = len(rtio_channels)
-        self.config["RTIO_DDS_COUNT"] = 1
-        self.config["DDS_CHANNELS_PER_BUS"] = 11
-        self.config["DDS_AD9914"] = True
-        self.config["DDS_ONEHOT_SEL"] = True
-        phy = dds.AD9914(platform.request("dds"), 11, onehot=True)
-        self.submodules += phy
-        rtio_channels.append(rtio.Channel.from_phy(phy,
-                                                   ofifo_depth=512,
-                                                   ififo_depth=4))
-
-        self.config["RTIO_LOG_CHANNEL"] = len(rtio_channels)
-        rtio_channels.append(rtio.LogChannel())
-
-        self.add_rtio(rtio_channels)
-        assert self.rtio.fine_ts_width <= 3
-        self.config["DDS_RTIO_CLK_RATIO"] = 24 >> self.rtio.fine_ts_width
-
-
-class NIST_QC2(_NIST_Ions):
-    """
-    NIST QC2 hardware, as used in Quantum I and Quantum II, with new backplane
-    and 24 DDS channels.  Two backplanes are used.  
-    """
-    def __init__(self, cpu_type="or1k", **kwargs):
-        _NIST_Ions.__init__(self, cpu_type, **kwargs)
-
-        platform = self.platform
-        platform.add_extension(nist_qc2.fmc_adapter_io)
-
-        rtio_channels = []
-        clock_generators = []
-
-        # All TTL channels are In+Out capable
-        for i in range(40):
-            phy = ttl_serdes_7series.Inout_8X(
-                platform.request("ttl", i))
-            self.submodules += phy
-            rtio_channels.append(rtio.Channel.from_phy(phy, ififo_depth=512))
-        
-        # CLK0, CLK1 are for clock generators, on backplane SMP connectors
-        for i in range(2):        
-            phy = ttl_simple.ClockGen(
-                platform.request("clkout", i))
-            self.submodules += phy
-            clock_generators.append(rtio.Channel.from_phy(phy)) 
-
-        # user SMA on KC705 board
-        phy = ttl_serdes_7series.Inout_8X(platform.request("user_sma_gpio_n_33"))
-        self.submodules += phy
-        rtio_channels.append(rtio.Channel.from_phy(phy, ififo_depth=512))
-        
-        phy = ttl_simple.Output(platform.request("user_led", 2))
-        self.submodules += phy
-        rtio_channels.append(rtio.Channel.from_phy(phy))
-
-        # AMS101 DAC on KC705 XADC header - optional
-        ams101_dac = self.platform.request("ams101_dac", 0)
-        phy = ttl_simple.Output(ams101_dac.ldac)
-        self.submodules += phy
-        rtio_channels.append(rtio.Channel.from_phy(phy))
-        self.config["RTIO_REGULAR_TTL_COUNT"] = len(rtio_channels)
-
-        # add clock generators after RTIO_REGULAR_TTL_COUNT
-        rtio_channels += clock_generators
-
-        phy = spi.SPIMaster(ams101_dac)
-        self.submodules += phy
-        self.config["RTIO_FIRST_SPI_CHANNEL"] = len(rtio_channels)
-        rtio_channels.append(rtio.Channel.from_phy(
-            phy, ofifo_depth=4, ififo_depth=4))
-
-        for i in range(4):
-            phy = spi.SPIMaster(self.platform.request("spi", i))
-            self.submodules += phy
-            rtio_channels.append(rtio.Channel.from_phy(
-                phy, ofifo_depth=128, ififo_depth=128))
-
-        self.config["RTIO_FIRST_DDS_CHANNEL"] = len(rtio_channels)
-        self.config["RTIO_DDS_COUNT"] = 2
-        self.config["DDS_CHANNELS_PER_BUS"] = 12
-        self.config["DDS_AD9914"] = True
-        self.config["DDS_ONEHOT_SEL"] = True
-        for backplane_offset in range(2):
-            phy = dds.AD9914(
-                platform.request("dds", backplane_offset), 12, onehot=True)
-            self.submodules += phy
-            rtio_channels.append(rtio.Channel.from_phy(phy,
-                                                       ofifo_depth=512,
-                                                       ififo_depth=4))
-
-        self.config["RTIO_LOG_CHANNEL"] = len(rtio_channels)
-        rtio_channels.append(rtio.LogChannel())
-
-        self.add_rtio(rtio_channels)
-        assert self.rtio.fine_ts_width <= 3
-        self.config["DDS_RTIO_CLK_RATIO"] = 24 >> self.rtio.fine_ts_width
-
-
-        
 # The input and output 8-channel buffer boards scramble and invert the channels.
 # This list maps the logical index to the physical index
 descrambleList = [ 3, 2, 1, 0, 7, 6, 5, 4 ];
-        
+
 class Oxford(_NIST_Ions):
     def __init__(self, cpu_type="or1k", **kwargs):
         _NIST_Ions.__init__(self, cpu_type, **kwargs)
@@ -422,8 +213,7 @@ class Oxford(_NIST_Ions):
         phy = ttl_simple.Output(platform.request("ledFrontPanel", 1)) # No invert for the LEDs
         self.submodules += phy
         rtio_channels.append(rtio.Channel.from_phy(phy))
-        
-        
+
         self.config["RTIO_REGULAR_TTL_COUNT"] = len(rtio_channels)
         self.config["RTIO_FIRST_DDS_CHANNEL"] = len(rtio_channels)
         self.config["RTIO_DDS_COUNT"] = 0
@@ -435,10 +225,9 @@ class Oxford(_NIST_Ions):
 
         self.add_rtio(rtio_channels)
 
-        self.config["DDS_RTIO_CLK_RATIO"] = 24        
-        
-        
-     
+        self.config["DDS_RTIO_CLK_RATIO"] = 24
+
+
 
 class TransparentOverride(Module):
     """Connects outputs to internal logic when input low, otherwise connects them to an external input, connected to the old LCU"""
@@ -460,7 +249,7 @@ class OxfordOverride(_NIST_Ions):
 
         led = platform.request("ledFrontPanel", 0) 
         self.comb += led.eq(1) # Front panel LED0 hard wired on
-                
+        
         # The 6 'override inputs'
         overrideInputs = [ platform.request("in", descrambleList[i]) for i in range(2,8) ]
 
@@ -490,13 +279,27 @@ class OxfordOverride(_NIST_Ions):
         for i in range(6):
             phy = ttl_simple.Inout( overrideInputs[i], invert=True)
             self.submodules += phy
-            rtio_channels.append(rtio.Channel.from_phy(phy))            
+            rtio_channels.append(rtio.Channel.from_phy(phy))
             
         
         phy = ttl_simple.Output(platform.request("ledFrontPanel", 1)) # No invert for the LEDs
         self.submodules += phy
         rtio_channels.append(rtio.Channel.from_phy(phy))
-        
+
+        # AD9910 DDS SPI hacks
+        dds_sigs = ["dds_iorst", "dds_ioupdate", "dds_p0", "dds_p1", "dds_p2"]
+        for sig in dds_sigs:
+            phy = ttl_serdes_7series.Output_8X(platform.request(sig, 0))
+            self.submodules += phy
+            rtio_channels.append(rtio.Channel.from_phy(phy))
+
+        phy = spi.SPIMaster(self.platform.request("dds_spi", 0))
+        self.submodules += phy
+        self.config["RTIO_FIRST_SPI_CHANNEL"] = len(rtio_channels)
+        rtio_channels.append(rtio.Channel.from_phy(
+                phy, ofifo_depth=128, ififo_depth=128))
+
+
         self.config["RTIO_REGULAR_TTL_COUNT"] = len(rtio_channels)
         self.config["RTIO_FIRST_DDS_CHANNEL"] = len(rtio_channels)
         self.config["RTIO_DDS_COUNT"] = 0
@@ -508,34 +311,28 @@ class OxfordOverride(_NIST_Ions):
 
         self.add_rtio(rtio_channels)
 
-        self.config["DDS_RTIO_CLK_RATIO"] = 24   
+        self.config["DDS_RTIO_CLK_RATIO"] = 24
 
-        
-        
-        
-        
+
+
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="ARTIQ core device builder / KC705 "
-                    "+ NIST Ions QC1/CLOCK/QC2/Oxford hardware adapters")
+                    "+ Oxford hardware adapters")
     builder_args(parser)
     soc_kc705_args(parser)
-    parser.add_argument("-H", "--hw-adapter", default="nist_clock",
+    parser.add_argument("-H", "--hw-adapter", default="oxford_override",
                         help="hardware adapter type: "
-                             "nist_qc1/nist_clock/nist_qc2 "
+                             "oxford / oxford_override "
                              "(default: %(default)s)")
     args = parser.parse_args()
 
     hw_adapter = args.hw_adapter.lower()
-    if hw_adapter == "nist_qc1":
-        cls = NIST_QC1
-    elif hw_adapter == "nist_clock":
-        cls = NIST_CLOCK
-    elif hw_adapter == "nist_qc2":
-        cls = NIST_QC2
-    elif hw_adapter == "oxford":
+    if hw_adapter == "oxford":
         cls = Oxford
-    elif hw_adapter == "oxfordoverride":
+    elif hw_adapter == "oxford_override":
         cls = OxfordOverride
     else:
         raise SystemExit("Invalid hardware adapter string (-H/--hw-adapter)")
