@@ -111,18 +111,8 @@ fmc_adapter_io = [
     ("ledFrontPanel", 1, Pins("LPC:LA17_CC_P"), IOStandard("LVTTL")),
 
     # Clock input/output on FMC LPC
-    ("ext_clk0_p", 0, Pins("LPC:CLK0_M2C_P"), IOStandard("LVDS_25")),
-    ("ext_clk0_n", 0, Pins("LPC:CLK0_M2C_N"), IOStandard("LVDS_25")),
-
-    # LVDS2B on LPC
-    ("tdc_in", 0,
-        Subsignal("p", Pins("AJ26"), IOStandard("LVDS_25")),
-        Subsignal("n", Pins("AK26"), IOStandard("LVDS_25"))
-    ),
-
-    # LVDS1B on LPC
-    ("tdc_in", 1,
-        Subsignal("p", Pins("AJ28"), IOStandard("LVDS_25")),
-        Subsignal("n", Pins("AJ29"), IOStandard("LVDS_25"))
+    ("ext_clk", 0, 
+        Subsignal("p", Pins("LPC:CLK0_M2C_P"), IOStandard("LVTTL")),
+        Subsignal("n", Pins("LPC:CLK0_M2C_N"), IOStandard("LVTTL")),
     ),
 ]

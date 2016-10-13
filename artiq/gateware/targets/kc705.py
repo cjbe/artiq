@@ -32,23 +32,39 @@ class _RTIOCRG(Module, AutoCSR):
         self.clock_domains.cd_rtio = ClockDomain()
         self.clock_domains.cd_rtiox4 = ClockDomain(reset_less=True)
 
-        # 10 MHz when using 125MHz input
-        self.clock_domains.cd_ext_clkout = ClockDomain(reset_less=True)
-        ext_clkout = platform.request("user_sma_gpio_p_33")
-        self.sync.ext_clkout += ext_clkout.eq(~ext_clkout)
-
-
+        # 250 MHz external clock input
+        #external_clk_250M = Signal()
+        ext_clock = platform.request("ext_clk")
+        platform.add_period_constraint(ext_clock.p, 4.0)
+        
+        # Generate 125 MHz clock from external clock
         rtio_external_clk = Signal()
-        user_sma_clock = platform.request("user_sma_clock")
-        platform.add_period_constraint(user_sma_clock.p, 8.0)
-        self.specials += Instance("IBUFDS",
-                                  i_I=user_sma_clock.p, i_IB=user_sma_clock.n,
-                                  o_O=rtio_external_clk)
+        pll_out = Signal()
+        ext_ref_deskew = Signal()
+        ext_ref_deskew_buf = Signal()
+        self.specials += [
+            Instance("PLLE2_ADV",
+                     p_STARTUP_WAIT="FALSE",
+                     p_REF_JITTER1=0.01,
+                     p_CLKIN1_PERIOD=4.0,
+                     i_CLKIN1=ext_clock.p,
+
+                     # VCO @ 1GHz
+                     p_CLKFBOUT_MULT=4, p_DIVCLK_DIVIDE=1,
+                     i_CLKFBIN=ext_ref_deskew_buf,
+                     i_RST=self._pll_reset.storage,
+
+                     o_CLKFBOUT=ext_ref_deskew,
+
+                     p_CLKOUT0_DIVIDE=8, p_CLKOUT0_PHASE=0.0,
+                     o_CLKOUT0=pll_out),
+            Instance("BUFG", i_I=pll_out, o_O=rtio_external_clk),
+            Instance("BUFG", i_I=ext_ref_deskew, o_O=ext_ref_deskew_buf),
+        ]
 
         pll_locked = Signal()
         rtio_clk = Signal()
         rtiox4_clk = Signal()
-        ext_clkout_clk = Signal()
         self.specials += [
             Instance("PLLE2_ADV",
                      p_STARTUP_WAIT="FALSE", o_LOCKED=pll_locked,
@@ -67,13 +83,9 @@ class _RTIOCRG(Module, AutoCSR):
                      o_CLKFBOUT=rtio_clk,
 
                      p_CLKOUT0_DIVIDE=2, p_CLKOUT0_PHASE=0.0,
-                     o_CLKOUT0=rtiox4_clk,
-
-                     p_CLKOUT1_DIVIDE=50, p_CLKOUT1_PHASE=0.0,
-                     o_CLKOUT1=ext_clkout_clk),
+                     o_CLKOUT0=rtiox4_clk),
             Instance("BUFG", i_I=rtio_clk, o_O=self.cd_rtio.clk),
             Instance("BUFG", i_I=rtiox4_clk, o_O=self.cd_rtiox4.clk),
-            Instance("BUFG", i_I=ext_clkout_clk, o_O=self.cd_ext_clkout.clk),
 
             AsyncResetSynchronizer(self.cd_rtio, ~pll_locked),
             MultiReg(pll_locked, self._pll_locked.status)
@@ -90,18 +102,8 @@ _sma33_io = [
 ]
 
 
-_ams101_dac = [
-    ("ams101_dac", 0,
-        Subsignal("ldac", Pins("XADC:GPIO0")),
-        Subsignal("clk", Pins("XADC:GPIO1")),
-        Subsignal("mosi", Pins("XADC:GPIO2")),
-        Subsignal("cs_n", Pins("XADC:GPIO3")),
-        IOStandard("LVTTL")
-     )
-]
 
-
-class _NIST_Ions(MiniSoC, AMPSoC):
+class _Oxford_Ions(MiniSoC, AMPSoC):
     csr_map = {
         # mapped on Wishbone instead
         "timer_kernel": None,
@@ -143,7 +145,6 @@ class _NIST_Ions(MiniSoC, AMPSoC):
             self.platform.request("user_led", 1)))
 
         self.platform.add_extension(_sma33_io)
-        self.platform.add_extension(_ams101_dac)
 
         i2c = self.platform.request("i2c")
         self.submodules.i2c = gpio.GPIOTristate([i2c.scl, i2c.sda])
@@ -185,9 +186,9 @@ class _NIST_Ions(MiniSoC, AMPSoC):
 # This list maps the logical index to the physical index
 descrambleList = [ 3, 2, 1, 0, 7, 6, 5, 4 ];
 
-class Oxford(_NIST_Ions):
+class Oxford(_Oxford_Ions):
     def __init__(self, cpu_type="or1k", **kwargs):
-        _NIST_Ions.__init__(self, cpu_type, **kwargs)
+        _Oxford_Ions.__init__(self, cpu_type, **kwargs)
         
         platform = self.platform
         platform.add_extension(oxford.fmc_adapter_io)
@@ -238,9 +239,10 @@ class TransparentOverride(Module):
             pad.eq(logicOutput)
         )
 
-class OxfordOverride(_NIST_Ions):
+
+class OxfordOverride(_Oxford_Ions):
     def __init__(self, cpu_type="or1k", **kwargs):
-        _NIST_Ions.__init__(self, cpu_type, **kwargs)
+        _Oxford_Ions.__init__(self, cpu_type, **kwargs)
         
         platform = self.platform
         platform.add_extension(oxford.fmc_adapter_io)
@@ -343,3 +345,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
