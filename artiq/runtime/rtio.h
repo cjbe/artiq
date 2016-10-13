@@ -30,4 +30,15 @@ long long int rtio_input_timestamp(long long int timeout, int channel);
  */
 unsigned int rtio_input_data(int channel);
 
+
+typedef struct {
+    long long int timestamp;
+    unsigned int data;
+} rtio_ts_dat;
+
+/*
+ * As rtio_input_timestamp, but also returns the event data
+ */
+rtio_ts_dat rtio_input_timestamp_data(long long int timeout, int channel);
+
 #endif /* __RTIO_H */

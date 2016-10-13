@@ -122,6 +122,46 @@ unsigned int rtio_input_data(int channel)
 }
 
 
+rtio_ts_dat rtio_input_timestamp_data(long long int timeout, int channel)
+{
+    rtio_ts_dat r;
+    int status;
+
+    rtio_chan_sel_write(channel);
+    while((status = rtio_i_status_read())) {
+        if(status & RTIO_I_STATUS_OVERFLOW) {
+            rtio_i_overflow_reset_write(1);
+            break;
+        }
+        if(rtio_get_counter() >= timeout) {
+            /* check empty flag again to prevent race condition.
+             * now we are sure that the time limit has been exceeded.
+             */
+            status = rtio_i_status_read();
+            if(status & RTIO_I_STATUS_EMPTY)
+                break;
+        }
+        /* input FIFO is empty - keep waiting */
+    }
+
+    if (status & RTIO_I_STATUS_OVERFLOW)
+        artiq_raise_from_c("RTIOOverflow",
+                "RTIO input overflow on channel {0}",
+                channel, 0, 0);
+    if (status & RTIO_I_STATUS_EMPTY) {
+        r.timestamp = -1;
+        return r;
+    }
+
+    r.timestamp = rtio_i_timestamp_read();
+    r.data = rtio_i_data_read();
+    rtio_i_re_write(1);
+    return r;
+}
+
+
+
+
 void rtio_log_va(long long int timestamp, const char *fmt, va_list args)
 {
     // This executes on the kernel CPU's stack, which is specifically designed
