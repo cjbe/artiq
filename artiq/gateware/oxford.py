@@ -115,4 +115,14 @@ fmc_adapter_io = [
         Subsignal("p", Pins("LPC:CLK0_M2C_P"), IOStandard("LVTTL")),
         Subsignal("n", Pins("LPC:CLK0_M2C_N"), IOStandard("LVTTL")),
     ),
+
+    ("tdc_in", 0, # user_sma_clock
+        Subsignal("p", Pins("L25"), IOStandard("LVDS_25")),
+        Subsignal("n", Pins("K25"), IOStandard("LVDS_25")),
+    ),
+
+    ("tdc_in", 1, # user_sma_gpio
+        Subsignal("p", Pins("Y23"), IOStandard("LVDS_25")),
+        Subsignal("n", Pins("Y24"), IOStandard("LVDS_25")),
+    ),
 ]

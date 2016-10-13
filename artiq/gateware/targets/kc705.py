@@ -2,6 +2,7 @@
 
 import argparse
 import sys
+import os
 
 from migen import *
 from migen.genlib.resetsync import AsyncResetSynchronizer
@@ -20,8 +21,10 @@ from misoc.integration.builder import builder_args, builder_argdict
 
 from artiq.gateware.soc import AMPSoC, build_artiq_soc
 from artiq.gateware import rtio, nist_qc1, nist_clock, nist_qc2, oxford
-from artiq.gateware.rtio.phy import ttl_simple, ttl_serdes_7series, dds, spi
+from artiq.gateware.tdc import TDC
+from artiq.gateware.rtio.phy import ttl_simple, ttl_serdes_7series, dds, spi, tdc
 from artiq import __version__ as artiq_version
+from artiq import __artiq_dir__ as artiq_dir
 
 
 class _RTIOCRG(Module, AutoCSR):
@@ -113,7 +116,8 @@ class _Oxford_Ions(MiniSoC, AMPSoC):
         "rtio_crg": 13,
         "kernel_cpu": 14,
         "rtio_moninj": 15,
-        "rtio_analyzer": 16
+        "rtio_analyzer": 16,
+        "tdc": 17
     }
     csr_map.update(MiniSoC.csr_map)
     mem_map = {
@@ -186,50 +190,6 @@ class _Oxford_Ions(MiniSoC, AMPSoC):
 # This list maps the logical index to the physical index
 descrambleList = [ 3, 2, 1, 0, 7, 6, 5, 4 ];
 
-class Oxford(_Oxford_Ions):
-    def __init__(self, cpu_type="or1k", **kwargs):
-        _Oxford_Ions.__init__(self, cpu_type, **kwargs)
-        
-        platform = self.platform
-        platform.add_extension(oxford.fmc_adapter_io)
-
-        rtio_channels = []
-
-        led = platform.request("ledFrontPanel", 0) 
-        self.comb += led.eq(1) # Front panel LED0 hard wired on
-        
-        for bank in ['a','b','c','d','e','f','g']:
-            for i in range(8):
-                phy = ttl_serdes_7series.Output_8X(platform.request(bank, descrambleList[i]), invert=True )
-                    
-                self.submodules += phy
-                rtio_channels.append(rtio.Channel.from_phy(phy))
-            
-        for i in range(8):
-            phy = ttl_serdes_7series.Inout_8X(platform.request("in", descrambleList[i]), invert=True)
-            self.submodules += phy
-            rtio_channels.append(rtio.Channel.from_phy(phy, ififo_depth=512))
-            
-        
-        phy = ttl_simple.Output(platform.request("ledFrontPanel", 1)) # No invert for the LEDs
-        self.submodules += phy
-        rtio_channels.append(rtio.Channel.from_phy(phy))
-
-        self.config["RTIO_REGULAR_TTL_COUNT"] = len(rtio_channels)
-        self.config["RTIO_FIRST_DDS_CHANNEL"] = len(rtio_channels)
-        self.config["RTIO_DDS_COUNT"] = 0
-        self.config["DDS_CHANNELS_PER_BUS"] = 0
-        self.config["DDS_AD9914"] = True
-
-        self.config["RTIO_LOG_CHANNEL"] = len(rtio_channels)
-        rtio_channels.append(rtio.LogChannel())
-
-        self.add_rtio(rtio_channels)
-
-        self.config["DDS_RTIO_CLK_RATIO"] = 24
-
-
-
 class TransparentOverride(Module):
     """Connects outputs to internal logic when input low, otherwise connects them to an external input, connected to the old LCU"""
     def __init__(self, pad, logicOutput, externalInput, inputOverride):
@@ -288,6 +248,17 @@ class OxfordOverride(_Oxford_Ions):
         self.submodules += phy
         rtio_channels.append(rtio.Channel.from_phy(phy))
 
+        # TDC
+        n_tdc_ch = 2
+        tdc_inputs = Signal(n_tdc_ch)
+        self.submodules.tdc = TDC(inputs=tdc_inputs, n_channels=n_tdc_ch)
+        for i in range(n_tdc_ch):
+            in_pair = self.platform.request("tdc_in", i)
+            self.specials += Instance("IBUFDS", i_I=in_pair.p, i_IB=in_pair.n, o_O=tdc_inputs[i])
+            phy = tdc.Channel(self.tdc, i)
+            self.submodules += phy
+            rtio_channels.append(rtio.Channel.from_phy(phy))
+
         # AD9910 DDS SPI hacks
         dds_sigs = ["dds_iorst", "dds_ioupdate", "dds_p0", "dds_p1", "dds_p2"]
         for sig in dds_sigs:
@@ -295,14 +266,14 @@ class OxfordOverride(_Oxford_Ions):
             self.submodules += phy
             rtio_channels.append(rtio.Channel.from_phy(phy))
 
+        self.config["RTIO_REGULAR_TTL_COUNT"] = len(rtio_channels)
+
         phy = spi.SPIMaster(self.platform.request("dds_spi", 0))
         self.submodules += phy
         self.config["RTIO_FIRST_SPI_CHANNEL"] = len(rtio_channels)
         rtio_channels.append(rtio.Channel.from_phy(
                 phy, ofifo_depth=128, ififo_depth=128))
 
-
-        self.config["RTIO_REGULAR_TTL_COUNT"] = len(rtio_channels)
         self.config["RTIO_FIRST_DDS_CHANNEL"] = len(rtio_channels)
         self.config["RTIO_DDS_COUNT"] = 0
         self.config["DDS_CHANNELS_PER_BUS"] = 0
@@ -327,19 +298,16 @@ def main():
     soc_kc705_args(parser)
     parser.add_argument("-H", "--hw-adapter", default="oxford_override",
                         help="hardware adapter type: "
-                             "oxford / oxford_override "
+                             " oxford_override "
                              "(default: %(default)s)")
     args = parser.parse_args()
 
     hw_adapter = args.hw_adapter.lower()
-    if hw_adapter == "oxford":
-        cls = Oxford
-    elif hw_adapter == "oxford_override":
-        cls = OxfordOverride
-    else:
+    if hw_adapter != "oxford_override":
         raise SystemExit("Invalid hardware adapter string (-H/--hw-adapter)")
 
-    soc = cls(**soc_kc705_argdict(args))
+    soc = OxfordOverride(**soc_kc705_argdict(args))
+    soc.platform.add_source_dir(os.path.join(artiq_dir, "gateware", "tdc_core"))
     build_artiq_soc(soc, builder_argdict(args))
 
 
