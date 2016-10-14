@@ -184,7 +184,9 @@ class _Oxford_Ions(MiniSoC, AMPSoC):
 
 
 
-
+# TDC parameters
+tdc_n_carry4 = 340
+tdc_n_ch = 2
 
 # The input and output 8-channel buffer boards scramble and invert the channels.
 # This list maps the logical index to the physical index
@@ -249,12 +251,11 @@ class OxfordOverride(_Oxford_Ions):
         rtio_channels.append(rtio.Channel.from_phy(phy))
 
         # TDC
-        n_tdc_ch = 2
-        tdc_inputs = Signal(n_tdc_ch)
-        self.submodules.tdc = TDC(inputs=tdc_inputs, n_channels=n_tdc_ch)
-        for i in range(n_tdc_ch):
+        tdc_inputs = Signal(tdc_n_ch)
+        self.submodules.tdc = TDC(inputs=tdc_inputs, n_channels=tdc_n_ch, carry4_count=tdc_n_carry4)
+        for i in range(tdc_n_ch):
             in_pair = self.platform.request("tdc_in", i)
-            self.specials += Instance("IBUFDS", i_I=in_pair.p, i_IB=in_pair.n, o_O=tdc_inputs[i])
+            self.specials += Instance("IBUFDS", p_DIFFTERM="True", i_I=in_pair.p, i_IB=in_pair.n, o_O=tdc_inputs[i])
             phy = tdc.Channel(self.tdc, i)
             self.submodules += phy
             rtio_channels.append(rtio.Channel.from_phy(phy))
@@ -308,8 +309,32 @@ def main():
 
     soc = OxfordOverride(**soc_kc705_argdict(args))
     soc.platform.add_source_dir(os.path.join(artiq_dir, "gateware", "tdc_core"))
-    build_artiq_soc(soc, builder_argdict(args))
 
+    # Do not error out from combinatorial loops (from the TDC ring oscs)
+    soc.platform.toolchain.pre_synthesis_commands.extend([
+                "set_property SEVERITY {{Warning}} [get_drc_checks LUTLP-1]",
+            ])
+
+    # Constrain carry chain placement and timing
+    for ch in range(tdc_n_ch):
+        soc.platform.toolchain.post_synthesis_commands.extend([
+            "set_false_path -through [get_nets {{{{tdc/cmp_channelbank/g_multi.cmp_channelbank/g_channels[{ch}].cmp_channel/muxed_signal}}}}]".format(ch=ch),
+            "set_false_path -through [get_nets {{{{tdc/cmp_channelbank/g_multi.cmp_channelbank/g_channels[{ch}].cmp_channel/cmp_delayline/signal_i}}}}]".format(ch=ch),
+            "set_property LOC SLICE_X{x}Y0 [get_cells \
+                {{tdc/cmp_channelbank/g_multi.cmp_channelbank/g_channels[{ch}].cmp_channel/cmp_delayline/g_carry4[0].g_firstcarry4.cmp_CARRY4}}]".format(x=ch*2,ch=ch),
+            ])
+        for i in range(tdc_n_carry4*4):
+            soc.platform.toolchain.post_synthesis_commands.append(
+                "set_property LOC SLICE_X{x}Y{y} [get_cells \
+                {{{{tdc/cmp_channelbank/g_multi.cmp_channelbank/g_channels[{ch}].cmp_channel/cmp_delayline/g_fd[{ff}].cmp_FDR_1}}}}]"
+                .format(x=ch*2,y=i//4, ch=ch, ff=i))
+
+    # Save out routed design
+    soc.platform.toolchain.bitstream_commands.extend([
+                "write_checkpoint -force top_route.dcp"
+            ])
+
+    build_artiq_soc(soc, builder_argdict(args))
 
 if __name__ == "__main__":
     main()
