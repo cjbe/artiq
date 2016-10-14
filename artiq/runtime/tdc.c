@@ -1,6 +1,8 @@
 #include <system.h>
 #include <generated/csr.h>
 
+#include "tdc.h"
+
 
 void tdc_reset(void)
 {
@@ -16,7 +18,7 @@ void tdc_debug_init(void)
     while( 0==tdc_freeze_acq_read() );
 
     // Pulse 'next' until we see 'last', then pulse one more time so we are definitely at the start
-    while( tdc_cs_last_read() == 0 ) tdc_next();
+    while( tdc_cs_last_read() == 0 ) tdc_debug_next();
     tdc_next();
 }
 
