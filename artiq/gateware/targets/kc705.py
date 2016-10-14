@@ -321,7 +321,7 @@ def main():
             "set_false_path -through [get_nets {{{{tdc/cmp_channelbank/g_multi.cmp_channelbank/g_channels[{ch}].cmp_channel/muxed_signal}}}}]".format(ch=ch),
             "set_false_path -through [get_nets {{{{tdc/cmp_channelbank/g_multi.cmp_channelbank/g_channels[{ch}].cmp_channel/cmp_delayline/signal_i}}}}]".format(ch=ch),
             "set_property LOC SLICE_X{x}Y0 [get_cells \
-                {{tdc/cmp_channelbank/g_multi.cmp_channelbank/g_channels[{ch}].cmp_channel/cmp_delayline/g_carry4[0].g_firstcarry4.cmp_CARRY4}}]".format(x=ch*2,ch=ch),
+                {{{{tdc/cmp_channelbank/g_multi.cmp_channelbank/g_channels[{ch}].cmp_channel/cmp_delayline/g_carry4[0].g_firstcarry4.cmp_CARRY4}}}}]".format(x=ch*2,ch=ch),
             ])
         for i in range(tdc_n_carry4*4):
             soc.platform.toolchain.post_synthesis_commands.append(
