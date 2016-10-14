@@ -255,7 +255,7 @@ class OxfordOverride(_Oxford_Ions):
         self.submodules.tdc = TDC(inputs=tdc_inputs, n_channels=tdc_n_ch, carry4_count=tdc_n_carry4)
         for i in range(tdc_n_ch):
             in_pair = self.platform.request("tdc_in", i)
-            self.specials += Instance("IBUFDS", p_DIFFTERM="True", i_I=in_pair.p, i_IB=in_pair.n, o_O=tdc_inputs[i])
+            self.specials += Instance("IBUFDS", p_DIFF_TERM="True", i_I=in_pair.p, i_IB=in_pair.n, o_O=tdc_inputs[i])
             phy = tdc.Channel(self.tdc, i)
             self.submodules += phy
             rtio_channels.append(rtio.Channel.from_phy(phy))
@@ -318,7 +318,6 @@ def main():
     # Constrain carry chain placement and timing
     for ch in range(tdc_n_ch):
         soc.platform.toolchain.post_synthesis_commands.extend([
-            "set_false_path -through [get_nets {{{{tdc/cmp_channelbank/g_multi.cmp_channelbank/g_channels[{ch}].cmp_channel/muxed_signal}}}}]".format(ch=ch),
             "set_false_path -through [get_nets {{{{tdc/cmp_channelbank/g_multi.cmp_channelbank/g_channels[{ch}].cmp_channel/cmp_delayline/signal_i}}}}]".format(ch=ch),
             "set_property LOC SLICE_X{x}Y0 [get_cells \
                 {{{{tdc/cmp_channelbank/g_multi.cmp_channelbank/g_channels[{ch}].cmp_channel/cmp_delayline/g_carry4[0].g_firstcarry4.cmp_CARRY4}}}}]".format(x=ch*2,ch=ch),
