@@ -127,7 +127,7 @@ class TDC:
         return tdc_ringosc_freq()
 
     @kernel
-    def read_hist(channel):
+    def read_hist(self, channel):
         N = 2048
         hist = [0]*N
         tdc_debug_init()
