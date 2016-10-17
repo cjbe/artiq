@@ -112,18 +112,19 @@ class _Oxford_Ions(MiniSoC, AMPSoC):
         "timer_kernel": None,
         "rtio": None,
         "i2c": None,
+        "tdc": None,
 
         "rtio_crg": 13,
         "kernel_cpu": 14,
         "rtio_moninj": 15,
         "rtio_analyzer": 16,
-        "tdc": 17
     }
     csr_map.update(MiniSoC.csr_map)
     mem_map = {
         "timer_kernel":  0x10000000, # (shadow @0x90000000)
         "rtio":          0x20000000, # (shadow @0xa0000000)
         "i2c":           0x30000000, # (shadow @0xb0000000)
+        "tdc":           0x60000000,
         "mailbox":       0x70000000  # (shadow @0xf0000000)
     }
     mem_map.update(MiniSoC.mem_map)
@@ -253,6 +254,7 @@ class OxfordOverride(_Oxford_Ions):
         # TDC
         tdc_inputs = Signal(tdc_n_ch)
         self.submodules.tdc = TDC(inputs=tdc_inputs, n_channels=tdc_n_ch, carry4_count=tdc_n_carry4)
+        self.register_kernel_cpu_csrdevice("tdc")
         for i in range(tdc_n_ch):
             in_pair = self.platform.request("tdc_in", i)
             self.specials += Instance("IBUFDS", p_DIFF_TERM="True", i_I=in_pair.p, i_IB=in_pair.n, o_O=tdc_inputs[i])
