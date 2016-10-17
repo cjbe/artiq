@@ -17,6 +17,7 @@
 #include "rtio.h"
 #include "dds.h"
 #include "i2c.h"
+#include "tdc.h"
 
 double round(double x);
 double sqrt(double x);
@@ -119,6 +120,7 @@ static const struct symbol runtime_exports[] = {
     {"rtio_output", &rtio_output},
     {"rtio_input_timestamp", &rtio_input_timestamp},
     {"rtio_input_data", &rtio_input_data},
+    {"rtio_input_timestamp_data", &rtio_input_timestamp_data},
 
 #if ((defined CONFIG_RTIO_DDS_COUNT) && (CONFIG_RTIO_DDS_COUNT > 0))
     {"dds_init", &dds_init},
@@ -136,6 +138,13 @@ static const struct symbol runtime_exports[] = {
 
     {"cache_get", &cache_get},
     {"cache_put", &cache_put},
+
+    {"tdc_reset", &tdc_reset},
+    {"tdc_debug_init", &tdc_debug_init},
+    {"tdc_debug_next", &tdc_debug_next},
+    {"tdc_debug_finish", &tdc_debug_finish},
+    {"tdc_ringosc_freq", &tdc_ringosc_freq},
+    {"tdc_read_hist", &tdc_read_hist},
 
     /* end */
     {NULL, NULL}
