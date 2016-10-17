@@ -25,7 +25,7 @@ class Channel(Module):
         self.comb += [
             self.rtlink.i.stb.eq(
                 tdc_ch.stb & 
-                ( (tdc_ch.pol==1 & sensitivity[0]) | (tdc_ch.pol==0 & sensitivity[1]) )
+                ( ((tdc_ch.pol==1) & sensitivity[0]) | ((tdc_ch.pol==0) & sensitivity[1]) )
             ),
             self.rtlink.i.data.eq( tdc_ch.fine )
         ]
