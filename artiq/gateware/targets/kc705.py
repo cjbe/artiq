@@ -36,7 +36,6 @@ class _RTIOCRG(Module, AutoCSR):
         self.clock_domains.cd_rtiox4 = ClockDomain(reset_less=True)
 
         # 250 MHz external clock input
-        #external_clk_250M = Signal()
         ext_clock = platform.request("ext_clk")
         platform.add_period_constraint(ext_clock.p, 4.0)
         
@@ -265,7 +264,7 @@ class OxfordOverride(_Oxford_Ions):
         # AD9910 DDS SPI hacks
         dds_sigs = ["dds_iorst", "dds_ioupdate", "dds_p0", "dds_p1", "dds_p2"]
         for sig in dds_sigs:
-            phy = ttl_serdes_7series.Output_8X(platform.request(sig, 0))
+            phy = ttl_simple.Output(platform.request(sig, 0))
             self.submodules += phy
             rtio_channels.append(rtio.Channel.from_phy(phy))
 

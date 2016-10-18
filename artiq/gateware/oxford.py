@@ -92,17 +92,15 @@ fmc_adapter_io = [
     ("h", 6, Pins("HPC:LA24_N"), IOStandard("LVTTL")),
     ("h", 7, Pins("HPC:LA24_P"), IOStandard("LVTTL")),
 
-    
-    # HPC : JK
-    ("dds_iorst", 0, Pins("HPC:LA31_P"), IOStandard("LVTTL")), # HPC : JK3
-    ("dds_ioupdate", 0, Pins("HPC:LA32_N"), IOStandard("LVTTL")), # HPC : JK4
-    ("dds_p0", 0, Pins("HPC:LA32_P"), IOStandard("LVTTL")), # HPC : JK5
-    ("dds_p1", 0, Pins("HPC:LA30_N"), IOStandard("LVTTL")), # HPC : JK6
-    ("dds_p2", 0, Pins("HPC:LA31_N"), IOStandard("LVTTL")), # HPC : JK7
 
-    ("dds_spi", 0,  Subsignal("clk", Pins("HPC:LA33_N")), # HPC : JK0
-                Subsignal("mosi", Pins("HPC:LA33_P")), # HPC : JK1
-                Subsignal("miso", Pins("HPC:LA30_P")), # HPC : JK2
+    # HPC : JK
+    ("dds_p2", 0, Pins("HPC:LA33_N"), IOStandard("LVTTL")), # HPC : JK1
+    ("dds_p1", 0, Pins("HPC:LA33_P"), IOStandard("LVTTL")), # HPC : JK2
+    ("dds_p0", 0, Pins("HPC:LA30_P"), IOStandard("LVTTL")), # HPC : JK3
+    ("dds_ioupdate", 0, Pins("HPC:LA31_P"), IOStandard("LVTTL")), # HPC : JK4
+    ("dds_iorst", 0, Pins("HPC:LA32_N"), IOStandard("LVTTL")), # HPC : JK5
+    ("dds_spi", 0,  Subsignal("clk", Pins("HPC:LA32_P")), # HPC : JK6
+                Subsignal("mosi", Pins("HPC:LA30_N")), # HPC : JK7
                 IOStandard("LVTTL")),
 
 
