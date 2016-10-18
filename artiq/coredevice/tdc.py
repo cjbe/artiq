@@ -2,7 +2,7 @@ import numpy
 
 from artiq.language.core import *
 from artiq.language.types import *
-from artiq.coredevice.rtio import rtio_output, rtio_input_timestamp_data
+from artiq.coredevice.rtio import rtio_output, rtio_input_timestamp, rtio_input_timestamp_data
 
 
 class TdcChannel:
@@ -127,16 +127,18 @@ class TDC:
         return tdc_ringosc_freq()
 
     @kernel
-    def read_hist(self, channel):
-        N = 2048
-        hist = [0]*N
+    def start(self, channel):
         tdc_debug_init()
         for _ in range(channel):
             tdc_debug_next()
-        for i in range(N):
-            hist[i] = tdc_read_hist(i)
+
+    @kernel
+    def finish(self):
         tdc_debug_finish()
-        return hist
+
+    @kernel
+    def read_hist_bin(self, bin):
+        return tdc_read_hist(bin)
 
 
 @syscall(flags={"nowrite"})
