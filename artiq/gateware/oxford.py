@@ -108,10 +108,10 @@ fmc_adapter_io = [
     ("ledFrontPanel", 0, Pins("LPC:LA17_CC_N"), IOStandard("LVTTL")),
     ("ledFrontPanel", 1, Pins("LPC:LA17_CC_P"), IOStandard("LVTTL")),
 
-    # Clock input/output on FMC LPC
+    # Clock input/output on FMC HPC
     ("ext_clk", 0, 
-        Subsignal("p", Pins("LPC:CLK0_M2C_P"), IOStandard("LVCMOS25")),
-        Subsignal("n", Pins("LPC:CLK0_M2C_N"), IOStandard("LVCMOS25")),
+        Subsignal("p", Pins("HPC:CLK0_M2C_P"), IOStandard("LVCMOS25")),
+        Subsignal("n", Pins("HPC:CLK0_M2C_N"), IOStandard("LVCMOS25")),
     ),
 
     ("tdc_in", 0, # user_sma_clock
