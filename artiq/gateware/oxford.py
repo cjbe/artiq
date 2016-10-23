@@ -110,8 +110,8 @@ fmc_adapter_io = [
 
     # Clock input/output on FMC HPC
     ("ext_clk", 0, 
-        Subsignal("p", Pins("HPC:CLK0_M2C_P"), IOStandard("LVCMOS25")),
-        Subsignal("n", Pins("HPC:CLK0_M2C_N"), IOStandard("LVCMOS25")),
+        Subsignal("p", Pins("HPC:CLK0_M2C_P"), IOStandard("LVTTL")),
+        Subsignal("n", Pins("HPC:CLK0_M2C_N"), IOStandard("LVTTL")),
     ),
 
     ("tdc_in", 0, # user_sma_clock
