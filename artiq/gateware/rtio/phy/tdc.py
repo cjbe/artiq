@@ -19,7 +19,7 @@ class Channel(Module):
 
         sensitivity = Signal(2)
 
-        self.sync.rio += If(self.rtlink.o.stb,
+        self.sync.rio_phy += If(self.rtlink.o.stb,
                             sensitivity.eq(self.rtlink.o.data))
 
         self.comb += [
