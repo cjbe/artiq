@@ -259,7 +259,7 @@ class OxfordOverride(_Oxford_Ions):
             self.specials += Instance("IBUFDS", p_DIFF_TERM="True", i_I=in_pair.p, i_IB=in_pair.n, o_O=tdc_inputs[i])
             phy = tdc.Channel(self.tdc, i)
             self.submodules += phy
-            rtio_channels.append(rtio.Channel.from_phy(phy))
+            rtio_channels.append(rtio.Channel.from_phy(phy, ififo_depth=512))
 
         # AD9910 DDS SPI hacks
         dds_sigs = ["dds_iorst", "dds_ioupdate", "dds_p0", "dds_p1", "dds_p2"]
