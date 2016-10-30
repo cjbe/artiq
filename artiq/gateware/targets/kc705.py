@@ -252,7 +252,7 @@ class OxfordOverride(_Oxford_Ions):
 
         # TDC
         tdc_inputs = Signal(tdc_n_ch)
-        self.submodules.tdc = TDC(inputs=tdc_inputs, n_channels=tdc_n_ch, carry4_count=tdc_n_carry4)
+        self.submodules.tdc = ClockDomainsRenamer("rio_phy")(TDC(inputs=tdc_inputs, n_channels=tdc_n_ch, carry4_count=tdc_n_carry4))
         self.register_kernel_cpu_csrdevice("tdc")
         for i in range(tdc_n_ch):
             in_pair = self.platform.request("tdc_in", i)
