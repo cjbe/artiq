@@ -221,6 +221,7 @@ class OxfordOverride(_Oxford_Ions):
 
         for bank in ['a','b','c','d','e','f','g']:
             for i in range(8):
+                ofifo_depth = 64
                 if bank=='g' and i<6:
                     pad = platform.request(bank, descrambleList[i])
                     internalOutput = Signal()
@@ -232,9 +233,13 @@ class OxfordOverride(_Oxford_Ions):
                     phy = ttl_simple.Output(pad, invert=True)
                     self.comb += inputOverride.eq(~pad)
                 else:
+                    if bank=='f' and i == 0:
+                        # Deeper FIFO for pulse picker trigger channel to work around timing issues when
+                        # generating longer 1 MHz trains for noise eating.
+                        ofifo_depth = 1024
                     phy = ttl_serdes_7series.Output_8X(platform.request(bank, descrambleList[i]), invert=True )
                 self.submodules += phy
-                rtio_channels.append(rtio.Channel.from_phy(phy))
+                rtio_channels.append(rtio.Channel.from_phy(phy, ofifo_depth=ofifo_depth))
             
         for i in range(2):
             phy = ttl_serdes_7series.Inout_8X(platform.request("in", descrambleList[i]), invert=True)
