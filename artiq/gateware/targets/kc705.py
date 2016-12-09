@@ -208,7 +208,7 @@ class Oxford(_Oxford_Ions):
         for bank in ['a','b','c','d','e','f','g']:
             for i in range(8):
                 ofifo_depth = 64
-                if bank=='f' and i == 0:
+                if bank=='g' and i == 5:
                     # Deeper FIFO for pulse picker trigger channel to work around timing issues when
                     # generating longer 1 MHz trains for noise eating.
                     ofifo_depth = 1024
@@ -283,7 +283,7 @@ def main():
     if hw_adapter != "oxford":
         raise SystemExit("Invalid hardware adapter string (-H/--hw-adapter)")
 
-    soc = OxfordOverride(**soc_kc705_argdict(args))
+    soc = Oxford(**soc_kc705_argdict(args))
     soc.platform.add_source_dir(os.path.join(artiq_dir, "gateware", "tdc_core"))
 
     # Do not error out from combinatorial loops (from the TDC ring oscs)
