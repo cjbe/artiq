@@ -192,17 +192,8 @@ tdc_n_ch = 2
 # This list maps the logical index to the physical index
 descrambleList = [ 3, 2, 1, 0, 7, 6, 5, 4 ];
 
-class TransparentOverride(Module):
-    """Connects outputs to internal logic when input low, otherwise connects them to an external input, connected to the old LCU"""
-    def __init__(self, pad, logicOutput, externalInput, inputOverride):
-        self.comb += If(inputOverride,
-            pad.eq(externalInput)
-        ).Else(
-            pad.eq(logicOutput)
-        )
 
-
-class OxfordOverride(_Oxford_Ions):
+class Oxford(_Oxford_Ions):
     def __init__(self, cpu_type="or1k", **kwargs):
         _Oxford_Ions.__init__(self, cpu_type, **kwargs)
         
@@ -213,43 +204,22 @@ class OxfordOverride(_Oxford_Ions):
 
         led = platform.request("ledFrontPanel", 0) 
         self.comb += led.eq(1) # Front panel LED0 hard wired on
-        
-        # The 6 'override inputs'
-        overrideInputs = [ platform.request("in", descrambleList[i]) for i in range(2,8) ]
-
-        inputOverride = Signal()
 
         for bank in ['a','b','c','d','e','f','g']:
             for i in range(8):
                 ofifo_depth = 64
-                if bank=='g' and i<6:
-                    pad = platform.request(bank, descrambleList[i])
-                    internalOutput = Signal()
-                    phy = ttl_simple.Output(internalOutput, invert=True)
-                    overrideMod = TransparentOverride( pad, internalOutput, overrideInputs[i], inputOverride )
-                    self.submodules += overrideMod
-                elif bank=='g' and i==7:
-                    pad = platform.request(bank, descrambleList[i])
-                    phy = ttl_simple.Output(pad, invert=True)
-                    self.comb += inputOverride.eq(~pad)
-                else:
-                    if bank=='f' and i == 0:
-                        # Deeper FIFO for pulse picker trigger channel to work around timing issues when
-                        # generating longer 1 MHz trains for noise eating.
-                        ofifo_depth = 1024
-                    phy = ttl_serdes_7series.Output_8X(platform.request(bank, descrambleList[i]), invert=True )
+                if bank=='f' and i == 0:
+                    # Deeper FIFO for pulse picker trigger channel to work around timing issues when
+                    # generating longer 1 MHz trains for noise eating.
+                    ofifo_depth = 1024
+                phy = ttl_serdes_7series.Output_8X(platform.request(bank, descrambleList[i]), invert=True )
                 self.submodules += phy
                 rtio_channels.append(rtio.Channel.from_phy(phy, ofifo_depth=ofifo_depth))
             
-        for i in range(2):
+        for i in range(8):
             phy = ttl_serdes_7series.Inout_8X(platform.request("in", descrambleList[i]), invert=True)
             self.submodules += phy
-            rtio_channels.append(rtio.Channel.from_phy(phy, ififo_depth=512))
-        for i in range(6):
-            phy = ttl_simple.Inout( overrideInputs[i], invert=True)
-            self.submodules += phy
-            rtio_channels.append(rtio.Channel.from_phy(phy))
-            
+            rtio_channels.append(rtio.Channel.from_phy(phy, ififo_depth=512))           
         
         phy = ttl_simple.Output(platform.request("ledFrontPanel", 1)) # No invert for the LEDs
         self.submodules += phy
@@ -303,14 +273,14 @@ def main():
                     "+ Oxford hardware adapters")
     builder_args(parser)
     soc_kc705_args(parser)
-    parser.add_argument("-H", "--hw-adapter", default="oxford_override",
+    parser.add_argument("-H", "--hw-adapter", default="oxford",
                         help="hardware adapter type: "
-                             " oxford_override "
+                             " oxford "
                              "(default: %(default)s)")
     args = parser.parse_args()
 
     hw_adapter = args.hw_adapter.lower()
-    if hw_adapter != "oxford_override":
+    if hw_adapter != "oxford":
         raise SystemExit("Invalid hardware adapter string (-H/--hw-adapter)")
 
     soc = OxfordOverride(**soc_kc705_argdict(args))
