@@ -849,6 +849,8 @@ class LLVMIRGenerator:
 
     def process_Coerce(self, insn):
         typ, value_typ = insn.type, insn.value().type
+        if typ == value_typ:
+            return self.map(insn.value())
         if builtins.is_int(typ) and builtins.is_float(value_typ):
             return self.llbuilder.fptosi(self.map(insn.value()), self.llty_of_type(typ),
                                          name=insn.name)
@@ -1252,10 +1254,12 @@ class LLVMIRGenerator:
         self.llbuilder.call(self.llbuiltin("llvm.stackrestore"), [llstackptr])
 
         # T result = {
-        #   void *ptr = NULL;
-        #   loop: int size = rpc_recv("tag", ptr);
+        #   void *ret_ptr = alloca(sizeof(T));
+        #   void *ptr = ret_ptr;
+        #   loop: int size = recv_rpc(ptr);
+        #   // Non-zero: Provide `size` bytes of extra storage for variable-length data.
         #   if(size) { ptr = alloca(size); goto loop; }
-        #   else *(T*)ptr
+        #   else *(T*)ret_ptr
         # }
         llprehead   = self.llbuilder.basic_block
         llhead      = self.llbuilder.append_basic_block(name="rpc.head")
@@ -1270,7 +1274,7 @@ class LLVMIRGenerator:
         self.llbuilder.branch(llhead)
 
         self.llbuilder.position_at_end(llhead)
-        llphi = self.llbuilder.phi(llslotgen.type, name="rpc.size")
+        llphi = self.llbuilder.phi(llslotgen.type, name="rpc.ptr")
         llphi.add_incoming(llslotgen, llprehead)
         if llunwindblock:
             llsize = self.llbuilder.invoke(self.llbuiltin("recv_rpc"), [llphi],
