@@ -190,14 +190,20 @@ class DatasetManager:
             broadcast = True
         if broadcast:
             self.broadcast[key] = persist, value
+        elif key in self.broadcast.read:
+            del self.broadcast[key]
         if save:
             self.local[key] = value
+        elif key in self.local:
+            del self.local[key]
 
     def mutate(self, key, index, value):
         target = None
         if key in self.local:
             target = self.local[key]
         if key in self.broadcast.read:
+            if target is not None:
+                assert target is self.broadcast.read[key][1]
             target = self.broadcast[key][1]
         if target is None:
             raise KeyError("Cannot mutate non-existing dataset")
