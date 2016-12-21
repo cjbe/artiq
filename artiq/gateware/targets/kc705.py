@@ -199,18 +199,23 @@ class Oxford(_NIST_Ions):
         
         for bank in ['a','b','c','d','e','f','g']:
             for i in range(8):
-                phy = ttl_serdes_7series.Output_8X(platform.request(bank, descrambleList[i]), invert=True )
+                phy = ttl_serdes_7series.Output_8X(platform.request(
+                    bank, 
+                    descrambleList[i]), 
+                    invert=True)
                     
                 self.submodules += phy
                 rtio_channels.append(rtio.Channel.from_phy(phy))
             
         for i in range(8):
-            phy = ttl_serdes_7series.Inout_8X(platform.request("in", descrambleList[i]), invert=True)
+            phy = ttl_serdes_7series.Inout_8X(
+                platform.request("in", descrambleList[i]),
+                invert=True)
             self.submodules += phy
             rtio_channels.append(rtio.Channel.from_phy(phy, ififo_depth=512))
             
-        
-        phy = ttl_simple.Output(platform.request("ledFrontPanel", 1)) # No invert for the LEDs
+        # No invert for the LEDs
+        phy = ttl_simple.Output(platform.request("ledFrontPanel", 1)) 
         self.submodules += phy
         rtio_channels.append(rtio.Channel.from_phy(phy))
 
@@ -230,7 +235,8 @@ class Oxford(_NIST_Ions):
 
 
 class TransparentOverride(Module):
-    """Connects outputs to internal logic when input low, otherwise connects them to an external input, connected to the old LCU"""
+    """Connects outputs to internal logic when input low, otherwise connects 
+    them to an external input, connected to the old control system"""
     def __init__(self, pad, logicOutput, externalInput, inputOverride):
         self.comb += If(inputOverride,
             pad.eq(externalInput)
@@ -238,7 +244,18 @@ class TransparentOverride(Module):
             pad.eq(logicOutput)
         )
 
-class OxfordOverride(_NIST_Ions):
+class OxfordLab2(_NIST_Ions):
+    """Hardware adapter for Lab 2.
+    Banks a,b,c,d all Serdes outputs
+    Banks e and f TTL outputs (no serdes), potentially overridden by inputs, 
+        apart from f[6:7], which are normal serdes outputs 
+    Banks g, 'in' all inputs, all TTL inputs (no serdes) apart from in[6] and in[7]
+    Override functionality:
+    When 'external override' is enabled:
+    * inputs g[0:7] connected to outputs e[0:7]
+    * inputs in[0:5] connected to outputs f[0:5]
+    when 'external override' is disabled:
+    * all outputs controlled by Artiq"""
     def __init__(self, cpu_type="or1k", **kwargs):
         _NIST_Ions.__init__(self, cpu_type, **kwargs)
         
@@ -250,55 +267,64 @@ class OxfordOverride(_NIST_Ions):
         led = platform.request("ledFrontPanel", 0) 
         self.comb += led.eq(1) # Front panel LED0 hard wired on
         
-        # The 6 'override inputs'
-        overrideInputs = [ platform.request("in", descrambleList[i]) for i in range(2,8) ]
+        # The 8+6 'override inputs'
+        overrideInputs = []
+        overrideInputs.extend(
+            [platform.request("g", descrambleList[i]) for i in range(8) ])
+        overrideInputs.extend(
+            [platform.request("in", descrambleList[i]) for i in range(6) ])
 
         inputOverride = Signal()
 
-        for bank in ['a','b','c','d','e','f','g']:
+        for bank in ['a','b','c','d']:
             for i in range(8):
-                if bank=='g' and i<6:
-                    pad = platform.request(bank, descrambleList[i])
-                    internalOutput = Signal()
-                    phy = ttl_simple.Output(internalOutput, invert=True)
-                    overrideMod = TransparentOverride( pad, internalOutput, overrideInputs[i], inputOverride )
-                    self.submodules += overrideMod
-                elif bank=='g' and i==7:
-                    pad = platform.request(bank, descrambleList[i])
-                    phy = ttl_simple.Output(pad, invert=True)
-                    self.comb += inputOverride.eq(~pad)
-                else:
-                    phy = ttl_serdes_7series.Output_8X(platform.request(bank, descrambleList[i]), invert=True )
+                phy = ttl_serdes_7series.Output_8X(
+                    platform.request(bank, descrambleList[i]), 
+                    invert=True)
                 self.submodules += phy
                 rtio_channels.append(rtio.Channel.from_phy(phy))
             
-        for i in range(2):
-            phy = ttl_serdes_7series.Inout_8X(platform.request("in", descrambleList[i]), invert=True)
-            self.submodules += phy
-            rtio_channels.append(rtio.Channel.from_phy(phy, ififo_depth=512))
-        for i in range(6):
-            phy = ttl_simple.Inout( overrideInputs[i], invert=True)
-            self.submodules += phy
-            rtio_channels.append(rtio.Channel.from_phy(phy))
-            
-        
-        phy = ttl_simple.Output(platform.request("ledFrontPanel", 1)) # No invert for the LEDs
+        for bank in ['e', 'f']:
+            for i in range(8):
+                ind = 8+i if bank=='f' else i 
+                pad = platform.request(bank, descrambleList[i])
+                internalOutput = Signal()
+                if bank=='f' and i>=6:
+                    phy = ttl_serdes_7series.Output_8X(
+                        internalOutput,
+                        invert=True)
+                else:
+                    phy = ttl_simple.Output(internalOutput, invert=True)
+                    overrideMod = TransparentOverride( 
+                        pad, 
+                        internalOutput, 
+                        overrideInputs[ind], 
+                        inputOverride)
+                    self.submodules += overrideMod
+                self.submodules += phy
+                rtio_channels.append(rtio.Channel.from_phy(phy))
+
+        for bank in ['g', 'in']:
+            for i in range(8):
+                ind = 8+i if bank=='in' else i
+                if bank=='in' and i>=6:
+                    phy = ttl_serdes_7series.Inout_8X(
+                            platform.request("in", descrambleList[i]), 
+                            invert=True)
+                else:
+                    phy = ttl_simple.Inout( overrideInputs[ind], invert=True)
+                self.submodules += phy
+                rtio_channels.append(rtio.Channel.from_phy(phy, ififo_depth=512))
+
+        # No invert for the LEDs
+        phy = ttl_simple.Output(platform.request("ledFrontPanel", 1)) 
         self.submodules += phy
         rtio_channels.append(rtio.Channel.from_phy(phy))
 
-        # AD9910 DDS SPI hacks
-        dds_sigs = ["dds_iorst", "dds_ioupdate", "dds_p0", "dds_p1", "dds_p2"]
-        for sig in dds_sigs:
-            phy = ttl_serdes_7series.Output_8X(platform.request(sig, 0))
-            self.submodules += phy
-            rtio_channels.append(rtio.Channel.from_phy(phy))
-
-        phy = spi.SPIMaster(self.platform.request("dds_spi", 0))
+        # External override enable signal
+        phy = ttl_simple.Output(inputOverride)
         self.submodules += phy
-        self.config["RTIO_FIRST_SPI_CHANNEL"] = len(rtio_channels)
-        rtio_channels.append(rtio.Channel.from_phy(
-                phy, ofifo_depth=128, ififo_depth=128))
-
+        rtio_channels.append(rtio.Channel.from_phy(phy))
 
         self.config["RTIO_REGULAR_TTL_COUNT"] = len(rtio_channels)
         self.config["RTIO_FIRST_DDS_CHANNEL"] = len(rtio_channels)
@@ -323,17 +349,17 @@ def main():
                     "+ Oxford hardware adapters")
     builder_args(parser)
     soc_kc705_args(parser)
-    parser.add_argument("-H", "--hw-adapter", default="oxford_override",
+    parser.add_argument("-H", "--hw-adapter", default="oxford_lab2",
                         help="hardware adapter type: "
-                             "oxford / oxford_override "
+                             "oxford / oxford_lab2 "
                              "(default: %(default)s)")
     args = parser.parse_args()
 
     hw_adapter = args.hw_adapter.lower()
     if hw_adapter == "oxford":
         cls = Oxford
-    elif hw_adapter == "oxford_override":
-        cls = OxfordOverride
+    elif hw_adapter == "oxford_lab2":
+        cls = OxfordLab2
     else:
         raise SystemExit("Invalid hardware adapter string (-H/--hw-adapter)")
 
