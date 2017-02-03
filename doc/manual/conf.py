@@ -28,7 +28,13 @@ class Mock(MagicMock):
         return Mock()
 
 
-mock_modules = ["artiq.gui.moninj", "quamash", "pyqtgraph", "matplotlib"]
+mock_modules = ["artiq.gui.moninj",
+                "artiq.gui.waitingspinnerwidget",
+                "artiq.gui.flowlayout",
+                "quamash", "pyqtgraph", "matplotlib",
+                "numpy", "dateutil", "dateutil.parser", "prettytable", "PyQt5",
+                "h5py", "serial", "scipy", "scipy.interpolate", "asyncserial",
+                "llvmlite_artiq", "Levenshtein", "aiohttp"]
 
 for module in mock_modules:
     sys.modules[module] = Mock()
@@ -37,7 +43,7 @@ for module in mock_modules:
 # If extensions (or modules to document with autodoc) are in another directory,
 # add these directories to sys.path here. If the directory is relative to the
 # documentation root, use os.path.abspath to make it absolute, like shown here.
-sys.path.insert(0, os.path.abspath('..'))
+sys.path.insert(0, os.path.abspath('../..'))
 
 from artiq import __version__ as artiq_version
 
@@ -53,6 +59,7 @@ extensions = [
     'sphinx.ext.autodoc',
     'sphinx.ext.mathjax',
     'sphinx.ext.viewcode',
+    'sphinx.ext.napoleon',
     'sphinxarg.ext',
     'sphinxcontrib.wavedrom',  # see also below for config
 ]
@@ -71,7 +78,7 @@ master_doc = 'index'
 
 # General information about the project.
 project = 'ARTIQ'
-copyright = '2014-2016, M-Labs Limited'
+copyright = '2014-2017, M-Labs Limited'
 
 # The version info for the project you're documenting, acts as replacement for
 # |version| and |release|, also used in various other places throughout the
