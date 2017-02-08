@@ -233,6 +233,44 @@ class Oxford(_NIST_Ions):
         self.config["DDS_RTIO_CLK_RATIO"] = 24
 
 
+class OxfordSingleFmc(_NIST_Ions):
+    def __init__(self, cpu_type="or1k", **kwargs):
+        _NIST_Ions.__init__(self, cpu_type, **kwargs)
+        
+        platform = self.platform
+        platform.add_extension(oxford.fmc_adapter_io)
+
+        rtio_channels = []
+
+        for bank in ['a','b','c','d','e']:
+            for i in range(8):
+                phy = ttl_serdes_7series.Inout_8X(platform.request(
+                    bank, 
+                    descrambleList[i]), 
+                    invert=True)
+                    
+                self.submodules += phy
+                rtio_channels.append(rtio.Channel.from_phy(phy))
+
+        for i in range(2):
+            # No invert for the LEDs
+            phy = ttl_simple.Output(platform.request("ledFrontPanel", i))
+            self.submodules += phy
+            rtio_channels.append(rtio.Channel.from_phy(phy))
+
+        self.config["RTIO_REGULAR_TTL_COUNT"] = len(rtio_channels)
+        self.config["RTIO_FIRST_DDS_CHANNEL"] = len(rtio_channels)
+        self.config["RTIO_DDS_COUNT"] = 0
+        self.config["DDS_CHANNELS_PER_BUS"] = 0
+        self.config["DDS_AD9914"] = True
+
+        self.config["RTIO_LOG_CHANNEL"] = len(rtio_channels)
+        rtio_channels.append(rtio.LogChannel())
+
+        self.add_rtio(rtio_channels)
+
+        self.config["DDS_RTIO_CLK_RATIO"] = 24
+
 
 class TransparentOverride(Module):
     """Connects outputs to internal logic when input low, otherwise connects 
@@ -351,7 +389,7 @@ def main():
     soc_kc705_args(parser)
     parser.add_argument("-H", "--hw-adapter", default="oxford_lab2",
                         help="hardware adapter type: "
-                             "oxford / oxford_lab2 "
+                             "oxford / oxford_lab2 / oxford_singlefmc"
                              "(default: %(default)s)")
     args = parser.parse_args()
 
@@ -360,6 +398,8 @@ def main():
         cls = Oxford
     elif hw_adapter == "oxford_lab2":
         cls = OxfordLab2
+    elif hw_adapter == "oxford_singlefmc":
+        cls = OxfordSingleFmc
     else:
         raise SystemExit("Invalid hardware adapter string (-H/--hw-adapter)")
 
@@ -369,3 +409,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
