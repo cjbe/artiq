@@ -73,8 +73,6 @@ class _ArgumentEditor(QtWidgets.QTreeWidget):
 
             entry = procdesc_to_entry(argument["desc"])(argument)
             widget_item = QtWidgets.QTreeWidgetItem([name])
-            if argument["tooltip"]:
-                widget_item.setToolTip(0, argument["tooltip"])
             widgets["entry"] = entry
             widgets["widget_item"] = widget_item
 
@@ -525,13 +523,12 @@ class ExperimentManager:
 
     def initialize_submission_arguments(self, expurl, arginfo):
         arguments = OrderedDict()
-        for name, (procdesc, group, tooltip) in arginfo.items():
+        for name, (procdesc, group) in arginfo.items():
             state = procdesc_to_entry(procdesc).default_state(procdesc)
             arguments[name] = {
                 "desc": procdesc,
                 "group": group,
-                "tooltip": tooltip,
-                "state": state,  # mutated by entries
+                "state": state  # mutated by entries
             }
         self.submission_arguments[expurl] = arguments
         return arguments
