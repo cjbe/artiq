@@ -36,7 +36,7 @@ The wall clock keeps running across experiments.
 Absolute timestamps can be large numbers.
 They are represented internally as 64-bit integers with a resolution of typically a nanosecond and a range of hundreds of years.
 Conversions between such a large integer number and a floating point representation can cause loss of precision through cancellation.
-When computing the difference of absolute timestamps, use ``mu_to_seconds(t2-t1)``, not ``mu_to_seconds(t2)-mu_to_seconds(t1)`` (see :meth:`artiq.language.core.mu_to_seconds`).
+When computing the difference of absolute timestamps, use ``self.core.mu_to_seconds(t2-t1)``, not ``self.core.mu_to_seconds(t2)-self.core.mu_to_seconds(t1)`` (see :meth:`artiq.coredevice.Core.mu_to_seconds`).
 When accumulating time, do it in machine units and not in SI units, so that rounding errors do not accumulate.
 
 The following basic example shows how to place output events on the timeline.
@@ -117,6 +117,25 @@ To track down ``RTIOUnderflows`` in an experiment there are a few approaches:
     code.
   * The :any:`integrated logic analyzer <core-device-rtio-analyzer-tool>` shows the timeline context that lead to the exception. The analyzer is always active and supports plotting of RTIO slack. RTIO slack is the difference between timeline cursor and wall clock time (``now - rtio_counter``).
 
+Collisions
+----------
+A collision happens when more than one event is submitted on a given channel with the same coarse timestamp, and that channel does not implement replacement behavior or the fine timestamps are different.
+
+Coarse timestamps correspond to the RTIO system clock (typically around 125MHz) whereas fine timestamps correspond to the RTIO SERDES clock (typically around 1GHz). Different channels may have different ratios between the coarse and fine timestamp clock frequencies.
+
+The offending event is discarded and the RTIO core keeps operating.
+
+This error is reported asynchronously via the core device log: for performance reasons with DRTIO, the CPU does not wait for an error report from the satellite after writing an event. Therefore, it is not possible to raise an exception precisely.
+
+Busy errors
+-----------
+
+A busy error happens when at least one output event could not be executed because the channel was already busy executing a previous event.
+
+The offending event was discarded.
+
+This error is reported asynchronously via the core device log.
+
 Input channels and events
 -------------------------
 
@@ -132,6 +151,8 @@ If more than 20 rising edges were received it outputs a pulse::
 The :meth:`artiq.coredevice.ttl.TTLInOut.count` method of an input channel can lead to a situation of negative slack (timeline cursor ``now`` smaller than the current wall clock ``rtio_counter``):
 The :meth:`artiq.coredevice.ttl.TTLInOut.gate_rising` method leaves the timeline cursor at the closure time of the gate and ``count()`` must necessarily wait until the gate closing event has actually been executed which is sometime with ``rtio_counter > now``.
 In these situations where ``count()`` leads to a synchronization of timeline cursor and wall clock, a ``delay()`` is necessary to reestablish positive slack so that output events can be placed.
+
+Similar situations arise with methods such as :meth:`artiq.coredevice.ttl.TTLInOut.sample_get` and :meth:`artiq.coredevice.ttl.TTLInOut.watch_done`.
 
 .. wavedrom::
   {
@@ -151,10 +172,10 @@ In these situations where ``count()`` leads to a synchronization of timeline cur
 Overflow exceptions
 -------------------
 
-The RTIO input channels buffer input events received while an input gate is open.
-The events are kept in a FIFO until the CPU reads them out via ``count()`` (or :meth:`artiq.coredevice.ttl.TTLInOut.timestamp_mu`).
+The RTIO input channels buffer input events received while an input gate is open, or at certain points in time when using the sampling API (:meth:`artiq.coredevice.ttl.TTLInOut.sample_input`).
+The events are kept in a FIFO until the CPU reads them out via e.g. :meth:`artiq.coredevice.ttl.TTLInOut.count`, :meth:`artiq.coredevice.ttl.TTLInOut.timestamp_mu` or :meth:`artiq.coredevice.ttl.TTLInOut.sample_get`.
 If the FIFO is full and another event is coming in, this causes an overflow condition.
-The condition is converted into an :class:`artiq.coredevice.exceptions.RTIOOverflow` exception that is raised on a subsequent invocation of one of the readout methods (``count()`` or ``timestamp_mu()``).
+The condition is converted into an :class:`artiq.coredevice.exceptions.RTIOOverflow` exception that is raised on a subsequent invocation of one of the readout methods (e.g. ``count()``, ``timestamp_mu()``, ``sample_get()``).
 
 Seamless handover
 -----------------

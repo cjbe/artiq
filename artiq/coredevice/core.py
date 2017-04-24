@@ -1,4 +1,5 @@
 import os, sys
+import numpy
 
 from pythonparser import diagnostic
 
@@ -81,11 +82,13 @@ class Core:
         self.core = self
         self.comm.core = self
 
-    def compile(self, function, args, kwargs, set_result=None, attribute_writeback=True):
+    def compile(self, function, args, kwargs, set_result=None,
+                attribute_writeback=True, print_as_rpc=True):
         try:
             engine = _DiagnosticEngine(all_errors_are_fatal=True)
 
-            stitcher = Stitcher(engine=engine, core=self, dmgr=self.dmgr)
+            stitcher = Stitcher(engine=engine, core=self, dmgr=self.dmgr,
+                                print_as_rpc=print_as_rpc)
             stitcher.stitch_call(function, args, kwargs, set_result)
             stitcher.finalize()
 
@@ -105,6 +108,7 @@ class Core:
 
     def run(self, function, args, kwargs):
         result = None
+        @rpc(flags={"async"})
         def set_result(new_result):
             nonlocal result
             result = new_result
@@ -113,7 +117,7 @@ class Core:
             self.compile(function, args, kwargs, set_result)
 
         if self.first_run:
-            self.comm.check_ident()
+            self.comm.check_system_info()
             self.comm.switch_clock(self.external_clock)
             self.first_run = False
 
@@ -122,6 +126,23 @@ class Core:
         self.comm.serve(embedding_map, symbolizer, demangler)
 
         return result
+
+    @portable
+    def seconds_to_mu(self, seconds):
+        """Converts seconds to the corresponding number of machine units
+        (RTIO cycles).
+
+        :param seconds: time (in seconds) to convert.
+        """
+        return numpy.int64(seconds//self.ref_period)
+
+    @portable
+    def mu_to_seconds(self, mu):
+        """Converts machine units (RTIO cycles) to seconds.
+
+        :param mu: cycle count to convert.
+        """
+        return mu*self.ref_period
 
     @kernel
     def get_rtio_counter_mu(self):

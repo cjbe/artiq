@@ -2,15 +2,20 @@
 # Copyright (C) 2014, 2015 Robert Jordens <jordens@gmail.com>
 
 import os, unittest
+import numpy as np
 
 from math import sqrt
 
 from artiq.experiment import *
 from artiq.test.hardware_testbench import ExperimentCase
 from artiq.coredevice import exceptions
+from artiq.coredevice.comm_mgmt import CommMgmt
+from artiq.coredevice.comm_analyzer import (StoppedMessage, OutputMessage, InputMessage,
+                                            decode_dump, get_analyzer_dump)
 
 
 artiq_low_latency = os.getenv("ARTIQ_LOW_LATENCY")
+artiq_in_devel = os.getenv("ARTIQ_IN_DEVEL")
 
 
 class PulseNotReceived(Exception):
@@ -38,7 +43,7 @@ class RTT(EnvExperiment):
         t1 = self.ttl_inout.timestamp_mu()
         if t1 < 0:
             raise PulseNotReceived()
-        self.set_dataset("rtt", mu_to_seconds(t1 - t0))
+        self.set_dataset("rtt", self.core.mu_to_seconds(t1 - t0))
 
 
 class Loopback(EnvExperiment):
@@ -62,7 +67,7 @@ class Loopback(EnvExperiment):
         t1 = self.loop_in.timestamp_mu()
         if t1 < 0:
             raise PulseNotReceived()
-        self.set_dataset("rtt", mu_to_seconds(t1 - t0))
+        self.set_dataset("rtt", self.core.mu_to_seconds(t1 - t0))
 
 
 class ClockGeneratorLoopback(EnvExperiment):
@@ -76,7 +81,7 @@ class ClockGeneratorLoopback(EnvExperiment):
         self.core.reset()
         self.loop_clock_in.input()
         self.loop_clock_out.stop()
-        delay(10*us)
+        delay(20*us)
         with parallel:
             self.loop_clock_in.gate_rising(10*us)
             with sequential:
@@ -93,7 +98,7 @@ class PulseRate(EnvExperiment):
     @kernel
     def run(self):
         self.core.reset()
-        dt = seconds_to_mu(300*ns)
+        dt = self.core.seconds_to_mu(300*ns)
         while True:
             for i in range(10000):
                 try:
@@ -104,7 +109,7 @@ class PulseRate(EnvExperiment):
                     self.core.break_realtime()
                     break
             else:
-                self.set_dataset("pulse_rate", mu_to_seconds(dt))
+                self.set_dataset("pulse_rate", self.core.mu_to_seconds(dt))
                 return
 
 
@@ -118,21 +123,22 @@ class PulseRateDDS(EnvExperiment):
     @kernel
     def run(self):
         self.core.reset()
-        dt = seconds_to_mu(5*us)
+        dt = self.core.seconds_to_mu(5*us)
+        freq = self.core_dds.frequency_to_ftw(100*MHz)
         while True:
             delay(10*ms)
             for i in range(1250):
                 try:
                     with self.core_dds.batch:
-                        self.dds0.set(100*MHz)
-                        self.dds1.set(100*MHz)
+                        self.dds0.set_mu(freq)
+                        self.dds1.set_mu(freq)
                     delay_mu(dt)
                 except RTIOUnderflow:
                     dt += 100
                     self.core.break_realtime()
                     break
             else:
-                self.set_dataset("pulse_rate", mu_to_seconds(dt//2))
+                self.set_dataset("pulse_rate", self.core.mu_to_seconds(dt//2))
                 return
 
 
@@ -170,6 +176,65 @@ class LoopbackCount(EnvExperiment):
                     delay(25*ns)
                     self.loop_out.pulse(25*ns)
         self.set_dataset("count", self.loop_in.count())
+
+
+class IncorrectLevel(Exception):
+    pass
+
+
+class Level(EnvExperiment):
+    def build(self):
+        self.setattr_device("core")
+        self.setattr_device("loop_in")
+        self.setattr_device("loop_out")
+
+    @kernel
+    def run(self):
+        self.core.reset()
+        self.loop_in.input()
+        self.loop_out.output()
+        delay(5*us)
+
+        self.loop_out.off()
+        delay(5*us)
+        if self.loop_in.sample_get_nonrt():
+            raise IncorrectLevel
+
+        self.loop_out.on()
+        delay(5*us)
+        if not self.loop_in.sample_get_nonrt():
+            raise IncorrectLevel
+
+
+class Watch(EnvExperiment):
+    def build(self):
+        self.setattr_device("core")
+        self.setattr_device("loop_in")
+        self.setattr_device("loop_out")
+
+    @kernel
+    def run(self):
+        self.core.reset()
+        self.loop_in.input()
+        self.loop_out.output()
+        delay(5*us)
+
+        self.loop_out.off()
+        delay(5*us)
+        if not self.loop_in.watch_stay_off():
+            raise IncorrectLevel
+        delay(10*us)
+        if not self.loop_in.watch_done():
+            raise IncorrectLevel
+
+        delay(10*us)
+        if not self.loop_in.watch_stay_off():
+            raise IncorrectLevel
+        delay(3*us)
+        self.loop_out.on()
+        delay(10*us)
+        if self.loop_in.watch_done():
+            raise IncorrectLevel
 
 
 class Underflow(EnvExperiment):
@@ -249,6 +314,19 @@ class Handover(EnvExperiment):
         self.k("t2")
 
 
+class Rounding(EnvExperiment):
+    def build(self):
+        self.setattr_device("core")
+
+    @kernel
+    def run(self):
+        self.core.reset()
+        t1 = now_mu()
+        delay(8*us)
+        t2 = now_mu()
+        self.set_dataset("delta", t2 - t1)
+
+
 class DummyException(Exception):
     pass
 
@@ -301,13 +379,19 @@ class CoredeviceTest(ExperimentCase):
         rate = self.dataset_mgr.get("pulse_rate")
         print(rate)
         self.assertGreater(rate, 1*us)
-        self.assertLess(rate, 6.2*us)
+        self.assertLess(rate, 16*us)
 
     def test_loopback_count(self):
         npulses = 2
         self.execute(LoopbackCount, npulses=npulses)
         count = self.dataset_mgr.get("count")
         self.assertEqual(count, npulses)
+
+    def test_level(self):
+        self.execute(Level)
+
+    def test_watch(self):
+        self.execute(Watch)
 
     def test_underflow(self):
         with self.assertRaises(RTIOUnderflow):
@@ -318,12 +402,22 @@ class CoredeviceTest(ExperimentCase):
             self.execute(SequenceError)
 
     def test_collision(self):
-        with self.assertRaises(RTIOCollision):
-            self.execute(Collision)
+        core_addr = self.device_mgr.get_desc("comm")["arguments"]["host"]
+        mgmt = CommMgmt(self.device_mgr, core_addr)
+        mgmt.clear_log()
+        self.execute(Collision)
+        log = mgmt.get_log()
+        self.assertIn("RTIO collision", log)
+        mgmt.close()
 
     def test_address_collision(self):
-        with self.assertRaises(RTIOCollision):
-            self.execute(AddressCollision)
+        core_addr = self.device_mgr.get_desc("comm")["arguments"]["host"]
+        mgmt = CommMgmt(self.device_mgr, core_addr)
+        mgmt.clear_log()
+        self.execute(AddressCollision)
+        log = mgmt.get_log()
+        self.assertIn("RTIO collision", log)
+        mgmt.close()
 
     def test_watchdog(self):
         # watchdog only works on the device
@@ -338,7 +432,7 @@ class CoredeviceTest(ExperimentCase):
         self.execute(TimeKeepsRunning)
         t2 = self.dataset_mgr.get("time_at_start")
 
-        dead_time = mu_to_seconds(t2 - t1, self.device_mgr.get("core"))
+        dead_time = self.device_mgr.get("core").mu_to_seconds(t2 - t1)
         print(dead_time)
         self.assertGreater(dead_time, 1*ms)
         self.assertLess(dead_time, 2500*ms)
@@ -353,6 +447,10 @@ class CoredeviceTest(ExperimentCase):
         self.assertEqual(self.dataset_mgr.get("t1") + 1234,
                          self.dataset_mgr.get("t2"))
 
+    def test_rounding(self):
+        self.execute(Rounding)
+        dt = self.dataset_mgr.get("delta")
+        self.assertEqual(dt, 8000)
 
 
 class RPCTiming(EnvExperiment):
@@ -369,7 +467,7 @@ class RPCTiming(EnvExperiment):
             t1 = self.core.get_rtio_counter_mu()
             self.nop()
             t2 = self.core.get_rtio_counter_mu()
-            self.ts[i] = mu_to_seconds(t2 - t1)
+            self.ts[i] = self.core.mu_to_seconds(t2 - t1)
 
     def run(self):
         self.ts = [0. for _ in range(self.repeats)]
@@ -385,6 +483,149 @@ class RPCTest(ExperimentCase):
                          "timings are dependent on CPU load and network conditions")
     def test_rpc_timing(self):
         self.execute(RPCTiming)
-        self.assertGreater(self.dataset_mgr.get("rpc_time_mean"), 100*ns)
-        self.assertLess(self.dataset_mgr.get("rpc_time_mean"), 15*ms)
-        self.assertLess(self.dataset_mgr.get("rpc_time_stddev"), 2*ms)
+        rpc_time_mean = self.dataset_mgr.get("rpc_time_mean")
+        print(rpc_time_mean)
+        self.assertGreater(rpc_time_mean, 100*ns)
+        self.assertLess(rpc_time_mean, 3.5*ms)
+        self.assertLess(self.dataset_mgr.get("rpc_time_stddev"), 1*ms)
+
+
+class _DMA(EnvExperiment):
+    def build(self, trace_name="foobar"):
+        self.setattr_device("core")
+        self.setattr_device("core_dma")
+        self.setattr_device("ttl1")
+        self.trace_name = trace_name
+        self.delta = np.int64(0)
+
+    @kernel
+    def record(self):
+        with self.core_dma.record(self.trace_name):
+            delay(100*ns)
+            self.ttl1.on()
+            delay(100*ns)
+            self.ttl1.off()
+
+    @kernel
+    def record_many(self, n):
+        t1 = self.core.get_rtio_counter_mu()
+        with self.core_dma.record(self.trace_name):
+            for i in range(n//2):
+                delay(100*ns)
+                self.ttl1.on()
+                delay(100*ns)
+                self.ttl1.off()
+        t2 = self.core.get_rtio_counter_mu()
+        self.set_dataset("dma_record_time", self.core.mu_to_seconds(t2 - t1))
+
+    @kernel
+    def playback(self, use_handle=False):
+        self.core.break_realtime()
+        start = now_mu()
+        if use_handle:
+            handle = self.core_dma.get_handle(self.trace_name)
+            self.core_dma.playback_handle(handle)
+        else:
+            self.core_dma.playback(self.trace_name)
+        self.delta = now_mu() - start
+
+    @kernel
+    def playback_many(self, n):
+        self.core.break_realtime()
+        handle = self.core_dma.get_handle(self.trace_name)
+        t1 = self.core.get_rtio_counter_mu()
+        for i in range(n):
+            self.core_dma.playback_handle(handle)
+        t2 = self.core.get_rtio_counter_mu()
+        self.set_dataset("dma_playback_time", self.core.mu_to_seconds(t2 - t1))
+
+    @kernel
+    def erase(self):
+        self.core_dma.erase(self.trace_name)
+
+    @kernel
+    def nested(self):
+        with self.core_dma.record(self.trace_name):
+            with self.core_dma.record(self.trace_name):
+                pass
+
+    @kernel
+    def invalidate(self, mode):
+        self.record()
+        handle = self.core_dma.get_handle(self.trace_name)
+        if mode == 0:
+            self.record()
+        elif mode == 1:
+            self.erase()
+        self.core_dma.playback_handle(handle)
+
+
+class DMATest(ExperimentCase):
+    def test_dma_storage(self):
+        exp = self.create(_DMA)
+        exp.record()
+        exp.record() # overwrite
+        exp.playback()
+        exp.erase()
+        with self.assertRaises(exceptions.DMAError):
+            exp.playback()
+
+    def test_dma_nested(self):
+        exp = self.create(_DMA)
+        with self.assertRaises(exceptions.DMAError):
+            exp.nested()
+
+    def test_dma_trace(self):
+        core_host = self.device_mgr.get_desc("comm")["arguments"]["host"]
+
+        exp = self.create(_DMA)
+        exp.record()
+
+        for use_handle in [False, True]:
+            get_analyzer_dump(core_host)  # clear analyzer buffer
+            exp.playback(use_handle)
+
+            dump = decode_dump(get_analyzer_dump(core_host))
+            self.assertEqual(len(dump.messages), 3)
+            self.assertIsInstance(dump.messages[-1], StoppedMessage)
+            self.assertIsInstance(dump.messages[0], OutputMessage)
+            self.assertEqual(dump.messages[0].channel, 1)
+            self.assertEqual(dump.messages[0].address, 0)
+            self.assertEqual(dump.messages[0].data, 1)
+            self.assertIsInstance(dump.messages[1], OutputMessage)
+            self.assertEqual(dump.messages[1].channel, 1)
+            self.assertEqual(dump.messages[1].address, 0)
+            self.assertEqual(dump.messages[1].data, 0)
+            self.assertEqual(dump.messages[1].timestamp -
+                             dump.messages[0].timestamp, 100)
+
+    def test_dma_delta(self):
+        exp = self.create(_DMA)
+        exp.record()
+
+        for use_handle in [False, True]:
+            exp.playback(use_handle)
+            self.assertEqual(exp.delta, 200)
+
+    def test_dma_record_time(self):
+        exp = self.create(_DMA)
+        count = 20000
+        exp.record_many(count)
+        dt = self.dataset_mgr.get("dma_record_time")
+        print("dt={}, dt/count={}".format(dt, dt/count))
+        self.assertLess(dt/count, 18*us)
+
+    def test_dma_playback_time(self):
+        exp = self.create(_DMA)
+        count = 20000
+        exp.record()
+        exp.playback_many(count)
+        dt = self.dataset_mgr.get("dma_playback_time")
+        print("dt={}, dt/count={}".format(dt, dt/count))
+        self.assertLess(dt/count, 3*us)
+
+    def test_handle_invalidation(self):
+        exp = self.create(_DMA)
+        for mode in [0, 1]:
+            with self.assertRaises(exceptions.DMAError):
+                exp.invalidate(mode)

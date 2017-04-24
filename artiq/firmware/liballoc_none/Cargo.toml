@@ -1,0 +1,8 @@
+[package]
+authors = ["M-Labs"]
+name = "alloc_none"
+version = "0.0.0"
+
+[lib]
+name = "alloc_none"
+path = "lib.rs"

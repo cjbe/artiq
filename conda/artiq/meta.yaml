@@ -8,15 +8,15 @@ source:
 build:
   noarch_python: true
   number: {{ environ.get("GIT_DESCRIBE_NUMBER", 0) }}
-  string: py_{{ environ.get("GIT_DESCRIBE_NUMBER", 0) }}+git{{ environ.get("GIT_DESCRIBE_HASH", "")[1:] }}
+  string: py_{{ environ.get("GIT_DESCRIBE_NUMBER", 0) }}+git{{ environ.get("GIT_FULL_HASH", "")[:12] }}
 
 requirements:
   build:
-    - python 3.5.2
+    - python 3.5.3
     - setuptools
   run:
-    - python 3.5.2
-    - llvmlite-artiq 0.10.0.dev py35_24
+    - python 3.5.3
+    - llvmlite-artiq 0.12.0.dev py35_30
     - binutils-or1k-linux
     - pythonparser 1.0
     - openocd >=0.10
@@ -30,7 +30,7 @@ requirements:
     - dateutil
     - pyqt >=5.5
     - quamash
-    - pyqtgraph
+    - pyqtgraph 0.10.0
     - pygit2
     - aiohttp
     - levenshtein

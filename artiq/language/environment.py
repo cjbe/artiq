@@ -3,6 +3,7 @@ from inspect import isclass
 
 from artiq.protocols import pyon
 from artiq.language import units
+from artiq.language.core import rpc
 
 
 __all__ = ["NoDefault",
@@ -179,8 +180,8 @@ class TraceArgumentManager:
     def __init__(self):
         self.requested_args = OrderedDict()
 
-    def get(self, key, processor, group):
-        self.requested_args[key] = processor, group
+    def get(self, key, processor, group, tooltip):
+        self.requested_args[key] = processor, group, tooltip
         return None
 
 
@@ -188,7 +189,7 @@ class ProcessArgumentManager:
     def __init__(self, unprocessed_arguments):
         self.unprocessed_arguments = unprocessed_arguments
 
-    def get(self, key, processor, group):
+    def get(self, key, processor, group, tooltip):
         if key in self.unprocessed_arguments:
             r = processor.process(self.unprocessed_arguments[key])
         else:
@@ -200,6 +201,7 @@ class HasEnvironment:
     """Provides methods to manage the environment of an experiment (arguments,
     devices, datasets)."""
     def __init__(self, managers_or_parent, *args, **kwargs):
+        self.children = []
         if isinstance(managers_or_parent, tuple):
             self.__device_mgr = managers_or_parent[0]
             self.__dataset_mgr = managers_or_parent[1]
@@ -208,10 +210,14 @@ class HasEnvironment:
             self.__device_mgr = managers_or_parent.__device_mgr
             self.__dataset_mgr = managers_or_parent.__dataset_mgr
             self.__argument_mgr = managers_or_parent.__argument_mgr
+            managers_or_parent.register_child(self)
 
         self.__in_build = True
         self.build(*args, **kwargs)
         self.__in_build = False
+
+    def register_child(self, child):
+        self.children.append(child)
 
     def build(self):
         """Should be implemented by the user to request arguments.
@@ -233,7 +239,7 @@ class HasEnvironment:
         only meant to be executed programmatically (not from the GUI)."""
         pass
 
-    def get_argument(self, key, processor, group=None):
+    def get_argument(self, key, processor, group=None, tooltip=None):
         """Retrieves and returns the value of an argument.
 
         This function should only be called from ``build``.
@@ -243,18 +249,21 @@ class HasEnvironment:
             as instances of ``BooleanValue`` and ``NumberValue``.
         :param group: An optional string that defines what group the argument
             belongs to, for user interface purposes.
+        :param tooltip: An optional string to describe the argument in more
+            detail, applied as a tooltip to the argument name in the user
+            interface.
         """
         if not self.__in_build:
             raise TypeError("get_argument() should only "
                             "be called from build()")
-        return self.__argument_mgr.get(key, processor, group)
+        return self.__argument_mgr.get(key, processor, group, tooltip)
 
-    def setattr_argument(self, key, processor=None, group=None):
+    def setattr_argument(self, key, processor=None, group=None, tooltip=None):
         """Sets an argument as attribute. The names of the argument and of the
         attribute are the same.
 
         The key is added to the instance's kernel invariants."""
-        setattr(self, key, self.get_argument(key, processor, group))
+        setattr(self, key, self.get_argument(key, processor, group, tooltip))
         kernel_invariants = getattr(self, "kernel_invariants", set())
         self.kernel_invariants = kernel_invariants | {key}
 
@@ -275,6 +284,7 @@ class HasEnvironment:
         kernel_invariants = getattr(self, "kernel_invariants", set())
         self.kernel_invariants = kernel_invariants | {key}
 
+    @rpc(flags={"async"})
     def set_dataset(self, key, value,
                     broadcast=False, persist=False, save=True):
         """Sets the contents and handling modes of a dataset.
@@ -291,6 +301,7 @@ class HasEnvironment:
         """
         self.__dataset_mgr.set(key, value, broadcast, persist, save)
 
+    @rpc(flags={"async"})
     def mutate_dataset(self, key, index, value):
         """Mutate an existing dataset at the given index (e.g. set a value at
         a given position in a NumPy array)
@@ -304,7 +315,7 @@ class HasEnvironment:
         as ``slice(*sub_tuple)`` (multi-dimensional slicing)."""
         self.__dataset_mgr.mutate(key, index, value)
 
-    def get_dataset(self, key, default=NoDefault):
+    def get_dataset(self, key, default=NoDefault, archive=True):
         """Returns the contents of a dataset.
 
         The local storage is searched first, followed by the master storage
@@ -313,19 +324,25 @@ class HasEnvironment:
 
         If the dataset does not exist, returns the default value. If no default
         is provided, raises ``KeyError``.
+
+        By default, datasets obtained by this method are archived into the output
+        HDF5 file of the experiment. If an archived dataset is requested more
+        than one time (and therefore its value has potentially changed) or is
+        modified, a warning is emitted. Archival can be turned off by setting
+        the ``archive`` argument to ``False``.
         """
         try:
-            return self.__dataset_mgr.get(key)
+            return self.__dataset_mgr.get(key, archive)
         except KeyError:
             if default is NoDefault:
                 raise
             else:
                 return default
 
-    def setattr_dataset(self, key, default=NoDefault):
+    def setattr_dataset(self, key, default=NoDefault, archive=True):
         """Sets the contents of a dataset as attribute. The names of the
         dataset and of the attribute are the same."""
-        setattr(self, key, self.get_dataset(key, default))
+        setattr(self, key, self.get_dataset(key, default, archive))
 
 
 class Experiment:
@@ -379,7 +396,12 @@ class EnvExperiment(Experiment, HasEnvironment):
     environment manager.
 
     Most experiment should derive from this class."""
-    pass
+    def prepare(self):
+        """The default prepare method calls prepare for all children, in the
+        order of instantiation, if the child has a prepare method."""
+        for child in self.children:
+            if hasattr(child, "prepare"):
+                child.prepare()
 
 
 def is_experiment(o):

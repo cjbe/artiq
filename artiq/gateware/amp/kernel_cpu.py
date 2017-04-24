@@ -7,7 +7,7 @@ from misoc.integration.soc_core import mem_decoder
 
 class KernelCPU(Module):
     def __init__(self, platform,
-                 exec_address=0x42000000,
+                 exec_address=0x40800000,
                  main_mem_origin=0x40000000,
                  l2_size=8192):
         self._reset = CSRStorage(reset=1)
@@ -23,7 +23,11 @@ class KernelCPU(Module):
             self.cd_sys_kernel.rst.eq(self._reset.storage)
         ]
         self.submodules.cpu = ClockDomainsRenamer("sys_kernel")(
-            mor1kx.MOR1KX(platform, exec_address))
+            mor1kx.MOR1KX(
+                platform,
+                OPTION_RESET_PC=exec_address,
+                FEATURE_PERFCOUNTERS="ENABLED",
+                OPTION_PERFCOUNTERS_NUM=7))
 
         # DRAM access
         self.wb_sdram = wishbone.Interface()

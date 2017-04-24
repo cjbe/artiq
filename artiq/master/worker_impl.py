@@ -79,31 +79,42 @@ set_watchdog_factory(Watchdog)
 
 
 class Scheduler:
-    pause_noexc = staticmethod(make_parent_action("pause"))
-
-    @host_only
-    def pause(self):
-        if self.pause_noexc():
-            raise TerminationRequested
-
-    submit = staticmethod(make_parent_action("scheduler_submit"))
-    delete = staticmethod(make_parent_action("scheduler_delete"))
-    request_termination = staticmethod(
-        make_parent_action("scheduler_request_termination"))
-    get_status = staticmethod(make_parent_action("scheduler_get_status"))
-
     def set_run_info(self, rid, pipeline_name, expid, priority):
         self.rid = rid
         self.pipeline_name = pipeline_name
         self.expid = expid
         self.priority = priority
 
-    _check_pause = staticmethod(make_parent_action("scheduler_check_pause"))
+    pause_noexc = staticmethod(make_parent_action("pause"))
+    @host_only
+    def pause(self):
+        if self.pause_noexc():
+            raise TerminationRequested
 
+    _check_pause = staticmethod(make_parent_action("scheduler_check_pause"))
     def check_pause(self, rid=None) -> TBool:
         if rid is None:
             rid = self.rid
         return self._check_pause(rid)
+
+    _submit = staticmethod(make_parent_action("scheduler_submit"))
+    def submit(self, pipeline_name=None, expid=None, priority=None, due_date=None, flush=False):
+        if pipeline_name is None:
+            pipeline_name = self.pipeline_name
+        if expid is None:
+            expid = self.expid
+        if priority is None:
+            priority = self.priority
+        return self._submit(pipeline_name, expid, priority, due_date, flush)
+
+    delete = staticmethod(make_parent_action("scheduler_delete"))
+    request_termination = staticmethod(
+        make_parent_action("scheduler_request_termination"))
+    get_status = staticmethod(make_parent_action("scheduler_get_status"))
+
+
+class CCB:
+    issue = staticmethod(make_parent_action("ccb_issue"))
 
 
 def get_exp(file, class_name):
@@ -125,8 +136,19 @@ register_experiment = make_parent_action("register_experiment")
 class ExamineDeviceMgr:
     get_device_db = make_parent_action("get_device_db")
 
+    @staticmethod
     def get(name):
         return DummyDevice()
+
+
+class ExamineDatasetMgr:
+    @staticmethod
+    def get(key, archive=False):
+        return ParentDatasetDB.get(key)
+
+    @staticmethod
+    def update(self, mod):
+        pass
 
 
 def examine(device_mgr, dataset_mgr, file):
@@ -144,8 +166,8 @@ def examine(device_mgr, dataset_mgr, file):
             argument_mgr = TraceArgumentManager()
             exp_class((device_mgr, dataset_mgr, argument_mgr))
             arginfo = OrderedDict(
-                (k, (proc.describe(), group))
-                for k, (proc, group) in argument_mgr.requested_args.items())
+                (k, (proc.describe(), group, tooltip))
+                for k, (proc, group, tooltip) in argument_mgr.requested_args.items())
             register_experiment(class_name, name, arginfo)
 
 
@@ -174,6 +196,25 @@ def setup_diagnostics(experiment_file, repository_path):
     artiq.coredevice.core._DiagnosticEngine.render_diagnostic = \
         render_diagnostic
 
+def put_exception_report():
+    _, exc, _ = sys.exc_info()
+    # When we get CompileError, a more suitable diagnostic has already
+    # been printed.
+    if not isinstance(exc, CompileError):
+        short_exc_info = type(exc).__name__
+        exc_str = str(exc)
+        if exc_str:
+            short_exc_info += ": " + exc_str.splitlines()[0]
+        lines = ["Terminating with exception ("+short_exc_info+")\n"]
+        if hasattr(exc, "artiq_core_exception"):
+            lines.append(str(exc.artiq_core_exception))
+        if hasattr(exc, "parent_traceback"):
+            lines += exc.parent_traceback
+            lines += traceback.format_exception_only(type(exc), exc)
+        logging.error("".join(lines).rstrip(),
+                      exc_info=not hasattr(exc, "parent_traceback"))
+    put_object({"action": "exception"})
+
 
 def main():
     global ipc
@@ -189,7 +230,8 @@ def main():
     repository_path = None
 
     device_mgr = DeviceManager(ParentDeviceDB,
-                               virtual_devices={"scheduler": Scheduler()})
+                               virtual_devices={"scheduler": Scheduler(),
+                                                "ccb": CCB()})
     dataset_mgr = DatasetManager(ParentDatasetDB)
 
     import_cache.install_hook()
@@ -228,39 +270,30 @@ def main():
                 exp_inst.run()
                 put_object({"action": "completed"})
             elif action == "analyze":
-                exp_inst.analyze()
-                put_object({"action": "completed"})
+                try:
+                    exp_inst.analyze()
+                except:
+                    # make analyze failure non-fatal, as we may still want to
+                    # write results afterwards
+                    put_exception_report()
+                else:
+                    put_object({"action": "completed"})
             elif action == "write_results":
                 filename = "{:09}-{}.h5".format(rid, exp.__name__)
                 with h5py.File(filename, "w") as f:
-                    dataset_mgr.write_hdf5(f.create_group("datasets"))
+                    dataset_mgr.write_hdf5(f)
                     f["artiq_version"] = artiq_version
                     f["rid"] = rid
                     f["start_time"] = int(time.mktime(start_time))
                     f["expid"] = pyon.encode(expid)
                 put_object({"action": "completed"})
             elif action == "examine":
-                examine(ExamineDeviceMgr, ParentDatasetDB, obj["file"])
+                examine(ExamineDeviceMgr, ExamineDatasetMgr, obj["file"])
                 put_object({"action": "completed"})
             elif action == "terminate":
                 break
-    except Exception as exc:
-        # When we get CompileError, a more suitable diagnostic has already
-        # been printed.
-        if not isinstance(exc, CompileError):
-            short_exc_info = type(exc).__name__
-            exc_str = str(exc)
-            if exc_str:
-                short_exc_info += ": " + exc_str.splitlines()[0]
-            lines = ["Terminating with exception ("+short_exc_info+")\n"]
-            if hasattr(exc, "artiq_core_exception"):
-                lines.append(str(exc.artiq_core_exception))
-            if hasattr(exc, "parent_traceback"):
-                lines += exc.parent_traceback
-                lines += traceback.format_exception_only(type(exc), exc)
-            logging.error("".join(lines).rstrip(),
-                          exc_info=not hasattr(exc, "parent_traceback"))
-        put_object({"action": "exception"})
+    except:
+        put_exception_report()
     finally:
         device_mgr.close_devices()
         ipc.close()

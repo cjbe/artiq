@@ -8,7 +8,7 @@ Contents:
 
     introduction
     installing
-    installing_from_source
+    developing
     release_notes
     rtio
     getting_started_core
@@ -17,6 +17,7 @@ Contents:
     core_device
     management_system
     environment
+    drtio
     core_language_reference
     core_drivers_reference
     protocols_reference

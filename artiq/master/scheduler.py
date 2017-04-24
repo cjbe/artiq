@@ -305,14 +305,16 @@ class AnalyzeStage(TaskObject):
             run.status = RunStatus.analyzing
             try:
                 await run.analyze()
+            except:
+                logger.error("got worker exception in analyze stage of RID %d."
+                             " Results will still be saved.", run.rid)
+                log_worker_exception()
+            try:
                 await run.write_results()
             except:
-                logger.error("got worker exception in analyze stage, "
-                             "deleting RID %d", run.rid)
+                logger.error("failed to write results of RID %d.", run.rid)
                 log_worker_exception()
-                self.delete_cb(run.rid)
-            else:
-                self.delete_cb(run.rid)
+            self.delete_cb(run.rid)
 
 
 class Pipeline:
@@ -402,8 +404,12 @@ class Scheduler:
         if self._pipelines:
             logger.warning("some pipelines were not garbage-collected")
 
-    def submit(self, pipeline_name, expid, priority, due_date, flush):
-        """Submits a new run."""
+    def submit(self, pipeline_name, expid, priority=0, due_date=None, flush=False):
+        """Submits a new run.
+
+        When called through an experiment, the default values of
+        ``pipeline_name``, ``expid`` and ``priority`` correspond to those of
+        the current run."""
         # mutates expid to insert head repository revision if None
         if self._terminated:
             return

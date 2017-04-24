@@ -1,0 +1,15 @@
+[package]
+authors = ["M-Labs"]
+name = "board"
+version = "0.0.0"
+build = "build.rs"
+
+[lib]
+name = "board"
+path = "lib.rs"
+
+[dependencies]
+log = { version = "0.3", default-features = false }
+
+[features]
+uart_console = []

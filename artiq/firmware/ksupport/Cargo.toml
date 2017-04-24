@@ -1,0 +1,23 @@
+[package]
+authors = ["M-Labs"]
+name = "ksupport"
+version = "0.0.0"
+build = "build.rs"
+
+[lib]
+name = "ksupport"
+path = "lib.rs"
+crate-type = ["staticlib"]
+
+[build-dependencies]
+build_artiq = { path = "../libbuild_artiq" }
+
+[dependencies]
+byteorder = { version = "1.0", default-features = false }
+cslice = { version = "0.3" }
+alloc_none = { path = "../liballoc_none" }
+std_artiq = { path = "../libstd_artiq" }
+dyld = { path = "../libdyld" }
+board = { path = "../libboard" }
+proto = { path = "../libproto" }
+amp = { path = "../libamp" }

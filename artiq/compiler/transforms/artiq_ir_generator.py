@@ -317,7 +317,15 @@ class ARTIQIRGenerator(algorithm.Visitor):
                     self.current_block.append(ir.Return(ir.Constant(None, builtins.TNone())))
             else:
                 if not self.current_block.is_terminated():
+                    if len(self.current_block.predecessors()) != 0:
+                        diag = diagnostic.Diagnostic("error",
+                            "this function must return a value of type {typ} explicitly",
+                            {"typ": types.TypePrinter().name(typ.ret)},
+                            node.keyword_loc)
+                        self.engine.process(diag)
+
                     self.current_block.append(ir.Unreachable())
+
         finally:
             self.name = old_name
             self.current_args = old_args
@@ -822,7 +830,7 @@ class ARTIQIRGenerator(algorithm.Visitor):
                 timeout        = self.visit(context_expr_node.args[0])
                 timeout_ms     = self.append(ir.Arith(ast.Mult(loc=None), timeout,
                                                       ir.Constant(1000, builtins.TFloat())))
-                timeout_ms_int = self.append(ir.Coerce(timeout_ms, builtins.TInt32()))
+                timeout_ms_int = self.append(ir.Coerce(timeout_ms, builtins.TInt64()))
 
                 watchdog_id = self.append(ir.Builtin("watchdog_set", [timeout_ms_int],
                                                      builtins.TInt32()))
@@ -1332,10 +1340,6 @@ class ARTIQIRGenerator(algorithm.Visitor):
                 rhs_length = self.iterable_len(rhs)
 
                 result_length = self.append(ir.Arith(ast.Add(loc=None), lhs_length, rhs_length))
-                if builtins.is_str(node.left.type):
-                    result_last   = result_length
-                    result_length = self.append(ir.Arith(ast.Add(loc=None), result_length,
-                                                         ir.Constant(1, self._size_type)))
                 result = self.append(ir.Alloc([result_length], node.type))
 
                 # Copy lhs
@@ -1358,10 +1362,6 @@ class ARTIQIRGenerator(algorithm.Visitor):
                 self._make_loop(ir.Constant(0, self._size_type),
                     lambda index: self.append(ir.Compare(ast.Lt(loc=None), index, rhs_length)),
                     body_gen)
-
-                if builtins.is_str(node.left.type):
-                    self.append(ir.SetElem(result, result_last,
-                                           ir.Constant(0, builtins.TInt(types.TValue(8)))))
 
                 return result
             else:
@@ -1564,13 +1564,13 @@ class ARTIQIRGenerator(algorithm.Visitor):
     # Keep this function with builtins.TException.attributes.
     def alloc_exn(self, typ, message=None, param0=None, param1=None, param2=None):
         typ = typ.find()
+        name = "{}:{}".format(typ.id, typ.name)
         attributes = [
-            ir.Constant("{}:{}".format(typ.id, typ.name),
-                        ir.TExceptionTypeInfo()),         # typeinfo
-            ir.Constant("<not thrown>", builtins.TStr()), # file
-            ir.Constant(0, builtins.TInt32()),            # line
-            ir.Constant(0, builtins.TInt32()),            # column
-            ir.Constant("<not thrown>", builtins.TStr()), # function
+            ir.Constant(name,           builtins.TStr()),   # typeinfo
+            ir.Constant("<not thrown>", builtins.TStr()),   # file
+            ir.Constant(0,              builtins.TInt32()), # line
+            ir.Constant(0,              builtins.TInt32()), # column
+            ir.Constant("<not thrown>", builtins.TStr()),   # function
         ]
 
         if message is None:
@@ -1725,7 +1725,7 @@ class ARTIQIRGenerator(algorithm.Visitor):
             if len(node.args) == 1 and len(node.keywords) == 0:
                 arg = self.visit(node.args[0])
                 arg_mu_float = self.append(ir.Arith(ast.Div(loc=None), arg, self.ref_period))
-                arg_mu = self.append(ir.Coerce(arg_mu_float, builtins.TInt64()))
+                arg_mu = self.append(ir.Builtin("round", [arg_mu_float], builtins.TInt64()))
                 return self.append(ir.Builtin("delay_mu", [arg_mu], builtins.TNone()))
             else:
                 assert False
@@ -1733,20 +1733,6 @@ class ARTIQIRGenerator(algorithm.Visitor):
                 or types.is_builtin(typ, "at_mu"):
             return self.append(ir.Builtin(typ.name,
                                           [self.visit(arg) for arg in node.args], node.type))
-        elif types.is_builtin(typ, "mu_to_seconds"):
-            if len(node.args) == 1 and len(node.keywords) == 0:
-                arg = self.visit(node.args[0])
-                arg_float = self.append(ir.Coerce(arg, builtins.TFloat()))
-                return self.append(ir.Arith(ast.Mult(loc=None), arg_float, self.ref_period))
-            else:
-                assert False
-        elif types.is_builtin(typ, "seconds_to_mu"):
-            if len(node.args) == 1 and len(node.keywords) == 0:
-                arg = self.visit(node.args[0])
-                arg_mu = self.append(ir.Arith(ast.Div(loc=None), arg, self.ref_period))
-                return self.append(ir.Coerce(arg_mu, builtins.TInt64()))
-            else:
-                assert False
         elif types.is_exn_constructor(typ):
             return self.alloc_exn(node.type, *[self.visit(arg_node) for arg_node in node.args])
         elif types.is_constructor(typ):
@@ -1906,7 +1892,7 @@ class ARTIQIRGenerator(algorithm.Visitor):
         else:
             explanation = node.loc.source()
         self.append(ir.Builtin("printf", [
-                ir.Constant("assertion failed at %s: %s\n", builtins.TStr()),
+                ir.Constant("assertion failed at %.*s: %.*s\n\x00", builtins.TStr()),
                 ir.Constant(str(node.loc.begin()), builtins.TStr()),
                 ir.Constant(str(explanation), builtins.TStr()),
             ], builtins.TNone()))
@@ -1919,7 +1905,7 @@ class ARTIQIRGenerator(algorithm.Visitor):
 
             subexpr_body = self.current_block = self.add_block("assert.subexpr.body")
             self.append(ir.Builtin("printf", [
-                    ir.Constant("  (%s) = ", builtins.TStr()),
+                    ir.Constant("  (%.*s) = \x00", builtins.TStr()),
                     ir.Constant(subexpr_node.loc.source(), builtins.TStr())
                 ], builtins.TNone()))
             subexpr_value = self.append(ir.Builtin("unwrap", [subexpr_value_opt],
@@ -1951,7 +1937,7 @@ class ARTIQIRGenerator(algorithm.Visitor):
         def flush():
             nonlocal format_string, args
             if format_string != "":
-                printf(format_string, *args)
+                printf(format_string + "\x00", *args)
                 format_string = ""
                 args = []
 
@@ -1975,7 +1961,7 @@ class ARTIQIRGenerator(algorithm.Visitor):
             elif builtins.is_none(value.type):
                 format_string += "None"
             elif builtins.is_bool(value.type):
-                format_string += "%s"
+                format_string += "%.*s"
                 args.append(self.append(ir.Select(value,
                                                   ir.Constant("True", builtins.TStr()),
                                                   ir.Constant("False", builtins.TStr()))))
@@ -1993,9 +1979,9 @@ class ARTIQIRGenerator(algorithm.Visitor):
                 args.append(value)
             elif builtins.is_str(value.type):
                 if as_repr:
-                    format_string += "\"%s\""
+                    format_string += "\"%.*s\""
                 else:
-                    format_string += "%s"
+                    format_string += "%.*s"
                 args.append(value)
             elif builtins.is_listish(value.type):
                 if builtins.is_list(value.type):
@@ -2014,7 +2000,7 @@ class ARTIQIRGenerator(algorithm.Visitor):
                     head = self.current_block
 
                     if_last = self.current_block = self.add_block("print.comma")
-                    printf(", ")
+                    printf(", \x00")
 
                     tail = self.current_block = self.add_block("print.tail")
                     if_last.append(ir.Branch(tail))
@@ -2046,7 +2032,7 @@ class ARTIQIRGenerator(algorithm.Visitor):
                 param2  = self.append(ir.GetAttr(value, "__param1__"))
                 param3  = self.append(ir.GetAttr(value, "__param2__"))
 
-                format_string += "%s(%s, %lld, %lld, %lld)"
+                format_string += "%.*s(%.*s, %lld, %lld, %lld)"
                 args += [name, message, param1, param2, param3]
             else:
                 assert False

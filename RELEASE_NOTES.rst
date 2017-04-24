@@ -3,6 +3,41 @@
 Release notes
 =============
 
+3.0 (unreleased)
+----------------
+
+* The --embed option of applets is replaced with the environment variable
+  ARTIQ_APPLET_EMBED. The GUI sets this enviroment variable itself and the
+  user simply needs to remove the --embed argument.
+* EnvExperiment's prepare calls prepare for all its children.
+* Dynamic __getattr__'s returning RPC target methods are not supported anymore.
+  Controller driver classes must define all their methods intended for RPC as
+  members.
+* Datasets requested by experiments are by default archived into their HDF5
+  output. If this behavior is undesirable, turn it off by passing
+  ``archive=False`` to ``get_dataset``.
+* ``seconds_to_mu`` and ``mu_to_seconds`` have become methods of the core
+  device driver (use e.g. ``self.core.seconds_to_mu()``).
+* AD9858 DDSes and NIST QC1 hardware are no longer supported.
+* The Pipistrello port now has exclusively TTLs.
+* The DDS class names and setup options have changed, this requires an update of
+  the device database.
+* ``int(a, width=b)`` has been removed. Use ``int32(a)`` and ``int64(a)``.
+* The kc705 gateware target has been renamed kc705_dds.
+* ``artiq.coredevice.comm_tcp`` has been renamed ``artiq.coredevice.comm_kernel``,
+  and ``Comm`` has been renamed ``CommKernel``.
+* The "collision" and "busy" RTIO errors are reported through the log instead of
+  raising exceptions.
+* Results are still saved when ``analyze`` raises an exception.
+* LinearScan and RandomScan have been consolidated into RangeScan.
+
+
+2.3
+---
+
+* When using conda, add the conda-forge channel before installing ARTIQ.
+
+
 2.2
 ---
 

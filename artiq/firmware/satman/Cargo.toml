@@ -1,0 +1,25 @@
+[package]
+authors = ["M-Labs"]
+name = "satman"
+version = "0.0.0"
+build = "build.rs"
+
+[lib]
+name = "satman"
+crate-type = ["staticlib"]
+path = "lib.rs"
+
+[build-dependencies]
+build_artiq = { path = "../libbuild_artiq" }
+
+[dependencies]
+alloc_artiq = { path = "../liballoc_artiq" }
+std_artiq = { path = "../libstd_artiq", features = ["alloc"] }
+logger_artiq = { path = "../liblogger_artiq" }
+board = { path = "../libboard", features = ["uart_console"] }
+drtioaux = { path = "../libdrtioaux" }
+log = { version = "0.3", default-features = false }
+
+[dependencies.compiler_builtins]
+git = "https://github.com/rust-lang-nursery/compiler-builtins"
+features = ["mem"]

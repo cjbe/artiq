@@ -86,30 +86,6 @@ class RTIOSequenceError(Exception):
     """
     artiq_builtin = True
 
-class RTIOCollision(Exception):
-    """Raised when an event is submitted on a given channel with the same
-    coarse timestamp as the previous one but with a different fine timestamp.
-
-    Coarse timestamps correspond to the RTIO system clock (typically around
-    125MHz) whereas fine timestamps correspond to the RTIO SERDES clock
-    (typically around 1GHz).
-
-    The offending event is discarded and the RTIO core keeps operating.
-    """
-    artiq_builtin = True
-
-class RTIOBusy(Exception):
-    """Raised when at least one output event could not be executed because
-    the given channel was already busy executing a previous event.
-
-    This exception is raised late: after the error condition occurred. More
-    specifically it is raised on submitting an event on the same channel after
-    the execution of the faulty event was attempted.
-
-    The offending event was discarded.
-    """
-    artiq_builtin = True
-
 class RTIOOverflow(Exception):
     """Raised when at least one event could not be registered into the RTIO
     input FIFO because it was full (CPU not reading fast enough).
@@ -120,16 +96,15 @@ class RTIOOverflow(Exception):
     """
     artiq_builtin = True
 
+class DMAError(Exception):
+    """Raised when performing an invalid DMA operation."""
+    artiq_builtin = True
+
 class DDSError(Exception):
     """Raised when attempting to start a DDS batch while already in a batch,
     when too many commands are batched, and when DDS channel settings are
     incorrect.
     """
-    artiq_builtin = True
-
-class I2CError(Exception):
-    """Raised with a I2C transaction fails."""
-    artiq_builtin = True
 
 class WatchdogExpired(Exception):
     """Raised when a watchdog expires."""

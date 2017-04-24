@@ -64,6 +64,8 @@ class _ArgumentEditor(QtWidgets.QTreeWidget):
 
             entry = procdesc_to_entry(argument["desc"])(argument)
             widget_item = QtWidgets.QTreeWidgetItem([name])
+            if argument["tooltip"]:
+                widget_item.setToolTip(0, argument["tooltip"])
             widgets["entry"] = entry
             widgets["widget_item"] = widget_item
 
@@ -392,7 +394,7 @@ class ExperimentsArea(QtWidgets.QMdiArea):
     def __init__(self, root, datasets_sub):
         QtWidgets.QMdiArea.__init__(self)
         self.pixmap = QtGui.QPixmap(os.path.join(
-            artiq_dir, "gui", "logo20.svg"))
+            artiq_dir, "gui", "logo_ver.svg"))
         self.current_dir = root
         self.dataset = None
 
@@ -469,11 +471,12 @@ class ExperimentsArea(QtWidgets.QMdiArea):
 
     def initialize_submission_arguments(self, arginfo):
         arguments = OrderedDict()
-        for name, (procdesc, group) in arginfo.items():
+        for name, (procdesc, group, tooltip) in arginfo.items():
             state = procdesc_to_entry(procdesc).default_state(procdesc)
             arguments[name] = {
                 "desc": procdesc,
                 "group": group,
+                "tooltip": tooltip,
                 "state": state  # mutated by entries
             }
         return arguments

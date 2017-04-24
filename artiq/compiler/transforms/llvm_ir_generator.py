@@ -19,6 +19,9 @@ lli32      = ll.IntType(32)
 lli64      = ll.IntType(64)
 lldouble   = ll.DoubleType()
 llptr      = ll.IntType(8).as_pointer()
+llptrptr   = ll.IntType(8).as_pointer().as_pointer()
+llslice    = ll.LiteralStructType([llptr, lli32])
+llsliceptr = ll.LiteralStructType([llptr, lli32]).as_pointer()
 llmetadata = ll.MetaData()
 
 
@@ -36,8 +39,15 @@ def memoize(generator):
 class DebugInfoEmitter:
     def __init__(self, llmodule):
         self.llmodule = llmodule
-        self.llsubprograms = []
+        self.llcompileunit = None
         self.cache = {}
+
+        llident = self.llmodule.add_named_metadata('llvm.ident')
+        llident.add(self.emit_metadata(["ARTIQ"]))
+
+        llflags = self.llmodule.add_named_metadata('llvm.module.flags')
+        llflags.add(self.emit_metadata([2, "Debug Info Version", 3]))
+        llflags.add(self.emit_metadata([2, "Dwarf Version", 4]))
 
     def emit_metadata(self, operands):
         def map_operand(operand):
@@ -66,14 +76,13 @@ class DebugInfoEmitter:
         })
 
     @memoize
-    def emit_compile_unit(self, source_buffer, llsubprograms):
+    def emit_compile_unit(self, source_buffer):
         return self.emit_debug_info("DICompileUnit", {
             "language":        ll.DIToken("DW_LANG_Python"),
             "file":            self.emit_file(source_buffer),
             "producer":        "ARTIQ",
             "runtimeVersion":  0,
             "emissionKind":    2, # full=1, lines only=2
-            "subprograms":     self.emit_metadata(llsubprograms)
         }, is_distinct=True)
 
     @memoize
@@ -85,21 +94,26 @@ class DebugInfoEmitter:
     @memoize
     def emit_subprogram(self, func, llfunc):
         source_buffer = func.loc.source_buffer
+
+        if self.llcompileunit is None:
+            self.llcompileunit = self.emit_compile_unit(source_buffer)
+            llcompileunits = self.llmodule.add_named_metadata('llvm.dbg.cu')
+            llcompileunits.add(self.llcompileunit)
+
         display_name = "{}{}".format(func.name, types.TypePrinter().name(func.type))
-        llsubprogram = self.emit_debug_info("DISubprogram", {
+        return self.emit_debug_info("DISubprogram", {
             "name":            func.name,
             "linkageName":     llfunc.name,
             "type":            self.emit_subroutine_type(func.type),
             "file":            self.emit_file(source_buffer),
             "line":            func.loc.line(),
+            "unit":            self.llcompileunit,
             "scope":           self.emit_file(source_buffer),
             "scopeLine":       func.loc.line(),
             "isLocal":         func.is_internal,
             "isDefinition":    True,
             "variables":       self.emit_metadata([])
         }, is_distinct=True)
-        self.llsubprograms.append(llsubprogram)
-        return llsubprogram
 
     @memoize
     def emit_loc(self, loc, scope):
@@ -108,18 +122,6 @@ class DebugInfoEmitter:
             "column":          loc.column(),
             "scope":           scope
         })
-
-    def finalize(self, source_buffer):
-        llident = self.llmodule.add_named_metadata('llvm.ident')
-        llident.add(self.emit_metadata(["ARTIQ"]))
-
-        llflags = self.llmodule.add_named_metadata('llvm.module.flags')
-        llflags.add(self.emit_metadata([2, "Debug Info Version", 3]))
-        llflags.add(self.emit_metadata([2, "Dwarf Version", 4]))
-
-        llcompile_units = self.llmodule.add_named_metadata('llvm.dbg.cu')
-        llcompile_units.add(self.emit_compile_unit(source_buffer, tuple(self.llsubprograms)))
-
 
 class LLVMIRGenerator:
     def __init__(self, engine, module_name, target, embedding_map):
@@ -216,11 +218,9 @@ class LLVMIRGenerator:
             return ll.IntType(builtins.get_int_width(typ))
         elif builtins.is_float(typ):
             return lldouble
-        elif builtins.is_str(typ) or ir.is_exn_typeinfo(typ):
-            return llptr
         elif builtins.is_listish(typ):
             lleltty = self.llty_of_type(builtins.get_iterable_elt(typ))
-            return ll.LiteralStructType([lli32, lleltty.as_pointer()])
+            return ll.LiteralStructType([lleltty.as_pointer(), lli32])
         elif builtins.is_range(typ):
             lleltty = self.llty_of_type(builtins.get_iterable_elt(typ))
             return ll.LiteralStructType([lleltty, lleltty, lleltty])
@@ -229,7 +229,7 @@ class LLVMIRGenerator:
         elif ir.is_option(typ):
             return ll.LiteralStructType([lli1, self.llty_of_type(typ.params["value"])])
         elif ir.is_keyword(typ):
-            return ll.LiteralStructType([llptr, self.llty_of_type(typ.params["value"])])
+            return ll.LiteralStructType([llslice, self.llty_of_type(typ.params["value"])])
         elif ir.is_environment(typ):
             llty = self.llcontext.get_identified_type("env.{}".format(typ.env_name))
             if llty.elements is None:
@@ -262,8 +262,7 @@ class LLVMIRGenerator:
 
     def llstr_of_str(self, value, name=None, linkage="private", unnamed_addr=True):
         if isinstance(value, str):
-            assert "\0" not in value
-            as_bytes = (value + "\0").encode("utf-8")
+            as_bytes = value.encode("utf-8")
         else:
             as_bytes = value
 
@@ -295,19 +294,14 @@ class LLVMIRGenerator:
         elif isinstance(const.value, (int, float)):
             return ll.Constant(llty, const.value)
         elif isinstance(const.value, (str, bytes)):
-            if ir.is_exn_typeinfo(const.type):
-                # Exception typeinfo; should be merged with identical others
-                name = "__artiq_exn_" + const.value
-                linkage = "linkonce"
-                unnamed_addr = False
+            if isinstance(const.value, str):
+                value = const.value.encode('utf-8')
             else:
-                # Just a string
-                name = None
-                linkage = "private"
-                unnamed_addr = True
+                value = const.value
 
-            return self.llstr_of_str(const.value, name=name,
-                                     linkage=linkage, unnamed_addr=unnamed_addr)
+            llptr = self.llstr_of_str(const.value, linkage="private", unnamed_addr=True)
+            lllen = ll.Constant(lli32, len(const.value))
+            return ll.Constant(llty, (llptr, lllen))
         else:
             assert False
 
@@ -317,8 +311,6 @@ class LLVMIRGenerator:
             return llglobal
 
         if name in "llvm.donothing":
-            llty = ll.FunctionType(llvoid, [])
-        elif name in "llvm.trap":
             llty = ll.FunctionType(llvoid, [])
         elif name == "llvm.floor.f64":
             llty = ll.FunctionType(lldouble, [lldouble])
@@ -344,19 +336,20 @@ class LLVMIRGenerator:
             llty = ll.FunctionType(llvoid, [self.llty_of_type(builtins.TException())])
         elif name == "__artiq_reraise":
             llty = ll.FunctionType(llvoid, [])
-        elif name == "strlen":
-            llty = ll.FunctionType(lli32, [llptr])
-        elif name == "strcmp":
-            llty = ll.FunctionType(lli32, [llptr, llptr])
-        elif name == "send_rpc":
-            llty = ll.FunctionType(llvoid, [lli32, llptr],
-                                   var_arg=True)
-        elif name == "recv_rpc":
+        elif name in "abort":
+            llty = ll.FunctionType(llvoid, [])
+        elif name == "memcmp":
+            llty = ll.FunctionType(lli32, [llptr, llptr, lli32])
+        elif name == "rpc_send":
+            llty = ll.FunctionType(llvoid, [lli32, llsliceptr, llptrptr])
+        elif name == "rpc_send_async":
+            llty = ll.FunctionType(llvoid, [lli32, llsliceptr, llptrptr])
+        elif name == "rpc_recv":
             llty = ll.FunctionType(lli32, [llptr])
         elif name == "now":
             llty = lli64
         elif name == "watchdog_set":
-            llty = ll.FunctionType(lli32, [lli32])
+            llty = ll.FunctionType(lli32, [lli64])
         elif name == "watchdog_clear":
             llty = ll.FunctionType(llvoid, [lli32])
         else:
@@ -366,7 +359,8 @@ class LLVMIRGenerator:
             llglobal = ll.Function(self.llmodule, llty, name)
             if name in ("__artiq_raise", "__artiq_reraise", "llvm.trap"):
                 llglobal.attributes.add("noreturn")
-            if name in ("rtio_log", "send_rpc", "watchdog_set", "watchdog_clear",
+            if name in ("rtio_log", "rpc_send", "rpc_send_async",
+                        "watchdog_set", "watchdog_clear",
                         self.target.print_function):
                 llglobal.attributes.add("nounwind")
         else:
@@ -407,9 +401,6 @@ class LLVMIRGenerator:
         for func in functions:
             self.process_function(func)
 
-        if any(functions):
-            self.debug_info_emitter.finalize(functions[0].loc.source_buffer)
-
         if attribute_writeback and self.embedding_map is not None:
             self.emit_attribute_writeback()
 
@@ -424,7 +415,7 @@ class LLVMIRGenerator:
                 llobjects[obj_typ].append(llobject.bitcast(llptr))
 
         llrpcattrty = self.llcontext.get_identified_type("A")
-        llrpcattrty.elements = [lli32, llptr, llptr]
+        llrpcattrty.elements = [lli32, llslice, llslice]
 
         lldescty = self.llcontext.get_identified_type("D")
         lldescty.elements = [llrpcattrty.as_pointer().as_pointer(), llptr.as_pointer()]
@@ -446,15 +437,14 @@ class LLVMIRGenerator:
 
                 if not (types.is_function(typ) or types.is_method(typ) or types.is_rpc(typ) or
                         name == "__objectid__"):
-                    rpctag   = b"Os" + self._rpc_tag(typ, error_handler=rpc_tag_error) + b":n\x00"
-                    llrpctag = self.llstr_of_str(rpctag)
+                    rpctag = b"Os" + self._rpc_tag(typ, error_handler=rpc_tag_error) + b":n"
                 else:
-                    llrpctag = ll.Constant(llptr, None)
+                    rpctag = b""
 
                 llrpcattrinit = ll.Constant(llrpcattrty, [
                     ll.Constant(lli32, offset),
-                    llrpctag,
-                    self.llstr_of_str(name)
+                    self.llconst_of_const(ir.Constant(rpctag, builtins.TStr())),
+                    self.llconst_of_const(ir.Constant(name, builtins.TStr()))
                 ])
 
                 if name == "__objectid__":
@@ -533,6 +523,10 @@ class LLVMIRGenerator:
             if func.is_cold:
                 self.llfunction.attributes.add('cold')
                 self.llfunction.attributes.add('noinline')
+            if 'inline' in func.flags:
+                self.llfunction.attributes.add('inlinehint')
+            if 'forceinline' in func.flags:
+                self.llfunction.attributes.add('alwaysinline')
 
             self.llfunction.attributes.add('uwtable')
             self.llfunction.attributes.personality = self.llbuiltin("__artiq_personality")
@@ -612,17 +606,13 @@ class LLVMIRGenerator:
                                                    name=insn.name)
             else:
                 assert False
-        elif builtins.is_str(insn.type):
-            llsize = self.map(insn.operands[0])
-            llvalue = self.llbuilder.alloca(lli8, size=llsize)
-            return llvalue
         elif builtins.is_listish(insn.type):
             llsize = self.map(insn.operands[0])
+            lleltty = self.llty_of_type(builtins.get_iterable_elt(insn.type))
+            llalloc = self.llbuilder.alloca(lleltty, size=llsize)
             llvalue = ll.Constant(self.llty_of_type(insn.type), ll.Undefined)
-            llvalue = self.llbuilder.insert_value(llvalue, llsize, 0)
-            llalloc = self.llbuilder.alloca(self.llty_of_type(builtins.get_iterable_elt(insn.type)),
-                                            size=llsize)
-            llvalue = self.llbuilder.insert_value(llvalue, llalloc, 1, name=insn.name)
+            llvalue = self.llbuilder.insert_value(llvalue, llalloc, 0, name=insn.name)
+            llvalue = self.llbuilder.insert_value(llvalue, llsize, 1)
             return llvalue
         elif not builtins.is_allocated(insn.type) or ir.is_keyword(insn.type):
             llvalue = ll.Constant(self.llty_of_type(insn.type), ll.Undefined)
@@ -652,7 +642,7 @@ class LLVMIRGenerator:
             llptr = self.llbuilder.gep(llenv, [self.llindex(0), self.llindex(outer_index)],
                                        inbounds=True)
             llouterenv = self.llbuilder.load(llptr)
-            llouterenv.set_metadata('invariant.load', self.empty_metadata)
+            llouterenv.set_metadata('unconditionally.invariant.load', self.empty_metadata)
             llouterenv.set_metadata('nonnull', self.empty_metadata)
             return self.llptr_to_var(llouterenv, env_ty.params["$outer"], var_name)
 
@@ -796,7 +786,7 @@ class LLVMIRGenerator:
                                            inbounds=True, name="ptr.{}".format(insn.name))
                 llvalue = self.llbuilder.load(llptr, name="val.{}".format(insn.name))
                 if types.is_instance(typ) and attr in typ.constant_attributes:
-                    llvalue.set_metadata('invariant.load', self.empty_metadata)
+                    llvalue.set_metadata('unconditionally.invariant.load', self.empty_metadata)
                 if isinstance(llvalue.type, ll.PointerType):
                     self.mark_dereferenceable(llvalue)
                 return llvalue
@@ -826,13 +816,9 @@ class LLVMIRGenerator:
     def process_GetElem(self, insn):
         lst, idx = insn.list(), insn.index()
         lllst, llidx = map(self.map, (lst, idx))
-        if builtins.is_str(lst.type):
-            llelt = self.llbuilder.gep(lllst, [llidx], inbounds=True)
-            llvalue = self.llbuilder.load(llelt)
-        else:
-            llelts = self.llbuilder.extract_value(lllst, 1)
-            llelt = self.llbuilder.gep(llelts, [llidx], inbounds=True)
-            llvalue = self.llbuilder.load(llelt)
+        llelts = self.llbuilder.extract_value(lllst, 0)
+        llelt = self.llbuilder.gep(llelts, [llidx], inbounds=True)
+        llvalue = self.llbuilder.load(llelt)
         if isinstance(llvalue.type, ll.PointerType):
             self.mark_dereferenceable(llvalue)
         return llvalue
@@ -840,11 +826,8 @@ class LLVMIRGenerator:
     def process_SetElem(self, insn):
         lst, idx = insn.list(), insn.index()
         lllst, llidx = map(self.map, (lst, idx))
-        if builtins.is_str(lst.type):
-            llelt = self.llbuilder.gep(lllst, [llidx], inbounds=True)
-        else:
-            llelts = self.llbuilder.extract_value(lllst, 1)
-            llelt = self.llbuilder.gep(llelts, [llidx], inbounds=True)
+        llelts = self.llbuilder.extract_value(lllst, 0)
+        llelt = self.llbuilder.gep(llelts, [llidx], inbounds=True)
         return self.llbuilder.store(self.map(insn.value()), llelt)
 
     def process_Coerce(self, insn):
@@ -1026,7 +1009,7 @@ class LLVMIRGenerator:
         if insn.op == "nop":
             return self.llbuilder.call(self.llbuiltin("llvm.donothing"), [])
         if insn.op == "abort":
-            return self.llbuilder.call(self.llbuiltin("llvm.trap"), [])
+            return self.llbuilder.call(self.llbuiltin("abort"), [])
         elif insn.op == "is_some":
             lloptarg = self.map(insn.operands[0])
             return self.llbuilder.extract_value(lloptarg, 0,
@@ -1053,7 +1036,7 @@ class LLVMIRGenerator:
                     llptr = self.llbuilder.gep(llenv, [self.llindex(0), self.llindex(outer_index)],
                                                inbounds=True)
                     llouterenv = self.llbuilder.load(llptr)
-                    llouterenv.set_metadata('invariant.load', self.empty_metadata)
+                    llouterenv.set_metadata('unconditionally.invariant.load', self.empty_metadata)
                     llouterenv.set_metadata('nonnull', self.empty_metadata)
                     return self.llptr_to_var(llouterenv, env_ty.params["$outer"], var_name)
                 else:
@@ -1063,15 +1046,21 @@ class LLVMIRGenerator:
             return get_outer(self.map(env), env.type)
         elif insn.op == "len":
             collection, = insn.operands
-            if builtins.is_str(collection.type):
-                return self.llbuilder.call(self.llbuiltin("strlen"), [self.map(collection)])
-            else:
-                return self.llbuilder.extract_value(self.map(collection), 0)
+            return self.llbuilder.extract_value(self.map(collection), 1)
         elif insn.op in ("printf", "rtio_log"):
             # We only get integers, floats, pointers and strings here.
-            llargs = map(self.map, insn.operands)
+            lloperands = []
+            for i, operand in enumerate(insn.operands):
+                lloperand = self.map(operand)
+                if i == 0 and insn.op == "printf" or i == 1 and insn.op == "rtio_log":
+                    lloperands.append(self.llbuilder.extract_value(lloperand, 0))
+                elif builtins.is_str(operand.type):
+                    lloperands.append(self.llbuilder.extract_value(lloperand, 1))
+                    lloperands.append(self.llbuilder.extract_value(lloperand, 0))
+                else:
+                    lloperands.append(lloperand)
             func_name = self.target.print_function if insn.op == "printf" else insn.op
-            return self.llbuilder.call(self.llbuiltin(func_name), llargs,
+            return self.llbuilder.call(self.llbuiltin(func_name), lloperands,
                                        name=insn.name)
         elif insn.op == "exncast":
             # This is an identity cast at LLVM IR level.
@@ -1228,14 +1217,16 @@ class LLVMIRGenerator:
                 fun_loc)
             self.engine.process(diag)
         tag += self._rpc_tag(fun_type.ret, ret_error_handler)
-        tag += b"\x00"
 
-        lltag = self.llstr_of_str(tag)
+        lltag = self.llconst_of_const(ir.Constant(tag, builtins.TStr()))
+        lltagptr = self.llbuilder.alloca(lltag.type)
+        self.llbuilder.store(lltag, lltagptr)
 
         llstackptr = self.llbuilder.call(self.llbuiltin("llvm.stacksave"), [],
                                          name="rpc.stack")
 
-        llargs = []
+        llargs = self.llbuilder.alloca(llptr, ll.Constant(lli32, len(args)),
+                                       name="rpc.args")
         for index, arg in enumerate(args):
             if builtins.is_none(arg.type):
                 llargslot = self.llbuilder.alloca(ll.LiteralStructType([]),
@@ -1245,18 +1236,28 @@ class LLVMIRGenerator:
                 llargslot = self.llbuilder.alloca(llarg.type,
                                                   name="rpc.arg{}".format(index))
                 self.llbuilder.store(llarg, llargslot)
-            llargs.append(llargslot)
+            llargslot = self.llbuilder.bitcast(llargslot, llptr)
 
-        self.llbuilder.call(self.llbuiltin("send_rpc"),
-                            [llservice, lltag] + llargs)
+            llargptr = self.llbuilder.gep(llargs, [ll.Constant(lli32, index)])
+            self.llbuilder.store(llargslot, llargptr)
+
+        if fun_type.async:
+            self.llbuilder.call(self.llbuiltin("rpc_send_async"),
+                                [llservice, lltagptr, llargs])
+        else:
+            self.llbuilder.call(self.llbuiltin("rpc_send"),
+                                [llservice, lltagptr, llargs])
 
         # Don't waste stack space on saved arguments.
         self.llbuilder.call(self.llbuiltin("llvm.stackrestore"), [llstackptr])
 
+        if fun_type.async:
+            return ll.Undefined
+
         # T result = {
         #   void *ret_ptr = alloca(sizeof(T));
         #   void *ptr = ret_ptr;
-        #   loop: int size = recv_rpc(ptr);
+        #   loop: int size = rpc_recv(ptr);
         #   // Non-zero: Provide `size` bytes of extra storage for variable-length data.
         #   if(size) { ptr = alloca(size); goto loop; }
         #   else *(T*)ret_ptr
@@ -1277,12 +1278,12 @@ class LLVMIRGenerator:
         llphi = self.llbuilder.phi(llslotgen.type, name="rpc.ptr")
         llphi.add_incoming(llslotgen, llprehead)
         if llunwindblock:
-            llsize = self.llbuilder.invoke(self.llbuiltin("recv_rpc"), [llphi],
+            llsize = self.llbuilder.invoke(self.llbuiltin("rpc_recv"), [llphi],
                                            llheadu, llunwindblock,
                                            name="rpc.size.next")
             self.llbuilder.position_at_end(llheadu)
         else:
-            llsize = self.llbuilder.call(self.llbuiltin("recv_rpc"), [llphi],
+            llsize = self.llbuilder.call(self.llbuiltin("rpc_recv"), [llphi],
                                          name="rpc.size.next")
         lldone = self.llbuilder.icmp_unsigned('==', llsize, ll.Constant(llsize.type, 0),
                                               name="rpc.done")
@@ -1290,6 +1291,7 @@ class LLVMIRGenerator:
 
         self.llbuilder.position_at_end(llalloc)
         llalloca = self.llbuilder.alloca(lli8, llsize, name="rpc.alloc")
+        llalloca.align = 4 # maximum alignment required by OR1K ABI
         llphi.add_incoming(llalloca, llalloc)
         self.llbuilder.branch(llhead)
 
@@ -1375,6 +1377,7 @@ class LLVMIRGenerator:
         def _quote_attributes():
             llglobal = None
             llfields = []
+            emit_as_constant = True
             for attr in typ.attributes:
                 if attr == "__objectid__":
                     objectid = self.embedding_map.store_object(value)
@@ -1395,6 +1398,8 @@ class LLVMIRGenerator:
                                          not types.is_c_function(typ.attributes[attr]))
                     if is_class_function:
                         attrvalue = self.embedding_map.specialize_function(typ.instance, attrvalue)
+                    if not (types.is_instance(typ) and attr in typ.constant_attributes):
+                        emit_as_constant = False
                     llattrvalue = self._quote(attrvalue, typ.attributes[attr],
                                               lambda: path() + [attr])
                     llfields.append(llattrvalue)
@@ -1402,10 +1407,12 @@ class LLVMIRGenerator:
                         llclosureptr = self.get_global_closure_ptr(typ, attr)
                         llclosureptr.initializer = llattrvalue
 
+            llglobal.global_constant = emit_as_constant
             llglobal.initializer = ll.Constant(llty.pointee, llfields)
             llglobal.linkage = "private"
             return llglobal
 
+        fail_msg = "at " + ".".join(path())
         if types.is_constructor(typ) or types.is_instance(typ):
             if types.is_instance(typ):
                 # Make sure the class functions are quoted, as this has the side effect of
@@ -1416,35 +1423,42 @@ class LLVMIRGenerator:
         elif types.is_module(typ):
             return _quote_attributes()
         elif builtins.is_none(typ):
-            assert value is None
+            assert value is None, fail_msg
             return ll.Constant.literal_struct([])
         elif builtins.is_bool(typ):
-            assert value in (True, False)
+            assert value in (True, False), fail_msg
             return ll.Constant(llty, value)
         elif builtins.is_int(typ):
-            assert isinstance(value, (int, numpy.int32, numpy.int64))
+            assert isinstance(value, (int, numpy.int32, numpy.int64)), fail_msg
             return ll.Constant(llty, int(value))
         elif builtins.is_float(typ):
-            assert isinstance(value, float)
+            assert isinstance(value, float), fail_msg
             return ll.Constant(llty, value)
         elif builtins.is_str(typ):
-            assert isinstance(value, (str, bytes))
-            return self.llstr_of_str(value)
+            assert isinstance(value, (str, bytes)), fail_msg
+            if isinstance(value, str):
+                as_bytes = value.encode("utf-8")
+            else:
+                as_bytes = value
+
+            llstr     = self.llstr_of_str(as_bytes)
+            llconst   = ll.Constant(llty, [llstr, ll.Constant(lli32, len(as_bytes))])
+            return llconst
         elif builtins.is_listish(typ):
-            assert isinstance(value, (list, numpy.ndarray))
+            assert isinstance(value, (list, numpy.ndarray)), fail_msg
             elt_type  = builtins.get_iterable_elt(typ)
             llelts    = [self._quote(value[i], elt_type, lambda: path() + [str(i)])
                          for i in range(len(value))]
             lleltsary = ll.Constant(ll.ArrayType(self.llty_of_type(elt_type), len(llelts)),
                                     list(llelts))
 
-            llglobal  = ll.GlobalVariable(self.llmodule, lleltsary.type,
-                                          self.llmodule.scope.deduplicate("quoted.list"))
+            name      = self.llmodule.scope.deduplicate("quoted.{}".format(typ.name))
+            llglobal  = ll.GlobalVariable(self.llmodule, lleltsary.type, name)
             llglobal.initializer = lleltsary
             llglobal.linkage = "private"
 
             lleltsptr = llglobal.bitcast(lleltsary.type.element.as_pointer())
-            llconst   = ll.Constant(llty, [ll.Constant(lli32, len(llelts)), lleltsptr])
+            llconst   = ll.Constant(llty, [lleltsptr, ll.Constant(lli32, len(llelts))])
             return llconst
         elif types.is_rpc(typ) or types.is_c_function(typ):
             # RPC and C functions have no runtime representation.
@@ -1460,7 +1474,7 @@ class LLVMIRGenerator:
             return ll.Constant(llty, [llclosure, llself])
         else:
             print(typ)
-            assert False
+            assert False, fail_msg
 
     def process_Quote(self, insn):
         assert self.embedding_map is not None
@@ -1537,23 +1551,37 @@ class LLVMIRGenerator:
 
         for target, typ in insn.clauses():
             if typ is None:
-                llclauseexnname = ll.Constant(
-                    self.llty_of_type(ir.TExceptionTypeInfo()), None)
+                exnname = "" # see the comment in ksupport/eh.rs
             else:
-                llclauseexnname = self.llconst_of_const(
-                    ir.Constant("{}:{}".format(typ.id, typ.name),
-                                ir.TExceptionTypeInfo()))
-            lllandingpad.add_clause(ll.CatchClause(llclauseexnname))
+                exnname = "{}:{}".format(typ.id, typ.name)
+
+            llclauseexnname = self.llconst_of_const(
+                ir.Constant(exnname, builtins.TStr()))
+            llclauseexnnameptr = self.llmodule.get_global("exn.{}".format(exnname))
+            if llclauseexnnameptr is None:
+                llclauseexnnameptr = ll.GlobalVariable(self.llmodule, llclauseexnname.type,
+                                                       name="exn.{}".format(exnname))
+                llclauseexnnameptr.global_constant = True
+                llclauseexnnameptr.initializer = llclauseexnname
+                llclauseexnnameptr.linkage = "private"
+                llclauseexnnameptr.unnamed_addr = True
+            lllandingpad.add_clause(ll.CatchClause(llclauseexnnameptr))
 
             if typ is None:
                 self.llbuilder.branch(self.map(target))
             else:
-                llexnmatch = self.llbuilder.call(self.llbuiltin("strcmp"),
-                                                 [llexnname, llclauseexnname])
-                llmatchingclause = self.llbuilder.icmp_unsigned('==',
-                                                                llexnmatch, ll.Constant(lli32, 0))
-                with self.llbuilder.if_then(llmatchingclause):
-                    self.llbuilder.branch(self.map(target))
+                llexnlen       = self.llbuilder.extract_value(llexnname, 1)
+                llclauseexnlen = self.llbuilder.extract_value(llclauseexnname, 1)
+                llmatchinglen  = self.llbuilder.icmp_unsigned('==', llexnlen, llclauseexnlen)
+                with self.llbuilder.if_then(llmatchinglen):
+                    llexnptr       = self.llbuilder.extract_value(llexnname, 0)
+                    llclauseexnptr = self.llbuilder.extract_value(llclauseexnname, 0)
+                    llcomparedata  = self.llbuilder.call(self.llbuiltin("memcmp"),
+                                                         [llexnptr, llclauseexnptr, llexnlen])
+                    llmatchingdata = self.llbuilder.icmp_unsigned('==', llcomparedata,
+                                                                  ll.Constant(lli32, 0))
+                    with self.llbuilder.if_then(llmatchingdata):
+                        self.llbuilder.branch(self.map(target))
 
         if self.llbuilder.basic_block.terminator is None:
             self.llbuilder.branch(self.map(insn.cleanup()))

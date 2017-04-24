@@ -1,4 +1,4 @@
-#!/usr/bin/env python3.5
+#!/usr/bin/env python3
 
 from setuptools import setup, find_packages
 import sys
@@ -12,12 +12,10 @@ if sys.version_info[:3] < (3, 5, 2):
 
 # Depends on PyQt5, but setuptools cannot check for it.
 requirements = [
-    "sphinx", "sphinx-argparse", "sphinxcontrib-wavedrom", "sphinx_rtd_theme",
     "asyncserial", "numpy", "scipy",
     "python-dateutil", "prettytable", "h5py",
     "quamash", "pyqtgraph", "pygit2", "aiohttp",
     "llvmlite_artiq", "pythonparser", "python-Levenshtein",
-    "lit", "OutputCheck",
 ]
 
 console_scripts = [
@@ -26,7 +24,9 @@ console_scripts = [
     "artiq_coreanalyzer=artiq.frontend.artiq_coreanalyzer:main",
     "artiq_coreconfig=artiq.frontend.artiq_coreconfig:main",
     "artiq_corelog=artiq.frontend.artiq_corelog:main",
+    "artiq_coreboot=artiq.frontend.artiq_coreboot:main",
     "artiq_ctlmgr=artiq.frontend.artiq_ctlmgr:main",
+    "artiq_devtool=artiq.frontend.artiq_devtool:main",
     "artiq_influxdb=artiq.frontend.artiq_influxdb:main",
     "artiq_master=artiq.frontend.artiq_master:main",
     "artiq_mkfs=artiq.frontend.artiq_mkfs:main",
@@ -35,6 +35,7 @@ console_scripts = [
     "artiq_flash=artiq.frontend.artiq_flash:main",
     "lda_controller=artiq.frontend.lda_controller:main",
     "novatech409b_controller=artiq.frontend.novatech409b_controller:main",
+    "korad_ka3005p_controller=artiq.frontend.korad_ka3005p_controller:main",
     "pdq2_client=artiq.frontend.pdq2_client:main",
     "pdq2_controller=artiq.frontend.pdq2_controller:main",
     "thorlabs_tcube_controller=artiq.frontend.thorlabs_tcube_controller:main",

@@ -1,4 +1,4 @@
-#!/usr/bin/env python3.5
+#!/usr/bin/env python3
 
 # Copyright (C) 2014, 2015 Robert Jordens <jordens@gmail.com>
 # Copyright (C) 2014, 2015 M-Labs Limited
@@ -17,8 +17,8 @@ from misoc.targets.pipistrello import (BaseSoC, soc_pipistrello_args,
                                        soc_pipistrello_argdict)
 from misoc.integration.builder import builder_args, builder_argdict
 
-from artiq.gateware.soc import AMPSoC, build_artiq_soc
-from artiq.gateware import rtio, nist_qc1
+from artiq.gateware.amp import AMPSoC, build_artiq_soc
+from artiq.gateware import rtio
 from artiq.gateware.rtio.phy import ttl_simple, ttl_serdes_spartan6, dds, spi
 from artiq import __version__ as artiq_version
 
@@ -61,14 +61,14 @@ class _RTIOCRG(Module, AutoCSR):
         f = Fraction(rtio_f, clk_freq)
         rtio_internal_clk = Signal()
         rtio_external_clk = Signal()
-        pmt2 = platform.request("pmt", 2)
+        ext_clk = platform.request("ext_clk")
         dcm_locked = Signal()
         rtio_clk = Signal()
         pll_locked = Signal()
         pll = Signal(3)
         pll_fb = Signal()
         self.specials += [
-            Instance("IBUFG", i_I=pmt2, o_O=rtio_external_clk),
+            Instance("IBUFG", i_I=ext_clk, o_O=rtio_external_clk),
             Instance("DCM_CLKGEN", p_CLKFXDV_DIVIDE=2,
                      p_CLKFX_DIVIDE=f.denominator, p_CLKFX_MD_MAX=float(f),
                      p_CLKFX_MULTIPLY=f.numerator, p_CLKIN_PERIOD=1e9/clk_freq,
@@ -124,18 +124,31 @@ TIMESPEC "TSfix_ise4" = FROM "GRPsys_clk" TO "GRPrtio_clk" TIG;
             rtio_clk=self.cd_rtio.clk)
 
 
-class NIST_QC1(BaseSoC, AMPSoC):
-    csr_map = {
-        "timer_kernel": None,  # mapped on Wishbone instead
-        "rtio": None,  # mapped on Wishbone instead
-        "rtio_crg": 10,
-        "kernel_cpu": 11,
-        "rtio_moninj": 12,
-        "rtio_analyzer": 13
-    }
-    csr_map.update(BaseSoC.csr_map)
+_ttl_io = [
+    ("ext_clk", 0, Pins("C:15"), IOStandard("LVTTL")),
+
+    ("ttl", 0, Pins("B:0"), IOStandard("LVTTL")),
+    ("ttl", 1, Pins("B:1"), IOStandard("LVTTL")),
+    ("ttl", 2, Pins("B:2"), IOStandard("LVTTL")),
+    ("ttl", 3, Pins("B:3"), IOStandard("LVTTL")),
+    ("ttl", 4, Pins("B:4"), IOStandard("LVTTL")),
+    ("ttl", 5, Pins("B:5"), IOStandard("LVTTL")),
+    ("ttl", 6, Pins("B:6"), IOStandard("LVTTL")),
+    ("ttl", 7, Pins("B:7"), IOStandard("LVTTL")),
+
+    ("ttl", 8, Pins("B:8"), IOStandard("LVTTL")),
+    ("ttl", 9, Pins("B:9"), IOStandard("LVTTL")),
+    ("ttl", 10, Pins("B:10"), IOStandard("LVTTL")),
+    ("ttl", 11, Pins("B:11"), IOStandard("LVTTL")),
+    ("ttl", 12, Pins("B:12"), IOStandard("LVTTL")),
+    ("ttl", 13, Pins("B:13"), IOStandard("LVTTL")),
+    ("ttl", 14, Pins("B:14"), IOStandard("LVTTL")),
+    ("ttl", 15, Pins("B:15"), IOStandard("LVTTL")),
+]
+
+
+class Demo(BaseSoC, AMPSoC):
     mem_map = {
-        "timer_kernel":  0x10000000,  # (shadow @0x90000000)
         "rtio":          0x20000000,  # (shadow @0xa0000000)
         "mailbox":       0x70000000   # (shadow @0xf0000000)
     }
@@ -145,7 +158,6 @@ class NIST_QC1(BaseSoC, AMPSoC):
         BaseSoC.__init__(self,
                          cpu_type=cpu_type,
                          l2_size=64*1024,
-                         with_timer=False,
                          ident=artiq_version,
                          clk_freq=75*1000*1000,
                          **kwargs)
@@ -157,34 +169,22 @@ class NIST_QC1(BaseSoC, AMPSoC):
         platform.toolchain.ise_commands += """
 trce -v 12 -fastpaths -tsi {build_name}.tsi -o {build_name}.twr {build_name}.ncd {build_name}.pcf
 """
-        platform.add_extension(nist_qc1.papilio_adapter_io)
+        platform.add_extension(_ttl_io)
         platform.add_extension(_pmod_spi)
 
         self.submodules.leds = gpio.GPIOOut(platform.request("user_led", 4))
 
-        self.comb += [
-            platform.request("ttl_l_tx_en").eq(1),
-            platform.request("ttl_h_tx_en").eq(1)
-        ]
-
         self.submodules.rtio_crg = _RTIOCRG(platform, self.clk_freq)
+        self.csr_devices.append("rtio_crg")
 
         # RTIO channels
         rtio_channels = []
-        # pmt1 can run on a 8x serdes if pmt0 is not used
-        for i in range(2):
-            phy = ttl_serdes_spartan6.Inout_4X(platform.request("pmt", i),
-                                               self.rtio_crg.rtiox4_stb)
-            self.submodules += phy
-            rtio_channels.append(rtio.Channel.from_phy(phy, ififo_depth=128,
-                                                       ofifo_depth=4))
-
         # the last TTL is used for ClockGen
         for i in range(15):
             if i in (0, 1):
-                phy = ttl_serdes_spartan6.Output_4X(platform.request("ttl", i),
-                                                    self.rtio_crg.rtiox4_stb)
-            elif i in (2,):  # ttl2 can run on a 8x serdes if xtrig is not used
+                phy = ttl_serdes_spartan6.InOut_4X(platform.request("ttl", i),
+                                                   self.rtio_crg.rtiox4_stb)
+            elif i in (2,):
                 phy = ttl_serdes_spartan6.Output_8X(platform.request("ttl", i),
                                                     self.rtio_crg.rtiox8_stb)
             else:
@@ -193,16 +193,10 @@ trce -v 12 -fastpaths -tsi {build_name}.tsi -o {build_name}.twr {build_name}.ncd
             self.submodules += phy
             rtio_channels.append(rtio.Channel.from_phy(phy, ofifo_depth=128))
 
-        phy = ttl_simple.Output(platform.request("ext_led", 0))
-        self.submodules += phy
-        rtio_channels.append(rtio.Channel.from_phy(phy, ofifo_depth=4))
-
         for led_number in range(4):
             phy = ttl_simple.Output(platform.request("user_led", led_number))
             self.submodules += phy
             rtio_channels.append(rtio.Channel.from_phy(phy, ofifo_depth=4))
-
-        self.config["RTIO_REGULAR_TTL_COUNT"] = len(rtio_channels)
 
         phy = ttl_simple.ClockGen(platform.request("ttl", 15))
         self.submodules += phy
@@ -210,44 +204,33 @@ trce -v 12 -fastpaths -tsi {build_name}.tsi -o {build_name}.twr {build_name}.ncd
 
         phy = spi.SPIMaster(self.platform.request("pmod_extended_spi", 0))
         self.submodules += phy
-        self.config["RTIO_FIRST_SPI_CHANNEL"] = len(rtio_channels)
         rtio_channels.append(rtio.Channel.from_phy(
             phy, ofifo_depth=64, ififo_depth=64))
 
-        self.config["RTIO_FIRST_DDS_CHANNEL"] = len(rtio_channels)
-        self.config["RTIO_DDS_COUNT"] = 1
-        self.config["DDS_CHANNELS_PER_BUS"] = 8
-        self.config["DDS_AD9858"] = True
-        dds_pins = platform.request("dds")
-        self.comb += dds_pins.p.eq(0)
-        phy = dds.AD9858(dds_pins, 8)
-        self.submodules += phy
-        rtio_channels.append(rtio.Channel.from_phy(phy,
-                                                   ofifo_depth=128,
-                                                   ififo_depth=4))
-
+        self.config["HAS_RTIO_LOG"] = None
         self.config["RTIO_LOG_CHANNEL"] = len(rtio_channels)
         rtio_channels.append(rtio.LogChannel())
 
         # RTIO logic
-        self.submodules.rtio = rtio.RTIO(rtio_channels)
+        self.submodules.rtio_core = rtio.Core(rtio_channels)
+        self.csr_devices.append("rtio_core")
+        self.submodules.rtio = rtio.KernelInitiator(self.rtio_core.cri)
         self.register_kernel_cpu_csrdevice("rtio")
-        self.config["RTIO_FINE_TS_WIDTH"] = self.rtio.fine_ts_width
-        self.config["DDS_RTIO_CLK_RATIO"] = 8 >> self.rtio.fine_ts_width
         self.submodules.rtio_moninj = rtio.MonInj(rtio_channels)
-        self.submodules.rtio_analyzer = rtio.Analyzer(
-            self.rtio, self.get_native_sdram_if())
+        self.csr_devices.append("rtio_moninj")
+        self.submodules.rtio_analyzer = rtio.Analyzer(self.rtio_core.cri,
+                                                      self.get_native_sdram_if())
+        self.csr_devices.append("rtio_analyzer")
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="ARTIQ core device builder / Pipistrello "
-                    "+ NIST Ions QC1 hardware adapter")
+        description="ARTIQ device binary builder / Pipistrello demo")
     builder_args(parser)
     soc_pipistrello_args(parser)
     args = parser.parse_args()
 
-    soc = NIST_QC1(**soc_pipistrello_argdict(args))
+    soc = Demo(**soc_pipistrello_argdict(args))
     build_artiq_soc(soc, builder_argdict(args))
 
 

@@ -54,7 +54,7 @@ class Output(Module):
             override_en, override_o)
 
 
-class Inout(Module):
+class InOut(Module):
     def __init__(self, serdes):
         serdes_width = len(serdes.o)
         assert len(serdes.i) == serdes_width
@@ -90,14 +90,21 @@ class Inout(Module):
 
         # Input
         sensitivity = Signal(2)
-        self.sync.rio += If(self.rtlink.o.stb & (self.rtlink.o.address == 2),
-            sensitivity.eq(self.rtlink.o.data))
+        sample = Signal()
+        self.sync.rio += [
+            sample.eq(0),
+            If(self.rtlink.o.stb & self.rtlink.o.address[1],
+                sensitivity.eq(self.rtlink.o.data),
+                If(self.rtlink.o.address[0], sample.eq(1))
+            )
+        ]
 
         i = serdes.i[-1]
         i_d = Signal()
         self.sync.rio_phy += [
             i_d.eq(i),
             self.rtlink.i.stb.eq(
+                sample |
                 (sensitivity[0] & ( i & ~i_d)) |
                 (sensitivity[1] & (~i &  i_d))
             ),
@@ -143,10 +150,10 @@ class _OutputTB(Module):
             yield
 
 
-class _InoutTB(Module):
+class _InOutTB(Module):
     def __init__(self):
         self.serdes = _FakeSerdes()
-        self.submodules.dut = RenameClockDomains(Inout(self.serdes),
+        self.submodules.dut = RenameClockDomains(InOut(self.serdes),
                                                  {"rio_phy": "sys",
                                                   "rio": "sys"})
 
@@ -266,7 +273,7 @@ if __name__ == "__main__":
 
     cls = {
         "output": _OutputTB,
-        "inout": _InoutTB
+        "inout": _InOutTB
     }[sys.argv[1]]
 
     with Simulator(cls(), TopLevel("top.vcd", clk_period=int(1/0.125))) as s:

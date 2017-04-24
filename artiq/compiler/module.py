@@ -40,7 +40,7 @@ class Source:
             return cls(source.Buffer(f.read(), filename, 1), engine=engine)
 
 class Module:
-    def __init__(self, src, ref_period=1e-6, attribute_writeback=True):
+    def __init__(self, src, ref_period=1e-6, attribute_writeback=True, remarks=False):
         self.attribute_writeback = attribute_writeback
         self.engine = src.engine
         self.embedding_map = src.embedding_map
@@ -48,6 +48,7 @@ class Module:
         self.globals = src.globals
 
         int_monomorphizer = transforms.IntMonomorphizer(engine=self.engine)
+        cast_monomorphizer = transforms.CastMonomorphizer(engine=self.engine)
         inferencer = transforms.Inferencer(engine=self.engine)
         monomorphism_validator = validators.MonomorphismValidator(engine=self.engine)
         escape_validator = validators.EscapeValidator(engine=self.engine)
@@ -61,7 +62,9 @@ class Module:
         local_access_validator = validators.LocalAccessValidator(engine=self.engine)
         devirtualization = analyses.Devirtualization()
         interleaver = transforms.Interleaver(engine=self.engine)
+        invariant_detection = analyses.InvariantDetection(engine=self.engine)
 
+        cast_monomorphizer.visit(src.typedtree)
         int_monomorphizer.visit(src.typedtree)
         inferencer.visit(src.typedtree)
         monomorphism_validator.visit(src.typedtree)
@@ -74,6 +77,8 @@ class Module:
         dead_code_eliminator.process(self.artiq_ir)
         interleaver.process(self.artiq_ir)
         local_access_validator.process(self.artiq_ir)
+        if remarks:
+            invariant_detection.process(self.artiq_ir)
 
     def build_llvm_ir(self, target):
         """Compile the module to LLVM IR for the specified target."""
@@ -82,13 +87,6 @@ class Module:
             embedding_map=self.embedding_map)
         return llvm_ir_generator.process(self.artiq_ir,
             attribute_writeback=self.attribute_writeback)
-
-    def entry_point(self):
-        """Return the name of the function that is the entry point of this module."""
-        if self.name != "":
-            return self.name + ".__modinit__"
-        else:
-            return "__modinit__"
 
     def __repr__(self):
         printer = types.TypePrinter()

@@ -1,4 +1,4 @@
-#!/usr/bin/env python3.5
+#!/usr/bin/env python3
 # Copyright (C) 2014, 2015 M-Labs Limited
 # Copyright (C) 2014, 2015 Robert Jordens <jordens@gmail.com>
 
@@ -47,9 +47,9 @@ class StubEmbeddingMap:
 
 
 class FileRunner(EnvExperiment):
-    def build(self):
+    def build(self, file):
         self.setattr_device("core")
-        self.setattr_argument("file")
+        self.file = file
         self.target = OR1KTarget()
 
     def run(self):
@@ -58,7 +58,8 @@ class FileRunner(EnvExperiment):
         self.core.comm.load(kernel_library)
         self.core.comm.run()
         self.core.comm.serve(StubEmbeddingMap(),
-            lambda addresses: self.target.symbolize(kernel_library, addresses))
+            lambda addresses: self.target.symbolize(kernel_library, addresses), \
+            lambda symbols: self.target.demangle(symbols))
 
 
 class ELFRunner(FileRunner):
@@ -72,8 +73,7 @@ class LLVMIRRunner(FileRunner):
         with open(self.file, "r") as f:
             llmodule = llvm.parse_assembly(f.read())
         llmodule.verify()
-        return self.target.link([self.target.assemble(llmodule)],
-                                init_fn="__modinit__")
+        return self.target.link([self.target.assemble(llmodule)])
 
 
 class LLVMBitcodeRunner(FileRunner):
@@ -81,8 +81,7 @@ class LLVMBitcodeRunner(FileRunner):
         with open(self.file, "rb") as f:
             llmodule = llvm.parse_bitcode(f.read())
         llmodule.verify()
-        return self.target.link([self.target.assemble(llmodule)],
-                                init_fn="__modinit__")
+        return self.target.link([self.target.assemble(llmodule)])
 
 
 class DummyScheduler:
@@ -94,7 +93,7 @@ class DummyScheduler:
 
         self._next_rid = 1
 
-    def submit(self, pipeline_name, expid, priority, due_date, flush):
+    def submit(self, pipeline_name=None, expid=None, priority=None, due_date=None, flush=False):
         rid = self._next_rid
         self._next_rid += 1
         logger.info("Submitting: %s, RID=%s", expid, rid)
@@ -115,6 +114,12 @@ class DummyScheduler:
     @host_only
     def pause(self):
         pass
+
+
+class DummyCCB:
+    def issue(self, service, *args, **kwargs):
+        logger.info("CCB for service '%s' (args %s, kwargs %s)",
+                    service, args, kwargs)
 
 
 def get_argparser(with_file=True):
@@ -142,6 +147,9 @@ def get_argparser(with_file=True):
 
 
 def _build_experiment(device_mgr, dataset_mgr, args):
+    arguments = parse_arguments(args.arguments)
+    argument_mgr = ProcessArgumentManager(arguments)
+    managers = (device_mgr, dataset_mgr, argument_mgr)
     if hasattr(args, "file"):
         is_elf = args.file.endswith(".elf")
         is_ll  = args.file.endswith(".ll")
@@ -153,11 +161,11 @@ def _build_experiment(device_mgr, dataset_mgr, args):
                 raise ValueError("experiment-by-name not supported "
                                  "for precompiled kernels")
         if is_elf:
-            return ELFRunner(device_mgr, dataset_mgr, file=args.file)
+            return ELFRunner(managers, file=args.file)
         elif is_ll:
-            return LLVMIRRunner(device_mgr, dataset_mgr, file=args.file)
+            return LLVMIRRunner(managers, file=args.file)
         elif is_bc:
-            return LLVMBitcodeRunner(device_mgr, dataset_mgr, file=args.file)
+            return LLVMBitcodeRunner(managers, file=args.file)
         else:
             import_cache.install_hook()
             module = file_import(args.file, prefix="artiq_run_")
@@ -165,16 +173,13 @@ def _build_experiment(device_mgr, dataset_mgr, args):
     else:
         module = sys.modules["__main__"]
         file = getattr(module, "__file__")
-    exp = get_experiment(module, args.experiment)
-    arguments = parse_arguments(args.arguments)
     expid = {
         "file": file,
         "experiment": args.experiment,
         "arguments": arguments
     }
     device_mgr.virtual_devices["scheduler"].expid = expid
-    argument_mgr = ProcessArgumentManager(arguments)
-    return exp((device_mgr, dataset_mgr, argument_mgr))
+    return get_experiment(module, args.experiment)(managers)
 
 
 def run(with_file=False):
@@ -182,7 +187,8 @@ def run(with_file=False):
     init_logger(args)
 
     device_mgr = DeviceManager(DeviceDB(args.device_db),
-                               virtual_devices={"scheduler": DummyScheduler()})
+                               virtual_devices={"scheduler": DummyScheduler(),
+                                                "ccb": DummyCCB()})
     dataset_db = DatasetDB(args.dataset_db)
     dataset_mgr = DatasetManager(dataset_db)
 

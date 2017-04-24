@@ -1,4 +1,4 @@
-#!/usr/bin/env python3.5
+#!/usr/bin/env python3
 
 import argparse
 import struct
@@ -53,7 +53,7 @@ def main():
     device_mgr = DeviceManager(DeviceDB(args.device_db))
     try:
         comm = device_mgr.get("comm")
-        comm.check_ident()
+        comm.check_system_info()
 
         if args.action == "read":
             value = comm.flash_storage_read(args.key)

@@ -33,6 +33,7 @@ def globals():
         # ARTIQ decorators
         "kernel":               builtins.fn_kernel(),
         "portable":             builtins.fn_kernel(),
+        "rpc":                  builtins.fn_kernel(),
 
         # ARTIQ context managers
         "parallel":             builtins.obj_parallel(),
@@ -45,8 +46,6 @@ def globals():
         "now_mu":               builtins.fn_now_mu(),
         "delay_mu":             builtins.fn_delay_mu(),
         "at_mu":                builtins.fn_at_mu(),
-        "mu_to_seconds":        builtins.fn_mu_to_seconds(),
-        "seconds_to_mu":        builtins.fn_seconds_to_mu(),
 
         # ARTIQ utility functions
         "rtio_log":             builtins.fn_rtio_log(),

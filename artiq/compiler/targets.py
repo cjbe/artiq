@@ -86,14 +86,11 @@ class Target:
         llmachine = lltarget.create_target_machine(
                         features=",".join(["+{}".format(f) for f in self.features]),
                         reloc="pic", codemodel="default")
-        llmachine.set_verbose(True)
+        llmachine.set_asm_verbosity(True)
         return llmachine
 
     def optimize(self, llmodule):
-        llmachine = self.target_machine()
         llpassmgr = llvm.create_module_pass_manager()
-        llmachine.target_data.add_pass(llpassmgr)
-        llmachine.add_analysis_passes(llpassmgr)
 
         # Register our alias analysis passes.
         llpassmgr.add_basic_alias_analysis_pass()
@@ -159,11 +156,14 @@ class Target:
         _dump(os.getenv("ARTIQ_DUMP_ASM"), "Assembly", ".s",
               lambda: llmachine.emit_assembly(llmodule))
 
+        _dump(os.getenv("ARTIQ_DUMP_OBJ"), "Object file", ".o",
+              lambda: llmachine.emit_object(llmodule))
+
         return llmachine.emit_object(llmodule)
 
-    def link(self, objects, init_fn):
+    def link(self, objects):
         """Link the relocatable objects into a shared library for this target."""
-        with RunTool([self.triple + "-ld", "-shared", "--eh-frame-hdr", "-init", init_fn] +
+        with RunTool([self.triple + "-ld", "-shared", "--eh-frame-hdr"] +
                      ["{{obj{}}}".format(index) for index in range(len(objects))] +
                      ["-o", "{output}"],
                      output=b"",
@@ -171,14 +171,13 @@ class Target:
                 as results:
             library = results["output"].read()
 
-            _dump(os.getenv("ARTIQ_DUMP_ELF"), "Shared library", ".so",
+            _dump(os.getenv("ARTIQ_DUMP_ELF"), "Shared library", ".elf",
                   lambda: library)
 
             return library
 
     def compile_and_link(self, modules):
-        return self.link([self.assemble(self.compile(module)) for module in modules],
-                         init_fn=modules[0].entry_point())
+        return self.link([self.assemble(self.compile(module)) for module in modules])
 
     def strip(self, library):
         with RunTool([self.triple + "-strip", "--strip-debug", "{library}", "-o", "{output}"],

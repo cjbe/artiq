@@ -7,7 +7,7 @@ from functools import wraps
 import numpy
 
 
-__all__ = ["kernel", "portable", "syscall", "host_only",
+__all__ = ["kernel", "portable", "rpc", "syscall", "host_only",
            "set_time_manager", "set_watchdog_factory",
            "TerminationRequested"]
 
@@ -15,14 +15,13 @@ __all__ = ["kernel", "portable", "syscall", "host_only",
 kernel_globals = (
     "sequential", "parallel", "interleave",
     "delay_mu", "now_mu", "at_mu", "delay",
-    "seconds_to_mu", "mu_to_seconds",
     "watchdog"
 )
 __all__.extend(kernel_globals)
 
 
 _ARTIQEmbeddedInfo = namedtuple("_ARTIQEmbeddedInfo",
-                                "core_name function syscall forbidden flags")
+                                "core_name portable function syscall forbidden flags")
 
 def kernel(arg=None, flags={}):
     """
@@ -53,7 +52,7 @@ def kernel(arg=None, flags={}):
             def run_on_core(self, *k_args, **k_kwargs):
                 return getattr(self, arg).run(run_on_core, ((self,) + k_args), k_kwargs)
             run_on_core.artiq_embedded = _ARTIQEmbeddedInfo(
-                core_name=arg, function=function, syscall=None,
+                core_name=arg, portable=False, function=function, syscall=None,
                 forbidden=False, flags=set(flags))
             return run_on_core
         return inner_decorator
@@ -83,7 +82,23 @@ def portable(arg=None, flags={}):
         return inner_decorator
     else:
         arg.artiq_embedded = \
-            _ARTIQEmbeddedInfo(core_name=None, function=arg, syscall=None,
+            _ARTIQEmbeddedInfo(core_name=None, portable=True, function=arg, syscall=None,
+                               forbidden=False, flags=set(flags))
+        return arg
+
+def rpc(arg=None, flags={}):
+    """
+    This decorator marks a function for execution on the host interpreter.
+    This is also the default behavior of ARTIQ; however, this decorator allows
+    specifying additional flags.
+    """
+    if arg is None:
+        def inner_decorator(function):
+            return rpc(function, flags)
+        return inner_decorator
+    else:
+        arg.artiq_embedded = \
+            _ARTIQEmbeddedInfo(core_name=None, portable=False, function=arg, syscall=None,
                                forbidden=False, flags=set(flags))
         return arg
 
@@ -101,7 +116,7 @@ def syscall(arg=None, flags={}):
     if isinstance(arg, str):
         def inner_decorator(function):
             function.artiq_embedded = \
-                _ARTIQEmbeddedInfo(core_name=None, function=None,
+                _ARTIQEmbeddedInfo(core_name=None, portable=False, function=None,
                                    syscall=function.__name__, forbidden=False,
                                    flags=set(flags))
             return function
@@ -119,7 +134,7 @@ def host_only(function):
     in the host Python interpreter.
     """
     function.artiq_embedded = \
-        _ARTIQEmbeddedInfo(core_name=None, function=None, syscall=None,
+        _ARTIQEmbeddedInfo(core_name=None, portable=False, function=None, syscall=None,
                            forbidden=True, flags={})
     return function
 
@@ -195,31 +210,6 @@ def at_mu(time):
 def delay(duration):
     """Increases the RTIO time by the given amount (in seconds)."""
     _time_manager.take_time(duration)
-
-
-def seconds_to_mu(seconds, core=None):
-    """Converts seconds to the corresponding number of machine units
-    (RTIO cycles).
-
-    :param seconds: time (in seconds) to convert.
-    :param core: core device for which to perform the conversion. Specify only
-        when running in the interpreter (not in kernel).
-    """
-    if core is None:
-        raise ValueError("Core device must be specified for time conversion")
-    return numpy.int64(seconds//core.ref_period)
-
-
-def mu_to_seconds(mu, core=None):
-    """Converts machine units (RTIO cycles) to seconds.
-
-    :param mu: cycle count to convert.
-    :param core: core device for which to perform the conversion. Specify only
-        when running in the interpreter (not in kernel).
-    """
-    if core is None:
-        raise ValueError("Core device must be specified for time conversion")
-    return mu*core.ref_period
 
 
 class _DummyWatchdog:
