@@ -196,7 +196,7 @@ class Oxford(_NIST_Ions):
                 rtio_channels.append(rtio.Channel.from_phy(phy))
             
         for i in range(8):
-            phy = ttl_serdes_7series.Inout_8X(
+            phy = ttl_serdes_7series.InOut_8X(
                 platform.request("in", descrambleList[i]),
                 invert=True)
             self.submodules += phy
@@ -224,7 +224,7 @@ class OxfordSingleFmc(_NIST_Ions):
 
         for bank in ['a','b','c','d','e']:
             for i in range(8):
-                phy = ttl_serdes_7series.Inout_8X(platform.request(
+                phy = ttl_serdes_7series.InOut_8X(platform.request(
                     bank, 
                     descrambleList[i]),
                     invert=True)
@@ -319,11 +319,11 @@ class OxfordLab2(_NIST_Ions):
             for i in range(8):
                 ind = 8+i if bank=='in' else i
                 if bank=='in' and i>=6:
-                    phy = ttl_serdes_7series.Inout_8X(
+                    phy = ttl_serdes_7series.InOut_8X(
                             platform.request("in", descrambleList[i]), 
                             invert=True)
                 else:
-                    phy = ttl_simple.Inout( overrideInputs[ind], invert=True)
+                    phy = ttl_simple.InOut( overrideInputs[ind], invert=True)
                 self.submodules += phy
                 rtio_channels.append(rtio.Channel.from_phy(phy, ififo_depth=512))
 
