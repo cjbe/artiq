@@ -98,7 +98,7 @@ class _IOSERDESE2_8X(Module):
                                   i_CE1=1, i_RST=0,
                                   i_CLKDIV=ClockSignal("rio_phy"))
         
-        oserdes = _OSERDESE2_8X(pad_o, invert)
+        oserdes = _OSERDESE2_8X(pad_o, invert=invert)
         self.submodules += oserdes
         if pad_n is None:
             self.specials += Instance("IOBUF",
