@@ -1620,7 +1620,8 @@ class ARTIQIRGenerator(algorithm.Visitor):
                 return self.append(ir.Coerce(arg, node.type))
             else:
                 assert False
-        elif types.is_builtin(typ, "list") or types.is_builtin(typ, "array"):
+        elif (types.is_builtin(typ, "list") or types.is_builtin(typ, "array") or
+              types.is_builtin(typ, "bytearray")):
             if len(node.args) == 0 and len(node.keywords) == 0:
                 length = ir.Constant(0, builtins.TInt32())
                 return self.append(ir.Alloc([length], node.type))
@@ -1986,6 +1987,10 @@ class ARTIQIRGenerator(algorithm.Visitor):
             elif builtins.is_listish(value.type):
                 if builtins.is_list(value.type):
                     format_string += "["; flush()
+                elif builtins.is_bytes(value.type):
+                    format_string += "bytes(["; flush()
+                elif builtins.is_bytearray(value.type):
+                    format_string += "bytearray(["; flush()
                 elif builtins.is_array(value.type):
                     format_string += "array(["; flush()
                 else:
@@ -2014,7 +2019,8 @@ class ARTIQIRGenerator(algorithm.Visitor):
 
                 if builtins.is_list(value.type):
                     format_string += "]"
-                elif builtins.is_array(value.type):
+                elif (builtins.is_bytes(value.type) or builtins.is_bytearray(value.type) or
+                      builtins.is_array(value.type)):
                     format_string += "])"
             elif builtins.is_range(value.type):
                 format_string += "range("; flush()

@@ -402,8 +402,8 @@ class CoredeviceTest(ExperimentCase):
             self.execute(SequenceError)
 
     def test_collision(self):
-        core_addr = self.device_mgr.get_desc("comm")["arguments"]["host"]
-        mgmt = CommMgmt(self.device_mgr, core_addr)
+        core_addr = self.device_mgr.get_desc("core")["arguments"]["host"]
+        mgmt = CommMgmt(core_addr)
         mgmt.clear_log()
         self.execute(Collision)
         log = mgmt.get_log()
@@ -411,8 +411,8 @@ class CoredeviceTest(ExperimentCase):
         mgmt.close()
 
     def test_address_collision(self):
-        core_addr = self.device_mgr.get_desc("comm")["arguments"]["host"]
-        mgmt = CommMgmt(self.device_mgr, core_addr)
+        core_addr = self.device_mgr.get_desc("core")["arguments"]["host"]
+        mgmt = CommMgmt(core_addr)
         mgmt.clear_log()
         self.execute(AddressCollision)
         log = mgmt.get_log()
@@ -576,7 +576,7 @@ class DMATest(ExperimentCase):
             exp.nested()
 
     def test_dma_trace(self):
-        core_host = self.device_mgr.get_desc("comm")["arguments"]["host"]
+        core_host = self.device_mgr.get_desc("core")["arguments"]["host"]
 
         exp = self.create(_DMA)
         exp.record()
@@ -613,7 +613,7 @@ class DMATest(ExperimentCase):
         exp.record_many(count)
         dt = self.dataset_mgr.get("dma_record_time")
         print("dt={}, dt/count={}".format(dt, dt/count))
-        self.assertLess(dt/count, 18*us)
+        self.assertLess(dt/count, 20*us)
 
     def test_dma_playback_time(self):
         exp = self.create(_DMA)

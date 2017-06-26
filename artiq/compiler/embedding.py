@@ -200,6 +200,16 @@ class ASTSynthesizer:
         elif isinstance(value, str):
             return asttyped.StrT(s=value, ctx=None, type=builtins.TStr(),
                                  loc=self._add(repr(value)))
+        elif isinstance(value, bytes):
+            return asttyped.StrT(s=value, ctx=None, type=builtins.TBytes(),
+                                 loc=self._add(repr(value)))
+        elif isinstance(value, bytearray):
+            quote_loc   = self._add('`')
+            repr_loc    = self._add(repr(value))
+            unquote_loc = self._add('`')
+            loc         = quote_loc.join(unquote_loc)
+
+            return asttyped.QuoteT(value=value, type=builtins.TByteArray(), loc=loc)
         elif isinstance(value, list):
             begin_loc = self._add("[")
             elts = []

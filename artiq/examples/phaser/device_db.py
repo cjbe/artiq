@@ -1,19 +1,19 @@
 # The RTIO channel numbers here are for Phaser on KC705.
 
-{
-    "comm": {
-        "type": "local",
-        "module": "artiq.coredevice.comm_kernel",
-        "class": "CommKernel",
-        "arguments": {"host": "kc705aux.lab.m-labs.hk"}
-    },
+core_addr = "kc705aux.lab.m-labs.hk"
+
+device_db = {
     "core": {
         "type": "local",
         "module": "artiq.coredevice.core",
         "class": "Core",
-        "arguments": {
-            "ref_period": 5e-9/6
-        }
+        "arguments": {"host": core_addr, "ref_period": 5e-9/6}
+    },
+    "core_log": {
+        "type": "controller",
+        "host": "::1",
+        "port": 1068,
+        "command": "aqctl_corelog -p {port} --bind {bind} " + core_addr
     },
     "core_cache": {
         "type": "local",
@@ -37,6 +37,17 @@
         "module": "artiq.coredevice.ttl",
         "class": "TTLInOut",
         "arguments": {"channel": 2}
+    },
+    "converter_spi": {
+        "type": "local",
+        "module": "artiq.coredevice.spi",
+        "class": "NRTSPIMaster",
+    },
+    "ad9154_spi": {
+        "type": "local",
+        "module": "artiq.coredevice.ad9154_spi",
+        "class": "AD9154",
+        "arguments": {"spi_device": "converter_spi", "chip_select": 1}
     },
     "sawg0": {
         "type": "local",

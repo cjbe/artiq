@@ -1,8 +1,7 @@
 from artiq.language import *
 
 
-frame_setup = 20*ns
-trigger_duration = 50*ns
+frame_setup = 1.5*us
 sample_period = 10*ns
 delay_margin_factor = 1 + 1e-4
 
@@ -117,7 +116,7 @@ class _Frame:
             r += segment_program
         return r
 
-    @kernel
+    @portable
     def advance(self):
         if self.invalidated:
             raise InvalidatedError()
@@ -137,9 +136,7 @@ class _Frame:
             self.pdq.current_frame = self.frame_number
             self.pdq.next_segment = 0
             at_mu(trigger_start_t - self.core.seconds_to_mu(frame_setup))
-            self.pdq.frame0.set_o(bool(self.frame_number & 1))
-            self.pdq.frame1.set_o(bool((self.frame_number & 2) >> 1))
-            self.pdq.frame2.set_o(bool((self.frame_number & 4) >> 2))
+            self.pdq.write_frame(self.frame_number)
 
         at_mu(trigger_start_t)
         self.pdq.trigger.pulse(trigger_duration)
@@ -154,31 +151,35 @@ class _Frame:
             self.pdq.next_segment = -1
 
 
-class CompoundPDQ2:
-    def __init__(self, dmgr, pdq2_devices, trigger_device, frame_devices):
+class CompoundPDQ:
+    def __init__(self, dmgr, pdq_devices, trigger_device,
+            aux_miso=0, aux_dac=0b111, clk2x=0):
         self.core = dmgr.get("core")
-        self.pdq2s = [dmgr.get(d) for d in pdq2_devices]
+        self.pdqs = [dmgr.get(d) for d in pdq_devices]
         self.trigger = dmgr.get(trigger_device)
-        self.frame0 = dmgr.get(frame_devices[0])
-        self.frame1 = dmgr.get(frame_devices[1])
-        self.frame2 = dmgr.get(frame_devices[2])
+        self.aux_miso = aux_miso
+        self.aux_dac = aux_dac
+        self.clk2x = clk2x
 
         self.frames = []
         self.current_frame = -1
         self.next_segment = -1
         self.armed = False
 
+    @portable
     def disarm(self):
         for frame in self.frames:
             frame._invalidate()
         self.frames.clear()
-        for dev in self.pdq2s:
-            dev.park()
+        for dev in self.pdqs:
+            dev.write_config(reset=0, clk2x=self.clk2x, enable=0, trigger=0,
+                    aux_miso=self.aux_miso, aux_dac=self.aux_dac, board=0xf)
         self.armed = False
 
     def get_program(self):
         return [f._get_program() for f in self.frames]
 
+    @portable
     def arm(self):
         if self.armed:
             raise ArmError()
@@ -187,8 +188,8 @@ class CompoundPDQ2:
 
         full_program = self.get_program()
         n = 0
-        for pdq2 in self.pdq2s:
-            dn = pdq2.get_num_channels()
+        for pdq in self.pdqs:
+            dn = pdq.get_num_channels()
             program = []
             for full_frame_program in full_program:
                 frame_program = []
@@ -201,10 +202,11 @@ class CompoundPDQ2:
                     }
                     frame_program.append(line)
                 program.append(frame_program)
-            pdq2.program(program)
+            pdq.program(program)
             n += dn
-        for pdq2 in self.pdq2s:
-            pdq2.unpark()
+        for pdq in self.pdqs:
+            dev.write_config(reset=0, clk2x=self.clk2x, enable=1, trigger=0,
+                    aux_miso=self.aux_miso, aux_dac=self.aux_dac, board=0xf)
         self.armed = True
 
     def create_frame(self):
@@ -213,3 +215,8 @@ class CompoundPDQ2:
         r = _Frame(self, len(self.frames))
         self.frames.append(r)
         return r
+
+    @kernel
+    def write_frame(self, frame):
+        for pdq in self.pdqs:
+            pdq.write_frame(self.frame_number)

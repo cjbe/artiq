@@ -284,6 +284,18 @@ class LogChannel:
         self.overrides = []
 
 
+class _RelaxedAsyncResetSynchronizer(Module):
+    def __init__(self, cd, async_reset):
+        self.clock_domains.cd_rst = ClockDomain()
+        self.clock_domains.cd_no_rst = ClockDomain(reset_less=True)
+        self.specials += AsyncResetSynchronizer(self.cd_rst, async_reset)
+        self.comb += [
+            self.cd_rst.clk.eq(cd.clk),
+            self.cd_no_rst.clk.eq(cd.clk),
+        ]
+        self.sync.no_rst += cd.rst.eq(self.cd_rst.rst)
+
+
 class Core(Module, AutoCSR):
     def __init__(self, channels, fine_ts_width=None, guard_io_cycles=20):
         if fine_ts_width is None:
@@ -298,6 +310,14 @@ class Core(Module, AutoCSR):
         # Clocking/Reset
         # Create rsys, rio and rio_phy domains based on sys and rtio
         # with reset controlled by CRI.
+        #
+        # The `rio` CD contains logic that is reset with `core.reset()`.
+        # That's state that could unduly affect subsequent experiments,
+        # i.e. input overflows caused by input gates left open, FIFO events far
+        # in the future blocking the experiment, pending RTIO or
+        # wishbone bus transactions, etc.
+        # The `rio_phy` CD contains state that is maintained across
+        # `core.reset()`, i.e. TTL output state, OE, DDS state.
         cmd_reset = Signal(reset=1)
         cmd_reset_phy = Signal(reset=1)
         self.sync += [
@@ -312,14 +332,14 @@ class Core(Module, AutoCSR):
         self.clock_domains.cd_rio_phy = ClockDomain()
         self.comb += [
             self.cd_rsys.clk.eq(ClockSignal()),
-            self.cd_rsys.rst.eq(cmd_reset)
+            self.cd_rsys.rst.eq(cmd_reset),
+            self.cd_rio.clk.eq(ClockSignal("rtio")),
+            self.cd_rio_phy.clk.eq(ClockSignal("rtio"))
         ]
-        self.comb += self.cd_rio.clk.eq(ClockSignal("rtio"))
-        self.specials += AsyncResetSynchronizer(
-            self.cd_rio, cmd_reset)
-        self.comb += self.cd_rio_phy.clk.eq(ClockSignal("rtio"))
-        self.specials += AsyncResetSynchronizer(
-            self.cd_rio_phy, cmd_reset_phy)
+        self.submodules.rars_rio = _RelaxedAsyncResetSynchronizer(
+                self.cd_rio, cmd_reset)
+        self.submodules.rars_rio_phy = _RelaxedAsyncResetSynchronizer(
+                self.cd_rio_phy, cmd_reset_phy)
 
         # Managers
         self.submodules.counter = RTIOCounter(len(self.cri.timestamp) - fine_ts_width)

@@ -1,19 +1,17 @@
-# This is an example device database that needs to be adapted to your setup.
-# The RTIO channel numbers here are for NIST CLOCK on KC705.
-# The list of devices here is not exhaustive.
+core_addr = "kc705.lab.m-labs.hk"
 
-{
-    "comm": {
-        "type": "local",
-        "module": "artiq.coredevice.comm_kernel",
-        "class": "CommKernel",
-        "arguments": {"host": "kc705.lab.m-labs.hk"}
-    },
+device_db = {
     "core": {
         "type": "local",
         "module": "artiq.coredevice.core",
         "class": "Core",
-        "arguments": {"ref_period": 2e-9}
+        "arguments": {"host": core_addr, "ref_period": 2e-9}
+    },
+    "core_log": {
+        "type": "controller",
+        "host": "::1",
+        "port": 1068,
+        "command": "aqctl_corelog -p {port} --bind {bind} " + core_addr
     },
     "core_cache": {
         "type": "local",
@@ -145,4 +143,27 @@
         "arguments": {"channel": 0x010009}
     },
 
+    "converter_spi": {
+        "type": "local",
+        "module": "artiq.coredevice.spi",
+        "class": "NRTSPIMaster",
+    },
+    "ad9154_spi": {
+        "type": "local",
+        "module": "artiq.coredevice.ad9154_spi",
+        "class": "AD9154",
+        "arguments": {"spi_device": "converter_spi", "chip_select": 1}
+    },
+    "rconverter_spi": {
+        "type": "local",
+        "module": "artiq.coredevice.spi",
+        "class": "NRTSPIMaster",
+        "arguments": {"busno": 0x010000}
+    },
+    "rad9154_spi": {
+        "type": "local",
+        "module": "artiq.coredevice.ad9154_spi",
+        "class": "AD9154",
+        "arguments": {"spi_device": "rconverter_spi", "chip_select": 1}
+    },
 }

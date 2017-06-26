@@ -2,18 +2,20 @@
 # The RTIO channel numbers here are for NIST CLOCK on KC705.
 # The list of devices here is not exhaustive.
 
-{
-    "comm": {
-        "type": "local",
-        "module": "artiq.coredevice.comm_kernel",
-        "class": "CommKernel",
-        "arguments": {"host": "kc705.lab.m-labs.hk"}
-    },
+core_addr = "kc705.lab.m-labs.hk"
+
+device_db = {
     "core": {
         "type": "local",
         "module": "artiq.coredevice.core",
         "class": "Core",
-        "arguments": {"ref_period": 1e-9}
+        "arguments": {"host": core_addr, "ref_period": 1e-9}
+    },
+    "core_log": {
+        "type": "controller",
+        "host": "::1",
+        "port": 1068,
+        "command": "aqctl_corelog -p {port} --bind {bind} " + core_addr
     },
     "core_cache": {
         "type": "local",
@@ -170,30 +172,30 @@
         # that it always resolves to a network-visible IP address (see documentation).
         "host": "::1",
         "port": 4000,
-        "command": "pdq2_controller -p {port} --bind {bind} --simulation --dump qc_q1_0.bin"
+        "command": "aqctl_pdq -p {port} --bind {bind} --simulation --dump qc_q1_0.bin"
     },
     "qc_q1_1": {
         "type": "controller",
         "host": "::1",
         "port": 4001,
-        "command": "pdq2_controller -p {port} --bind {bind} --simulation --dump qc_q1_1.bin"
+        "command": "aqctl_pdq -p {port} --bind {bind} --simulation --dump qc_q1_1.bin"
     },
     "qc_q1_2": {
         "type": "controller",
         "host": "::1",
         "port": 4002,
-        "command": "pdq2_controller -p {port} --bind {bind} --simulation --dump qc_q1_2.bin"
+        "command": "aqctl_pdq -p {port} --bind {bind} --simulation --dump qc_q1_2.bin"
     },
     "qc_q1_3": {
         "type": "controller",
         "host": "::1",
         "port": 4003,
-        "command": "pdq2_controller -p {port} --bind {bind} --simulation --dump qc_q1_3.bin"
+        "command": "aqctl_pdq -p {port} --bind {bind} --simulation --dump qc_q1_3.bin"
     },
     "electrodes": {
         "type": "local",
-        "module": "artiq.devices.pdq2",
-        "class": "CompoundPDQ2",
+        "module": "artiq.devices.pdq",
+        "class": "CompoundPDQ",
         "arguments": {
             "pdq2_devices": ["qc_q1_0", "qc_q1_1", "qc_q1_2", "qc_q1_3"],
             "trigger_device": "ttl2",
@@ -203,10 +205,10 @@
 
     "lda": {
         "type": "controller",
-        "best_effort": true,
+        "best_effort": True,
         "host": "::1",
         "port": 3253,
-        "command": "lda_controller -p {port} --bind {bind} --simulation"
+        "command": "aqctl_lda -p {port} --bind {bind} --simulation"
     },
 
     "camera_sim": {
