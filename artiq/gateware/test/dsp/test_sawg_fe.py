@@ -20,10 +20,13 @@ class RTIOManager:
     def rtio_output_wide(self, *args, **kwargs):
         self.rtio_output(*args, **kwargs)
 
+    def delay_mu(self, t):
+        delay(t)
+
     def patch(self, mod):
         assert not hasattr(mod, "_saved")
         mod._saved = {}
-        for name in "rtio_output rtio_output_wide".split():
+        for name in "rtio_output rtio_output_wide delay_mu".split():
             mod._saved[name] = getattr(mod, name, None)
             setattr(mod, name, getattr(self, name))
 
@@ -89,6 +92,8 @@ class SAWGTest(unittest.TestCase):
                 if isinstance(data, list):
                     data = sum(int(d) << (i*32) for i, d in enumerate(data))
                 yield rt.data.eq(int(data))
+                if hasattr(rt, "address"):
+                    yield rt.address.eq(address)
                 yield rt.stb.eq(1)
                 assert not (yield rt.busy)
                 # print("{}: set ch {} to {}".format(time, channel, hex(data)))

@@ -494,6 +494,12 @@ class CommKernel:
         else:
             raise IOError("Unknown RPC value tag: {}".format(repr(tag)))
 
+    def _truncate_message(self, msg, limit=4096):
+        if len(msg) > limit:
+            return msg[0:limit] + "... (truncated)"
+        else:
+            return msg
+
     def _serve_rpc(self, embedding_map):
         async        = self._read_bool()
         service_id   = self._read_int32()
@@ -518,6 +524,8 @@ class CommKernel:
             self._write_header(_H2DMsgType.RPC_REPLY)
             self._write_bytes(return_tags)
             self._send_rpc_value(bytearray(return_tags), result, result, service)
+        except RPCReturnValueError as exn:
+            raise
         except Exception as exn:
             logger.debug("rpc service: %d %r %r ! %r", service_id, args, kwargs, exn)
 
@@ -526,7 +534,7 @@ class CommKernel:
             if hasattr(exn, "artiq_core_exception"):
                 exn = exn.artiq_core_exception
                 self._write_string(exn.name)
-                self._write_string(exn.message)
+                self._write_string(self._truncate_message(exn.message))
                 for index in range(3):
                     self._write_int64(exn.param[index])
 
@@ -543,8 +551,9 @@ class CommKernel:
                 else:
                     exn_id = embedding_map.store_object(exn_type)
                     self._write_string("{}:{}.{}".format(exn_id,
-                                                         exn_type.__module__, exn_type.__qualname__))
-                self._write_string(str(exn))
+                                                         exn_type.__module__,
+                                                         exn_type.__qualname__))
+                self._write_string(self._truncate_message(str(exn)))
                 for index in range(3):
                     self._write_int64(0)
 
