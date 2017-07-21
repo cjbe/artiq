@@ -1,3 +1,13 @@
+"""
+Driver for the Smart Arbitrary Waveform Generator (SAWG) on RTIO.
+
+The SAWG is an "improved DDS" built in gateware and interfacing to
+high-speed DACs.
+
+Output event replacement is supported except on the configuration channel.
+"""
+
+
 from artiq.language.types import TInt32, TFloat
 from numpy import int32, int64
 from artiq.language.core import kernel, now_mu
@@ -20,6 +30,13 @@ class Config:
     """SAWG configuration.
 
     Exposes the configurable quantities of a single SAWG channel.
+
+    Access to the configuration registers for a SAWG channel can not
+    be concurrent. There must be at least :attr:_rtio_interval` machine
+    units of delay between accesses. Replacement is not supported and will be
+    lead to an ``RTIOCollision`` as this is likely a programming error.
+    All methods therefore advance the timeline by the duration of one
+    configuration register transfer.
 
     :param channel: RTIO channel number of the channel.
     :param core: Core device.
@@ -53,6 +70,7 @@ class Config:
         :param n: Current value of the counter. Default: ``0``.
         """
         rtio_output(now_mu(), self.channel, _SAWG_DIV, div | (n << 16))
+        delay_mu(self._rtio_interval)
 
     @kernel
     def set_clr(self, clr0: TInt32, clr1: TInt32, clr2: TInt32):
@@ -92,6 +110,7 @@ class Config:
         """
         rtio_output(now_mu(), self.channel, _SAWG_CLR, clr0 |
                 (clr1 << 1) | (clr2 << 2))
+        delay_mu(self._rtio_interval)
 
     @kernel
     def set_iq_en(self, i_enable: TInt32, q_enable: TInt32):
@@ -118,6 +137,7 @@ class Config:
         """
         rtio_output(now_mu(), self.channel, _SAWG_IQ_EN, i_enable |
                 (q_enable << 1))
+        delay_mu(self._rtio_interval)
 
     @kernel
     def set_duc_max_mu(self, limit: TInt32):
@@ -132,21 +152,25 @@ class Config:
         .. seealso:: :meth:`set_duc_max`
         """
         rtio_output(now_mu(), self.channel, _SAWG_DUC_MAX, limit)
+        delay_mu(self._rtio_interval)
 
     @kernel
     def set_duc_min_mu(self, limit: TInt32):
         """.. seealso:: :meth:`set_duc_max_mu`"""
         rtio_output(now_mu(), self.channel, _SAWG_DUC_MIN, limit)
+        delay_mu(self._rtio_interval)
 
     @kernel
     def set_out_max_mu(self, limit: TInt32):
         """.. seealso:: :meth:`set_duc_max_mu`"""
         rtio_output(now_mu(), self.channel, _SAWG_OUT_MAX, limit)
+        delay_mu(self._rtio_interval)
 
     @kernel
     def set_out_min_mu(self, limit: TInt32):
         """.. seealso:: :meth:`set_duc_max_mu`"""
         rtio_output(now_mu(), self.channel, _SAWG_OUT_MIN, limit)
+        delay_mu(self._rtio_interval)
 
     @kernel
     def set_duc_max(self, limit: TFloat):
@@ -263,6 +287,13 @@ class SAWG:
     * :attr:`frequency0`, :attr:`frequency1`, :attr:`frequency2`: in units
       of Hz
 
+    .. note:: The latencies (pipeline depths) of the nine data channels (i.e.
+        all except :attr:`config`) are matched. Equivalent channels (e.g.
+        :attr:`phase1` and :attr:`phase2`) are exactly matched. Channels of
+        different type or functionality (e.g. :attr:`offset` vs
+        :attr:`amplitude1`, DDS vs DUC, :attr:`phase0` vs :attr:`phase1`) are
+        only matched to within one coarse RTIO cycle.
+
     :param channel_base: RTIO channel number of the first channel (amplitude).
         The configuration channel and frequency/phase/amplitude channels are
         then assumed to be successive channels.
@@ -281,18 +312,18 @@ class SAWG:
         width = 16
         time_width = 16
         cordic_gain = 1.646760258057163  # Cordic(width=16, guard=None).gain
-        cordic_gain *= 1.01  # leave a bit of headroom
+        head_room = 1.001
         self.config = Config(channel_base, self.core, cordic_gain)
         self.offset = Spline(width, time_width, channel_base + 1,
-                             self.core, 2.)
+                             self.core, 2.*head_room)
         self.amplitude1 = Spline(width, time_width, channel_base + 2,
-                                 self.core, 2*cordic_gain**2)
+                                 self.core, 2*head_room*cordic_gain**2)
         self.frequency1 = Spline(3*width, time_width, channel_base + 3,
                                  self.core, 1/self.core.coarse_ref_period)
         self.phase1 = Spline(width, time_width, channel_base + 4,
                              self.core, 1.)
         self.amplitude2 = Spline(width, time_width, channel_base + 5,
-                                 self.core, 2*cordic_gain**2)
+                                 self.core, 2*head_room*cordic_gain**2)
         self.frequency2 = Spline(3*width, time_width, channel_base + 6,
                                  self.core, 1/self.core.coarse_ref_period)
         self.phase2 = Spline(width, time_width, channel_base + 7,
@@ -314,19 +345,12 @@ class SAWG:
         seven writes to the configuration channel.
         """
         self.config.set_div(0, 0)
-        delay_mu(self.config._rtio_interval)
         self.config.set_clr(1, 1, 1)
-        delay_mu(self.config._rtio_interval)
         self.config.set_iq_en(1, 0)
-        delay_mu(self.config._rtio_interval)
         self.config.set_duc_min(-1.)
-        delay_mu(self.config._rtio_interval)
         self.config.set_duc_max(1.)
-        delay_mu(self.config._rtio_interval)
         self.config.set_out_min(-1.)
-        delay_mu(self.config._rtio_interval)
         self.config.set_out_max(1.)
-        delay_mu(self.config._rtio_interval)
         self.frequency0.set_mu(0)
         self.frequency1.set_mu(0)
         self.frequency2.set_mu(0)

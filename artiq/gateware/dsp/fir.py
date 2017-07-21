@@ -63,14 +63,14 @@ class ParallelFIR(Module):
     :param arch: architecture (default: "DSP48E1").
     """
     def __init__(self, coefficients, parallelism, width=16,
-                 arch="DSP48E1"):
+                 arch="DSP48E1", cull_delays=()):
         self.width = width
         self.parallelism = p = parallelism
         n = len(coefficients)
         # input and output: old to new, decreasing delay
         self.i = [Signal((width, True)) for i in range(p)]
         self.o = [Signal((width, True)) for i in range(p)]
-        self.latency = (n + 1)//2//p + 1
+        self.latency = (n + 1)//2//p + 2
         w = _widths[arch]
 
         c_max = max(abs(c) for c in coefficients)
@@ -78,13 +78,13 @@ class ParallelFIR(Module):
         self.coefficients = cs = [int(round(c*(1 << c_shift)))
                                   for c in coefficients]
         assert max(bits_for(c) for c in cs) <= w.B
+        max_out = sum(abs(c)*(1 << w.A - 1) for c in cs)
+        assert max_out <= (1 << w.P - 1) - 1, (bits_for(max_out), w)
 
         ###
 
         # Delay line: increasing delay
         x = [Signal((w.A, True), reset_less=True) for _ in range(n + p - 1)]
-
-        assert sum(abs(c)*(1 << w.A - 1) for c in cs) <= (1 << w.P - 1) - 1
 
         for xi, xj in zip(x, self.i[::-1]):
             self.comb += xi.eq(xj)
@@ -93,8 +93,9 @@ class ParallelFIR(Module):
 
         for delay in range(p):
             o = Signal((w.P, True), reset_less=True)
-            self.comb += self.o[delay].eq(o >> c_shift)
+            self.sync += self.o[delay].eq(o >> c_shift)
             # Make products
+            tap = delay
             for i, c in enumerate(cs):
                 # simplify for halfband and symmetric filters
                 if not c or c in cs[:i]:
@@ -103,16 +104,20 @@ class ParallelFIR(Module):
                 m = Signal.like(o)
                 o0, o = o, Signal.like(o)
                 q = Signal.like(x[0])
-                if delay + p <= js[0]:
+                if tap + p <= js[0]:
                     self.sync += o0.eq(o + m)
-                    delay += p
+                    tap += p
                 else:
                     self.comb += o0.eq(o + m)
-                assert js[0] - delay >= 0
-                self.comb += q.eq(reduce(add, [x[j - delay] for j in js]))
+                assert min(js) - tap >= 0
+                js = [j for j in js
+                        if (p - 1 - j - tap) % p not in cull_delays]
+                if not js:
+                    continue
+                self.comb += q.eq(reduce(add, [x[j - tap] for j in js]))
                 self.sync += m.eq(c*q)
             # symmetric rounding
-            if c_shift > 1:
+            if c_shift > 1 and delay not in cull_delays:
                 self.comb += o.eq((1 << c_shift - 1) - 1)
 
 
@@ -125,6 +130,7 @@ class FIR(ParallelFIR):
 
 def halfgen4_cascade(rate, width, order=None):
     """Generate coefficients for cascaded half-band filters.
+
     Coefficients are normalized to a gain of two per stage to compensate for
     the zero stuffing.
 
@@ -157,7 +163,8 @@ class ParallelHBFUpsampler(Module):
         i = [self.i]
         for coeff in coefficients:
             self.parallelism *= 2
-            hbf = ParallelFIR(coeff, self.parallelism, width, **kwargs)
+            hbf = ParallelFIR(coeff, self.parallelism, width=width,
+                    cull_delays={0}, **kwargs)
             self.submodules += hbf
             self.comb += [a.eq(b) for a, b in zip(hbf.i[1::2], i)]
             i = hbf.o

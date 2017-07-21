@@ -71,19 +71,21 @@ With the CLOCK hardware, the TTL lines are mapped as follows:
 
 The board has RTIO SPI buses mapped as follows:
 
-+--------------+-------------+-------------+-----------+------------+
-| RTIO channel | CS_N        | MOSI        | MISO      | CLK        |
-+==============+=============+=============+===========+============+
-| 22           | AMS101_CS_N | AMS101_MOSI |           | AMS101_CLK |
-+--------------+-------------+-------------+-----------+------------+
-| 23           | SPI0_CS_N   | SPI0_MOSI   | SPI0_MISO | SPI0_CLK   |
-+--------------+-------------+-------------+-----------+------------+
-| 24           | SPI1_CS_N   | SPI1_MOSI   | SPI1_MISO | SPI1_CLK   |
-+--------------+-------------+-------------+-----------+------------+
-| 25           | SPI2_CS_N   | SPI2_MOSI   | SPI2_MISO | SPI2_CLK   |
-+--------------+-------------+-------------+-----------+------------+
++--------------+--------------+--------------+--------------+------------+
+| RTIO channel | CS_N         | MOSI         | MISO         | CLK        |
++==============+==============+==============+==============+============+
+| 22           | AMS101_CS_N  | AMS101_MOSI  |              | AMS101_CLK |
++--------------+--------------+--------------+--------------+------------+
+| 23           | SPI0_CS_N    | SPI0_MOSI    | SPI0_MISO    | SPI0_CLK   |
++--------------+--------------+--------------+--------------+------------+
+| 24           | SPI1_CS_N    | SPI1_MOSI    | SPI1_MISO    | SPI1_CLK   |
++--------------+--------------+--------------+--------------+------------+
+| 25           | SPI2_CS_N    | SPI2_MOSI    | SPI2_MISO    | SPI2_CLK   |
++--------------+--------------+--------------+--------------+------------+
+| 26           | MMC_SPI_CS_N | MMC_SPI_MOSI | MMC_SPI_MISO | MMC_SPI_CLK|
++--------------+--------------+--------------+--------------+------------+
 
-The DDS bus is on channel 26.
+The DDS bus is on channel 27.
 
 
 NIST QC2
@@ -148,7 +150,7 @@ The Phaser adapter is an AD9154-FMC-EBZ, a 4 channel 2.4 GHz DAC on an FMC HPC c
 | 3            | SYNC       | Input        |
 +--------------+------------+--------------+
 
-The SAWG channels start with RTIO channel number 4, each occupying 3 channels.
+The SAWG channels start with RTIO channel number 3, each SAWG channel occupying 10 RTIO channels.
 
 The board has one non-RTIO SPI bus that is accessible through
 :mod:`artiq.coredevice.ad9154`.

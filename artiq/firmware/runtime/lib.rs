@@ -131,7 +131,7 @@ fn startup() {
         Ok(log_level_filter) => {
             info!("log level set to {} by `log_level` config key",
                   log_level_filter);
-            logger_artiq::BufferLogger::with_instance(|logger|
+            logger_artiq::BufferLogger::with(|logger|
                 logger.set_max_log_level(log_level_filter));
         }
     }
@@ -143,7 +143,7 @@ fn startup() {
         Ok(uart_log_level_filter) => {
             info!("UART log level set to {} by `uart_log_level` config key",
                   uart_log_level_filter);
-            logger_artiq::BufferLogger::with_instance(|logger|
+            logger_artiq::BufferLogger::with(|logger|
                 logger.set_uart_log_level(uart_log_level_filter));
         }
     }
@@ -176,7 +176,7 @@ pub extern fn main() -> i32 {
             panic!("out of memory");
         });
 
-        static mut LOG_BUFFER: [u8; 32768] = [0; 32768];
+        static mut LOG_BUFFER: [u8; 1<<17] = [0; 1<<17];
         logger_artiq::BufferLogger::new(&mut LOG_BUFFER[..]).register(startup);
         0
     }
