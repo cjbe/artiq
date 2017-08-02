@@ -202,6 +202,10 @@ class _DeviceManager:
                     self.new_core_addr.set()
                 elif v["module"] == "artiq.coredevice.ttl":
                     channel = v["arguments"]["channel"]
+                    if channel > 63:
+                        # The moninj protocol is limited to 64 channels; ignore
+                        # any beyond that for now to avoid confusion.
+                        return
                     force_out = v["class"] == "TTLOut"
                     widget = _TTLWidget(
                         channel, self.ttl_set_mode, force_out, k)

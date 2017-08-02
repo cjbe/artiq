@@ -5,9 +5,11 @@ from artiq.gateware.rtio import rtlink
 
 
 class Output(Module):
-    def __init__(self, pad):
+    def __init__(self, pad, invert=False):
+        padLogical = Signal()
+
         self.rtlink = rtlink.Interface(rtlink.OInterface(1))
-        self.probes = [pad]
+        self.probes = [padLogical]
         override_en = Signal()
         override_o = Signal()
         self.overrides = [override_en, override_o]
@@ -15,14 +17,20 @@ class Output(Module):
         # # #
 
         pad_k = Signal()
+        
+        if invert:
+            self.comb += pad.eq(~padLogical)
+        else:
+            self.comb += pad.eq(padLogical)
+        
         self.sync.rio_phy += [
             If(self.rtlink.o.stb,
                 pad_k.eq(self.rtlink.o.data)
             ),
             If(override_en,
-                pad.eq(override_o)
+                padLogical.eq(override_o)
             ).Else(
-                pad.eq(pad_k)
+                padLogical.eq(pad_k)
             )
         ]
 
@@ -65,7 +73,7 @@ class Input(Module):
 
 
 class InOut(Module):
-    def __init__(self, pad):
+    def __init__(self, pad, invert=False):
         self.rtlink = rtlink.Interface(
             rtlink.OInterface(2, 2),
             rtlink.IInterface(1))
@@ -81,6 +89,9 @@ class InOut(Module):
         self.specials += ts.get_tristate(pad)
         sensitivity = Signal(2)
 
+        outputLogical = Signal()
+        self.comb += ts.o.eq(~outputLogical)
+
         o_k = Signal()
         oe_k = Signal()
         self.sync.rio_phy += [
@@ -89,10 +100,10 @@ class InOut(Module):
                 If(self.rtlink.o.address == 1, oe_k.eq(self.rtlink.o.data[0])),
             ),
             If(override_en,
-                ts.o.eq(override_o),
+                outputLogical.eq(override_o),
                 ts.oe.eq(override_oe)
             ).Else(
-                ts.o.eq(o_k),
+                outputLogical.eq(o_k),
                 ts.oe.eq(oe_k)
             )
         ]
@@ -105,9 +116,12 @@ class InOut(Module):
             )
         ]
         
+        inputLogical = Signal()
+        self.comb += inputLogical.eq(~ts.i)
+
         i = Signal()
         i_d = Signal()
-        self.specials += MultiReg(ts.i, i, "rio_phy")
+        self.specials += MultiReg(inputLogical, i, "rio_phy")
         self.sync.rio_phy += i_d.eq(i)
         self.comb += [
             self.rtlink.i.stb.eq(
