@@ -10,7 +10,7 @@ class DifferentialTristate(TSTriple):
     # HACK : This only works for single-bit signals
     def get_tristate(self, pad, pad_n):
         return Instance("IOBUFDS",
-                        i_I=self.i, o_O=self.o, i_T=self.oe,
+                        i_I=self.o, o_O=self.i, i_T=~self.oe,
                         io_IO=pad, io_IOB=pad_n)
 
 
@@ -148,7 +148,7 @@ class SPIMaster(Module):
     data (address 0):
         M write/read data (reset=0)
     """
-    def __init__(self, pads, bus=None, differential=False):
+    def __init__(self, pads, bus=None, differential=False, invert=False):
         if bus is None:
             bus = wishbone.Interface(data_width=32)
         self.bus = bus
@@ -248,24 +248,48 @@ class SPIMaster(Module):
 
         # I/O
         if hasattr(iface, "cs_n_t"):
+            cs_n_logical = Signal()
             self.comb += [
                 iface.cs_n_t.oe.eq(~config.offline),
-                iface.cs_n_t.o.eq((cs & Replicate(spi.cs, len(cs))) ^
-                            Replicate(~config.cs_polarity, len(cs))),
+                cs_n_logical.eq((cs & Replicate(spi.cs, len(cs))) ^
+                            Replicate(~config.cs_polarity, len(cs)))
             ]
+            if invert:
+                self.comb += iface.cs_n_t.o.eq(~cs_n_logical)
+            else:
+                self.comb += iface.cs_n_t.o.eq(cs_n_logical)
 
+        clk_logical = Signal()
+        mosi_o_logical = Signal()
+        mosi_i_logical = Signal()
+        miso_logical = Signal()
+        miso = getattr(iface, "miso", iface.mosi_t.i)
         self.comb += [
             iface.clk_t.oe.eq(~config.offline),
-            iface.clk_t.o.eq((spi.cg.clk & spi.cs) ^ config.clk_polarity),
+            clk_logical.eq((spi.cg.clk & spi.cs) ^ config.clk_polarity),
         ]
 
         self.comb += [
             iface.mosi_t.oe.eq(~config.offline & spi.cs &
                          (spi.oe | ~config.half_duplex)),
-            iface.mosi_t.o.eq(spi.reg.o),
-            spi.reg.i.eq(Mux(config.half_duplex, iface.mosi_t.i,
-                             getattr(iface, "miso", iface.mosi_t.i))),
+            mosi_o_logical.eq(spi.reg.o),
+            spi.reg.i.eq(Mux(config.half_duplex, mosi_i_logical, miso_logical)),
         ]
+
+        if invert:
+            self.comb += [
+                iface.clk_t.o.eq(~clk_logical),
+                iface.mosi_t.o.eq(~spi.reg.o),
+                miso_logical.eq(~miso),
+                mosi_i_logical.eq(~iface.mosi_t.i),
+            ]
+        else:
+            self.comb += [
+                iface.clk_t.o.eq(clk_logical),
+                iface.mosi_t.o.eq(spi.reg.o),
+                miso_logical.eq(miso),
+                mosi_i_logical.eq(iface.mosi_t.i),
+            ]
 
 
 SPI_DATA_ADDR, SPI_XFER_ADDR, SPI_CONFIG_ADDR = range(3)
