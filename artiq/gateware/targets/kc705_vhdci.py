@@ -122,6 +122,16 @@ class _NIST_Ions(MiniSoC, AMPSoC):
         self.csr_devices.append("rtio_analyzer")
 
 
+class spi_wrapper:
+    def __init__(self, pad_clk=None, pad_mosi=None, pad_cs_n=None):
+        self.clk_p = pad_clk.p
+        self.clk_n = pad_clk.n
+        self.mosi_p = pad_mosi.p
+        self.mosi_n = pad_mosi.n
+        self.cs_n_p = pad_cs_n.p
+        self.cs_n_n = pad_cs_n.n
+
+
 class VHDCI_EEM(_NIST_Ions):
     """
     KC705 with VHDCI -> EEM adapter on HPC and LPC FMCs
@@ -131,22 +141,41 @@ class VHDCI_EEM(_NIST_Ions):
 
         platform = self.platform
         platform.add_extension(vhdci.fmc_adapter_io)
+        platform.add_extension(_ams101_dac)
 
         rtio_channels = []
         clock_generators = []
 
 
-        # All TTL channels are In+Out capable
-        for connector in ["lpc", "hpc"]:
-            for eem in range(4):
-                for i in range(8):
-                    pad = platform.request(connector+"_eem"+str(eem), i)
-                    phy = ttl_serdes_7series.InOut_8X(pad.p, pad.n, invert=True)
-                    self.submodules += phy
-                    rtio_channels.append(rtio.Channel.from_phy(phy))
+        def add_eem_spi(connector, eem, ind=0):
+            stem = connector+"_eem"+str(eem)
+            pad_clk = platform.request(stem, ind*4 + 0)
+            pad_mosi = platform.request(stem, ind*4 + 1)
+            pad_cs_n = platform.request(stem, ind*4 + 2)
+            phy = spi.SPIMaster(spi_wrapper(pad_clk, pad_mosi, pad_cs_n),
+                                differential=True, invert=True)
+            self.submodules += phy
+            rtio_channels.append(rtio.Channel.from_phy(
+                phy, ofifo_depth=128, ififo_depth=128))
+
+        def add_eem_ttl(connector, eem):
+            # All TTL channels are In+Out capable
+            for i in range(8):
+                pad = platform.request(connector+"_eem"+str(eem), i)
+                phy = ttl_serdes_7series.InOut_8X(pad.p, pad.n, invert=True)
+                self.submodules += phy
+                rtio_channels.append(rtio.Channel.from_phy(
+                    phy, ififo_depth=128))
+
+        add_eem_ttl("lpc", 0)
+        add_eem_ttl("lpc", 1)
+        add_eem_spi("lpc", 2, 0)
+        add_eem_spi("lpc", 2, 1)
+        add_eem_spi("lpc", 3, 0)
+        add_eem_spi("lpc", 3, 1)
 
         self.platform.add_platform_command(
-            "set_false_path -from [get_pins vhdci_eem_inout_*_serdes_oe_reg/C] -to [get_pins ISERDESE2_*/D]"
+            "set_false_path -from [get_pins *_serdes_oe_reg/C] -to [get_pins ISERDESE2_*/D]"
             )
         self.platform.add_platform_command(
             "set_false_path -from [get_pins OSERDESE2_*/CLK] -to [get_pins ISERDESE2_*/D]"
@@ -155,6 +184,10 @@ class VHDCI_EEM(_NIST_Ions):
         phy = ttl_simple.Output(platform.request("user_led", 2))
         self.submodules += phy
         rtio_channels.append(rtio.Channel.from_phy(phy))
+
+        eth = platform.lookup_request("eth", 0)
+        self.submodules.mdio = gpio.GPIOTristate([eth.mdc, eth.mdio])
+        self.csr_devices.append("mdio")
 
         lpc_i2c = self.platform.request("LPC_i2c")
         hpc_i2c = self.platform.request("HPC_i2c")
