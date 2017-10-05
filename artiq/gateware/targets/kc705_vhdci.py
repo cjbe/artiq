@@ -141,7 +141,6 @@ class VHDCI_EEM(_NIST_Ions):
 
         platform = self.platform
         platform.add_extension(vhdci.fmc_adapter_io)
-        platform.add_extension(_ams101_dac)
 
         rtio_channels = []
         clock_generators = []
