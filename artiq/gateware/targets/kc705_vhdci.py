@@ -164,7 +164,7 @@ class VHDCI_EEM(_NIST_Ions):
                 phy = ttl_serdes_7series.InOut_8X(pad.p, pad.n, invert=True)
                 self.submodules += phy
                 rtio_channels.append(rtio.Channel.from_phy(
-                    phy, ififo_depth=128))
+                    phy, ififo_depth=512))
 
         add_eem_ttl("lpc", 0)
         add_eem_ttl("lpc", 1)
