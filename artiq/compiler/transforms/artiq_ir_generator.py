@@ -1289,6 +1289,10 @@ class ARTIQIRGenerator(algorithm.Visitor):
             return self.append(ir.Select(cond,
                         ir.Constant(False, builtins.TBool()),
                         ir.Constant(True,  builtins.TBool())))
+        elif isinstance(node.op, ast.Invert):
+            operand = self.visit(node.operand)
+            return self.append(ir.Arith(ast.BitXor(loc=None),
+                                        ir.Constant(-1, operand.type), operand))
         elif isinstance(node.op, ast.USub):
             operand = self.visit(node.operand)
             return self.append(ir.Arith(ast.Sub(loc=None),
@@ -1319,7 +1323,7 @@ class ARTIQIRGenerator(algorithm.Visitor):
                     lambda: self.alloc_exn(builtins.TException("ValueError"),
                         ir.Constant("shift amount must be nonnegative", builtins.TStr())),
                     loc=node.right.loc)
-            elif isinstance(node.op, (ast.Div, ast.FloorDiv)):
+            elif isinstance(node.op, (ast.Div, ast.FloorDiv, ast.Mod)):
                 self._make_check(
                     self.append(ir.Compare(ast.NotEq(loc=None), rhs, ir.Constant(0, rhs.type))),
                     lambda: self.alloc_exn(builtins.TException("ZeroDivisionError"),
