@@ -5,7 +5,7 @@ from artiq.gateware.rtio import rtlink
 
 
 class Output(Module):
-    def __init__(self, pad):
+    def __init__(self, pad, pad_n=None):
         self.rtlink = rtlink.Interface(rtlink.OInterface(1))
         self.probes = [pad]
         override_en = Signal()
@@ -15,20 +15,28 @@ class Output(Module):
         # # #
 
         pad_k = Signal()
+        pad_o = Signal()
         self.sync.rio_phy += [
             If(self.rtlink.o.stb,
                 pad_k.eq(self.rtlink.o.data)
             ),
             If(override_en,
-                pad.eq(override_o)
+                pad_o.eq(override_o)
             ).Else(
-                pad.eq(pad_k)
+                pad_o.eq(pad_k)
             )
         ]
 
+        if pad_n is None:
+            self.comb += pad.eq(pad_o)
+        else:
+            self.specials += Instance("OBUFDS",
+                                      i_I=pad_o,
+                                      o_O=pad, o_OB=pad_n)
+
 
 class Input(Module):
-    def __init__(self, pad):
+    def __init__(self, pad, pad_n=None):
         self.rtlink = rtlink.Interface(
             rtlink.OInterface(2, 2),
             rtlink.IInterface(1))
@@ -50,7 +58,8 @@ class Input(Module):
 
         i = Signal()
         i_d = Signal()
-        self.specials += MultiReg(pad, i, "rio_phy")
+        pad_i = Signal()
+        self.specials += MultiReg(pad_i, i, "rio_phy")
         self.sync.rio_phy += i_d.eq(i)
         self.comb += [
             self.rtlink.i.stb.eq(
@@ -61,11 +70,16 @@ class Input(Module):
             self.rtlink.i.data.eq(i)
         ]
 
+        if pad_n is None:
+            self.comb += pad_i.eq(pad)
+        else:
+            self.specials += Instance("IBUFDS", o_O=pad_i, i_I=pad, i_IB=pad_n)
+
         self.probes += [i]
 
 
 class InOut(Module):
-    def __init__(self, pad):
+    def __init__(self, pad, pad_n=None):
         self.rtlink = rtlink.Interface(
             rtlink.OInterface(2, 2),
             rtlink.IInterface(1))

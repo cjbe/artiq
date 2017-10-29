@@ -1,8 +1,52 @@
 from itertools import product
 
 from migen import *
+from migen.genlib.io import DifferentialInput
 from misoc.interconnect import wishbone
 from misoc.cores.spi import SPIMachine
+
+
+class DifferentialTristate(TSTriple):
+    # HACK : This only works for single-bit signals
+    def get_tristate(self, pad, pad_n):
+        return Instance("IOBUFDS",
+                        i_I=self.o, o_O=self.i, i_T=~self.oe,
+                        io_IO=pad, io_IOB=pad_n)
+
+
+class SingleEndedInterface(Module):
+    def __init__(self, pads):
+        self.mosi_t = TSTriple()
+        self.specials += self.mosi_t.get_tristate(pads.mosi)
+
+        self.clk_t = TSTriple()
+        self.specials += self.clk_t.get_tristate(pads.clk)
+
+        if hasattr(pads, "cs_n"):
+            self.cs_n_t = TSTriple(len(pads.cs_n))
+            self.specials += self.cs_n_t.get_tristate(pads.cs_n)
+
+        if hasattr(pads, "miso"):
+            self.miso = pads.miso
+
+
+class DifferentialInterface(Module):
+    def __init__(self, pads):
+        self.mosi_t = DifferentialTristate()
+        self.specials += self.mosi_t.get_tristate(pads.mosi_p, pads.mosi_n)
+
+        self.clk_t = DifferentialTristate()
+        self.specials += self.clk_t.get_tristate(pads.clk_p, pads.clk_n)
+
+        if hasattr(pads, "cs_n_p"):
+            # HACK : this only works when cs is a single-bit signal
+            self.cs_n_t = DifferentialTristate()
+            self.specials += self.cs_n_t.get_tristate(pads.cs_n_p, pads.cs_n_n)
+
+        if hasattr(pads, "miso_p"):
+            self.miso = Signal()
+            self.specials += DifferentialInput(pads.miso_p, pads.miso_n, self.miso)
+
 
 
 class SPIMaster(Module):
@@ -104,10 +148,16 @@ class SPIMaster(Module):
     data (address 0):
         M write/read data (reset=0)
     """
-    def __init__(self, pads, pads_n=None, bus=None):
+    def __init__(self, pads, bus=None, differential=False, invert=False):
         if bus is None:
             bus = wishbone.Interface(data_width=32)
         self.bus = bus
+
+        if differential:
+            iface = DifferentialInterface(pads)
+        else:
+            iface = SingleEndedInterface(pads)
+        self.submodules.interface = iface
 
         ###
 
@@ -197,63 +247,49 @@ class SPIMaster(Module):
         ]
 
         # I/O
-        mosi_oe = Signal()
-        clk = Signal()
+        if hasattr(iface, "cs_n_t"):
+            cs_n_logical = Signal()
+            self.comb += [
+                iface.cs_n_t.oe.eq(~config.offline),
+                cs_n_logical.eq((cs & Replicate(spi.cs, len(cs))) ^
+                            Replicate(~config.cs_polarity, len(cs)))
+            ]
+            if invert:
+                self.comb += iface.cs_n_t.o.eq(~cs_n_logical)
+            else:
+                self.comb += iface.cs_n_t.o.eq(cs_n_logical)
+
+        clk_logical = Signal()
+        mosi_o_logical = Signal()
+        mosi_i_logical = Signal()
+        miso_logical = Signal()
+        miso = getattr(iface, "miso", iface.mosi_t.i)
         self.comb += [
-            mosi_oe.eq(
-                ~config.offline & spi.cs &
-                (spi.oe | ~config.half_duplex)),
-            clk.eq((spi.cg.clk & spi.cs) ^ config.clk_polarity)
+            iface.clk_t.oe.eq(~config.offline),
+            clk_logical.eq((spi.cg.clk & spi.cs) ^ config.clk_polarity),
         ]
 
-        if pads_n is None:
-            if hasattr(pads, "cs_n"):
-                cs_n_t = TSTriple(len(pads.cs_n))
-                self.specials += cs_n_t.get_tristate(pads.cs_n)
-                self.comb += [
-                    cs_n_t.oe.eq(~config.offline),
-                    cs_n_t.o.eq((cs & Replicate(spi.cs, len(cs))) ^
-                                Replicate(~config.cs_polarity, len(cs))),
-                ]
+        self.comb += [
+            iface.mosi_t.oe.eq(~config.offline & spi.cs &
+                         (spi.oe | ~config.half_duplex)),
+            mosi_o_logical.eq(spi.reg.o),
+            spi.reg.i.eq(Mux(config.half_duplex, mosi_i_logical, miso_logical)),
+        ]
 
-            clk_t = TSTriple()
-            self.specials += clk_t.get_tristate(pads.clk)
+        if invert:
             self.comb += [
-                clk_t.oe.eq(~config.offline),
-                clk_t.o.eq(clk),
-            ]
-
-            mosi_t = TSTriple()
-            self.specials += mosi_t.get_tristate(pads.mosi)
-            self.comb += [
-                mosi_t.oe.eq(mosi_oe),
-                mosi_t.o.eq(spi.reg.o),
-                spi.reg.i.eq(Mux(config.half_duplex, mosi_t.i,
-                                 getattr(pads, "miso", mosi_t.i))),
+                iface.clk_t.o.eq(~clk_logical),
+                iface.mosi_t.o.eq(~spi.reg.o),
+                miso_logical.eq(~miso),
+                mosi_i_logical.eq(~iface.mosi_t.i),
             ]
         else:
-            if hasattr(pads, "cs_n"):
-                for i in range(len(pads.cs_n)):
-                    self.specials += Instance("IOBUFDS",
-                        i_I=(cs[i] & spi.cs) ^ ~config.cs_polarity,
-                        i_T=config.offline,
-                        io_IO=pads.cs_n[i], io_IOB=pads_n.cs_n[i])
-
-            self.specials += Instance("IOBUFDS",
-                i_I=clk, i_T=config.offline,
-                io_IO=pads.clk, io_IOB=pads_n.clk)
-
-            mosi = Signal()
-            self.specials += Instance("IOBUFDS",
-                o_O=mosi, i_I=spi.reg.o, i_T=~mosi_oe,
-                io_IO=pads.mosi, io_IOB=pads_n.mosi)
-            if hasattr(pads, "miso"):
-                miso = Signal()
-                self.specials += Instance("IBUFDS",
-                    o_O=miso, i_I=pads.miso, i_IB=pads_n.miso)
-            else:
-                miso = mosi
-            self.comb += spi.reg.i.eq(Mux(config.half_duplex, mosi, miso))
+            self.comb += [
+                iface.clk_t.o.eq(clk_logical),
+                iface.mosi_t.o.eq(spi.reg.o),
+                miso_logical.eq(miso),
+                mosi_i_logical.eq(iface.mosi_t.i),
+            ]
 
 
 SPI_DATA_ADDR, SPI_XFER_ADDR, SPI_CONFIG_ADDR = range(3)
