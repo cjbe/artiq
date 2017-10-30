@@ -64,7 +64,7 @@ def main():
             server = Server({"corelog": PingTarget()}, None, True)
             loop.run_until_complete(server.start(bind_address_from_args(args), args.port))
             try:
-                multiline_log_config(logging.TRACE)
+                multiline_log_config(logging.ERROR)
                 loop.run_until_complete(server.wait_terminate())
             finally:
                 loop.run_until_complete(server.stop())
