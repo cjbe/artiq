@@ -17,7 +17,7 @@ from misoc.integration.builder import builder_args, builder_argdict
 from artiq.gateware.amp import AMPSoC, build_artiq_soc
 from artiq.gateware import rtio, vhdci
 from artiq.gateware.rtio.phy import (ttl_simple, ttl_serdes_7series,
-                                     dds, spi)
+                                     dds, spi, serdes_tdc)
 from artiq import __version__ as artiq_version
 
 
@@ -159,19 +159,30 @@ class VHDCI_EEM(_NIST_Ions):
 
         def add_eem_ttl(connector, eem):
             # All TTL channels are In+Out capable
+            phys = []
             for i in range(8):
                 pad = platform.request(connector+"_eem"+str(eem), i)
                 phy = ttl_serdes_7series.InOut_8X(pad.p, pad.n, invert=True)
                 self.submodules += phy
+                phys.append(phy)
                 rtio_channels.append(rtio.Channel.from_phy(
                     phy, ififo_depth=512))
+            return phys
+
+        def add_tdc(phy_sig, phy_ref):
+            phy_tdc = serdes_tdc.TDC(phy_sig=phy_sig, phy_ref=phy_ref)
+            self.submodules += phy_tdc
+            rtio_channels.append(rtio.Channel.from_phy(
+                                 phy_tdc, ififo_depth=512))
 
         add_eem_ttl("lpc", 0)
-        add_eem_ttl("lpc", 1)
+        input_phys = add_eem_ttl("lpc", 1)
         add_eem_spi("lpc", 2, 0)
         add_eem_spi("lpc", 2, 1)
         add_eem_spi("lpc", 3, 0)
         add_eem_spi("lpc", 3, 1)
+        add_tdc(input_phys[4], input_phys[5])
+        add_tdc(input_phys[6], input_phys[7])
 
         self.platform.add_platform_command(
             "set_false_path -from [get_pins *_serdes_oe_reg/C] -to [get_pins ISERDESE2_*/D]"
