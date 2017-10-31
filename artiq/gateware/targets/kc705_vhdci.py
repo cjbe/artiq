@@ -132,7 +132,7 @@ class spi_wrapper:
         self.cs_n_n = pad_cs_n.n
 
 
-class VHDCI_EEM(_NIST_Ions):
+class VHDCI(_NIST_Ions):
     """
     KC705 with VHDCI -> EEM adapter on HPC and LPC FMCs
     """
@@ -220,7 +220,7 @@ def main():
     soc_kc705_args(parser)
     args = parser.parse_args()
 
-    soc = VHDCI_EEM(**soc_kc705_argdict(args))
+    soc = VHDCI(**soc_kc705_argdict(args))
     build_artiq_soc(soc, builder_argdict(args))
 
 
