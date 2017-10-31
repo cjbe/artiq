@@ -65,6 +65,9 @@ class InOut(Module):
         override_en = Signal()
         override_o = Signal()
         override_oe = Signal()
+        self.fine_ts = Signal(log2_int(serdes_width))
+        self.stb_rising = Signal()
+        self.stb_falling = Signal()
         self.overrides = [override_en, override_o, override_oe]
 
         # # #
@@ -101,12 +104,17 @@ class InOut(Module):
 
         i = serdes.i[-1]
         i_d = Signal()
+        self.comb += [
+            self.stb_rising.eq( i & ~i_d),
+            self.stb_falling.eq(~i &  i_d),
+        ]
+
         self.sync.rio_phy += [
             i_d.eq(i),
             self.rtlink.i.stb.eq(
                 sample |
-                (sensitivity[0] & ( i & ~i_d)) |
-                (sensitivity[1] & (~i &  i_d))
+                (sensitivity[0] & self.stb_rising) |
+                (sensitivity[1] & self.stb_falling)
             ),
             self.rtlink.i.data.eq(i),
         ]
@@ -114,7 +122,8 @@ class InOut(Module):
         pe = PriorityEncoder(serdes_width)
         self.submodules += pe
         self.comb += pe.i.eq(serdes.i ^ Replicate(i_d, serdes_width))
-        self.sync.rio_phy += self.rtlink.i.fine_ts.eq(pe.o)
+        self.comb += self.fine_ts.eq(pe.o)
+        self.sync.rio_phy += self.rtlink.i.fine_ts.eq(self.fine_ts)
 
 
 class _FakeSerdes(Module):

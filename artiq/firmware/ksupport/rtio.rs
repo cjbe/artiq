@@ -130,6 +130,33 @@ pub extern fn input_data(channel: i32) -> i32 {
     }
 }
 
+pub extern fn input_data_timeout(timeout: i64, channel: i32) -> i32 {
+    unsafe {
+        csr::rtio::chan_sel_write(channel as _);
+        csr::rtio::timestamp_write(timeout as u64);
+        csr::rtio::i_request_write(1);
+
+        let mut status = RTIO_I_STATUS_WAIT_STATUS;
+        while status & RTIO_I_STATUS_WAIT_STATUS != 0 {
+            status = csr::rtio::i_status_read();
+        }
+
+        if status & RTIO_I_STATUS_OVERFLOW != 0 {
+            csr::rtio::i_overflow_reset_write(1);
+            raise!("RTIOOverflow",
+                "RTIO input overflow on channel {0}",
+                channel as i64, 0, 0);
+        }
+
+        if status & RTIO_I_STATUS_WAIT_EVENT != 0 {
+            return !0
+        }
+
+        rtio_i_data_read(0) as i32
+    }
+}
+
+
 #[cfg(has_rtio_log)]
 pub fn log(timestamp: i64, data: &[u8]) {
     unsafe {

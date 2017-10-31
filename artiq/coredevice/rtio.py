@@ -22,3 +22,7 @@ def rtio_input_timestamp(timeout_mu: TInt64, channel: TInt32) -> TInt64:
 @syscall(flags={"nowrite"})
 def rtio_input_data(channel: TInt32) -> TInt32:
     raise NotImplementedError("syscall not simulated")
+
+@syscall(flags={"nowrite"})
+def rtio_input_data_timeout(timeout_mu: TInt64, channel: TInt32) -> TInt32:
+    raise NotImplementedError("syscall not simulated")
