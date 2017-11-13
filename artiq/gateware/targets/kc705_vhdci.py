@@ -123,13 +123,16 @@ class _NIST_Ions(MiniSoC, AMPSoC):
 
 
 class spi_wrapper:
-    def __init__(self, pad_clk=None, pad_mosi=None, pad_cs_n=None):
+    def __init__(self, pad_clk=None, pad_mosi=None, pad_cs_n=None, pad_miso=None):
         self.clk_p = pad_clk.p
         self.clk_n = pad_clk.n
         self.mosi_p = pad_mosi.p
         self.mosi_n = pad_mosi.n
         self.cs_n_p = pad_cs_n.p
         self.cs_n_n = pad_cs_n.n
+        if pad_miso:
+            self.miso_p = pad_miso.p
+            self.miso_n = pad_miso.n
 
 
 class VHDCI(_NIST_Ions):
@@ -169,6 +172,23 @@ class VHDCI(_NIST_Ions):
                     phy, ififo_depth=512))
             return phys
 
+        def add_eem_zotino(connector, eem):
+            stem = connector+"_eem"+str(eem)
+            pad_clk = platform.request(stem, 0)
+            pad_mosi = platform.request(stem, 1)
+            pad_miso = platform.request(stem, 2)
+            pad_cs_n = platform.request(stem, 3)
+            sdac_phy = spi.SPIMaster(spi_wrapper(pad_clk, pad_mosi, pad_cs_n,
+                                                                pad_miso),
+                                            differential=True, invert=True)
+            self.submodules += sdac_phy
+            rtio_channels.append(rtio.Channel.from_phy(sdac_phy, ififo_depth=4))
+
+            pad = platform.request(stem, 5)
+            ldac_phy = ttl_serdes_7series.Output_8X(pad.p, pad.n, invert=True)
+            self.submodules += ldac_phy
+            rtio_channels.append(rtio.Channel.from_phy(ldac_phy))
+
         def add_tdc(phy_sig, phy_ref):
             phy_tdc = serdes_tdc.TDC(phy_sig=phy_sig, phy_ref=phy_ref)
             self.submodules += phy_tdc
@@ -181,6 +201,7 @@ class VHDCI(_NIST_Ions):
         add_eem_spi("lpc", 2, 1)
         add_eem_spi("lpc", 3, 0)
         add_eem_spi("lpc", 3, 1)
+        add_eem_zotino("hpc", 0)
         add_tdc(input_phys[4], input_phys[5])
         add_tdc(input_phys[6], input_phys[7])
 
