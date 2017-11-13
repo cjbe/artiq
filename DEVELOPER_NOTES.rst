@@ -15,11 +15,25 @@ To lock the KC705 for the duration of the execution of a shell:
 ::
   flock /run/boards/kc705 bash
 
+You may also use this script:
+::
+  #!/bin/bash
+  exec flock /run/boards/$1 bash --rcfile <(cat ~/.bashrc; echo PS1=\"[$1\ lock]\ \$PS1\")
+
 If the board is already locked by another user, the ``flock`` commands above will wait for the lock to be released.
 
 To determine which user is locking a board, use:
 ::
   fuser -v /run/boards/kc705
+
+
+Selecting a development board with artiq_flash
+==============================================
+
+::
+  artiq_flash --preinit-command "ftdi_location 5:2"   # Sayma 1
+  artiq_flash --preinit-command "ftdi_location 3:10"  # Sayma 2
+  artiq_flash --preinit-command "ftdi_location 5:1"   # Sayma 3
 
 
 Deleting git branches
