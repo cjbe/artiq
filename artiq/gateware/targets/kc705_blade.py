@@ -128,6 +128,15 @@ class _NIST_Ions(MiniSoC, AMPSoC):
 descrambleList = [ 3, 2, 1, 0, 7, 6, 5, 4 ];
 
 
+class spi_wrapper:
+    def __init__(self, pad_clk=None, pad_mosi=None, pad_cs_n=None, pad_miso=None):
+        self.clk = pad_clk
+        self.mosi = pad_mosi
+        self.cs_n = pad_cs_n
+        if pad_miso:
+            self.miso = pad_miso
+
+
 class Blade(_NIST_Ions):
     """
     KC705 with VHDCI -> EEM adapter on HPC and LPC FMCs
@@ -147,6 +156,9 @@ class Blade(_NIST_Ions):
         for bank in ['a','b','c','d','e','f','g']:
             for i in range(8):
                 ofifo_depth = 64
+                if bank=='g' and i < 3:
+                    # Skip DDS SPI connections
+                    continue
                 if bank=='g' and i == 5:
                     # Deeper FIFO for pulse picker trigger channel to work around timing issues when
                     # generating longer 1 MHz trains for noise eating.
@@ -159,6 +171,17 @@ class Blade(_NIST_Ions):
             phy = ttl_serdes_7series.InOut_8X(platform.request("in", descrambleList[i]), invert=True)
             self.submodules += phy
             rtio_channels.append(rtio.Channel.from_phy(phy, ififo_depth=512))
+
+
+        pad_clk = platform.request("g", descrambleList[0])
+        pad_mosi = platform.request("g", descrambleList[1])
+        pad_cs_n = platform.request("g", descrambleList[2])
+        phy = spi.SPIMaster(spi_wrapper(pad_clk, pad_mosi, pad_cs_n),
+                                                            invert=True)
+        self.submodules += phy
+        rtio_channels.append(rtio.Channel.from_phy(
+                        phy, ofifo_depth=128, ififo_depth=128))
+
 
         phy = ttl_simple.Output(platform.request("ledFrontPanel", 1)) # No invert for the LEDs
         self.submodules += phy
