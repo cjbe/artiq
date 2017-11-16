@@ -184,10 +184,23 @@ class VHDCI(_NIST_Ions):
             self.submodules += sdac_phy
             rtio_channels.append(rtio.Channel.from_phy(sdac_phy, ififo_depth=4))
 
+            # LDAC
             pad = platform.request(stem, 5)
             ldac_phy = ttl_serdes_7series.Output_8X(pad.p, pad.n, invert=True)
             self.submodules += ldac_phy
             rtio_channels.append(rtio.Channel.from_phy(ldac_phy))
+
+            # CSN_EXT
+            pad = platform.request(stem, 4)
+            phy = ttl_serdes_7series.Output_8X(pad.p, pad.n, invert=True)
+            self.submodules += phy
+            rtio_channels.append(rtio.Channel.from_phy(phy))
+
+            # CLRN
+            pad = platform.request(stem, 7)
+            phy = ttl_serdes_7series.Output_8X(pad.p, pad.n, invert=True)
+            self.submodules += phy
+            rtio_channels.append(rtio.Channel.from_phy(phy))
 
             dac_monitor = ad5360_monitor.AD5360Monitor(sdac_phy.rtlink, ldac_phy.rtlink)
             self.submodules += dac_monitor
@@ -199,8 +212,8 @@ class VHDCI(_NIST_Ions):
             rtio_channels.append(rtio.Channel.from_phy(
                                  phy_tdc, ififo_depth=512))
 
-        add_eem_ttl("lpc", 3)
-        input_phys = add_eem_ttl("lpc", 2)
+        add_eem_ttl("lpc", 2)
+        input_phys = add_eem_ttl("lpc", 3)
         add_eem_spi("lpc", 0, 0)
         add_eem_spi("lpc", 0, 1)
         add_eem_spi("lpc", 1, 0)
