@@ -17,7 +17,7 @@ from misoc.integration.builder import builder_args, builder_argdict
 from artiq.gateware.amp import AMPSoC, build_artiq_soc
 from artiq.gateware import rtio, vhdci
 from artiq.gateware.rtio.phy import (ttl_simple, ttl_serdes_7series,
-                                     dds, spi, serdes_tdc)
+                                     dds, spi, serdes_tdc, ad5360_monitor)
 from artiq import __version__ as artiq_version
 
 
@@ -188,6 +188,10 @@ class VHDCI(_NIST_Ions):
             ldac_phy = ttl_serdes_7series.Output_8X(pad.p, pad.n, invert=True)
             self.submodules += ldac_phy
             rtio_channels.append(rtio.Channel.from_phy(ldac_phy))
+
+            dac_monitor = ad5360_monitor.AD5360Monitor(sdac_phy.rtlink, ldac_phy.rtlink)
+            self.submodules += dac_monitor
+            sdac_phy.probes.extend(dac_monitor.probes)
 
         def add_tdc(phy_sig, phy_ref):
             phy_tdc = serdes_tdc.TDC(phy_sig=phy_sig, phy_ref=phy_ref)
