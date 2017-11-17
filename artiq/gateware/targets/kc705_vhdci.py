@@ -202,9 +202,9 @@ class VHDCI(_NIST_Ions):
             self.submodules += phy
             rtio_channels.append(rtio.Channel.from_phy(phy))
 
-            dac_monitor = ad5360_monitor.AD5360Monitor(sdac_phy.rtlink, ldac_phy.rtlink)
-            self.submodules += dac_monitor
-            sdac_phy.probes.extend(dac_monitor.probes)
+            # dac_monitor = ad5360_monitor.AD5360Monitor(sdac_phy.rtlink, ldac_phy.rtlink)
+            # self.submodules += dac_monitor
+            # sdac_phy.probes.extend(dac_monitor.probes)
 
         def add_tdc(phy_sig, phy_ref):
             phy_tdc = serdes_tdc.TDC(phy_sig=phy_sig, phy_ref=phy_ref)
