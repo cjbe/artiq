@@ -212,12 +212,12 @@ class VHDCI(_NIST_Ions):
             rtio_channels.append(rtio.Channel.from_phy(
                                  phy_tdc, ififo_depth=512))
 
-        add_eem_ttl("lpc", 2)
-        input_phys = add_eem_ttl("lpc", 3)
-        add_eem_spi("lpc", 0, 0)
-        add_eem_spi("lpc", 0, 1)
+        add_eem_ttl("lpc", 3)
+        input_phys = add_eem_ttl("lpc", 2)
         add_eem_spi("lpc", 1, 0)
         add_eem_spi("lpc", 1, 1)
+        add_eem_spi("lpc", 0, 0)
+        add_eem_spi("lpc", 0, 1)
         add_eem_zotino("hpc", 0)
         add_tdc(input_phys[4], input_phys[5])
         add_tdc(input_phys[6], input_phys[7])
