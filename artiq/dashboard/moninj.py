@@ -212,10 +212,6 @@ def setup_from_ddb(ddb):
                     core_addr = v["arguments"]["host"]
                 elif v["module"] == "artiq.coredevice.ttl":
                     channel = v["arguments"]["channel"]
-                    if channel > 63:
-                        # The moninj protocol is limited to 64 channels; ignore
-                        # any beyond that for now to avoid confusion.
-                        return
                     force_out = v["class"] == "TTLOut"
                     widget = _WidgetDesc(k, comment, _TTLWidget, (channel, force_out, k))
                     description.add(widget)
