@@ -140,7 +140,7 @@ class Singlefmc(_NIST_Ions):
 
         rtio_channels = []
 
-        for bank in ['a','b','c','d','e']:
+        for bank in ['a','b','c','d']:
             for i in range(8):
                 phy = ttl_serdes_7series.Output_8X(
                                     platform.request(bank, descrambleList[i]),
@@ -148,8 +148,16 @@ class Singlefmc(_NIST_Ions):
                 self.submodules += phy
                 rtio_channels.append(rtio.Channel.from_phy(
                                                 phy,
-                                                ofifo_depth=64,
-                                                ififo_depth=512))
+                                                ofifo_depth=64))
+
+        for i in range(8):
+            phy = ttl_serdes_7series.Input_8X(
+                                platform.request('e', descrambleList[i]),
+                                invert=True)
+            self.submodules += phy
+            rtio_channels.append(rtio.Channel.from_phy(
+                                            phy,
+                                            ififo_depth=512))
 
         self.platform.add_platform_command(
             "set_false_path -from [get_pins *_serdes_oe_reg/C] -to [get_pins ISERDESE2_*/D]"
