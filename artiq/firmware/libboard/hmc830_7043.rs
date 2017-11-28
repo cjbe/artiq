@@ -1,15 +1,31 @@
 /*
  * HMC830 config:
- * 100MHz input, 1GHz output
+ * 100MHz input, 1.2GHz output
  * fvco = (refclk / r_divider) * n_divider
  * fout = fvco/2
  *
  * HMC7043 config:
- * dac clock: 1GHz (div=1)
- * fpga clock: 250MHz (div=4)
- * sysref clock: 15.625MHz (div=64)
+ * dac clock: 600MHz (div=1)
+ * fpga clock: 150MHz (div=4)
+ * sysref clock: 9.375MHz (div=64)
  */
 
+mod clock_mux {
+    use csr;
+
+    const CLK_SRC_EXT_SEL : u8 = 1 << 0;
+    const REF_CLK_SRC_SEL : u8 = 1 << 1;
+    const DAC_CLK_SRC_SEL : u8 = 1 << 2;
+
+    pub fn init() {
+        unsafe {
+            csr::clock_mux::out_write(
+                1*CLK_SRC_EXT_SEL |  // use ext clk from sma
+                1*REF_CLK_SRC_SEL |  //
+                0*DAC_CLK_SRC_SEL);  // use clk from dac_clk // FIXME (should use hmc830 output)
+        }
+    }
+}
 
 mod hmc830 {
     use clock;
@@ -31,13 +47,13 @@ mod hmc830 {
         (0xa, 0x2046),
         (0xb, 0x7c061),
         (0xf, 0x81),
-        (0x3, 0x28), // n_divider
+        (0x3, 0x30), // n_divider
     ];
 
     fn spi_setup() {
         unsafe {
             csr::converter_spi::offline_write(1);
-            csr::converter_spi::cs_polarity_write(0);
+            csr::converter_spi::cs_polarity_write(0b0001);
             csr::converter_spi::clk_polarity_write(0);
             csr::converter_spi::clk_phase_write(0);
             csr::converter_spi::lsb_first_write(0);
@@ -70,7 +86,7 @@ mod hmc830 {
             csr::converter_spi::data_write_write(val << (32-31));
             while csr::converter_spi::pending_read() != 0 {}
             while csr::converter_spi::active_read() != 0 {}
-            csr::converter_spi::data_read_read()
+            csr::converter_spi::data_read_read() & 0xffffff
         }
     }
 
@@ -80,12 +96,16 @@ mod hmc830 {
         if id != 0xa7975 {
             error!("invalid HMC830 ID: 0x{:08x}", id);
             return Err("invalid HMC830 identification");
+        } else {
+            info!("HMC830 found");
         }
+        info!("HMC830 configuration...");
         for &(addr, data) in HMC830_WRITES.iter() {
             write(addr, data);
         }
 
         let t = clock::get_ms();
+        info!("HMC830 waiting for lock...");
         while read(0x12) & 0x02 == 0 {
             if clock::get_ms() > t + 2000 {
                 return Err("HMC830 lock timeout");
@@ -104,7 +124,7 @@ mod hmc7043 {
     fn spi_setup() {
         unsafe {
             csr::converter_spi::offline_write(1);
-            csr::converter_spi::cs_polarity_write(0);
+            csr::converter_spi::cs_polarity_write(0b0001);
             csr::converter_spi::clk_polarity_write(0);
             csr::converter_spi::clk_phase_write(0);
             csr::converter_spi::lsb_first_write(0);
@@ -129,7 +149,7 @@ mod hmc7043 {
     }
 
     fn read(addr: u16) -> u8 {
-        let cmd = (0 << 15) | addr;
+        let cmd = (1 << 15) | addr;
         let val = (cmd as u32) << 8;
         unsafe {
             csr::converter_spi::xfer_len_write_write(16);
@@ -147,7 +167,10 @@ mod hmc7043 {
         if id != 0xf17904 {
             error!("invalid HMC7043 ID: 0x{:08x}", id);
             return Err("invalid HMC7043 identification");
+        } else {
+            info!("HMC7043 found");
         }
+        info!("HMC7043 configuration...");
         for &(addr, data) in HMC7043_WRITES.iter() {
             write(addr, data);
         }
@@ -156,6 +179,7 @@ mod hmc7043 {
 }
 
 pub fn init() -> Result<(), &'static str> {
-    hmc830::init()?;
+    clock_mux::init();
+    //hmc830::init()?; // FIXME
     hmc7043::init()
 }

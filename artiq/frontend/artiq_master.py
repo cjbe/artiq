@@ -48,7 +48,19 @@ def get_argparser():
 
     log_args(parser)
 
+    parser.add_argument("--name",
+        help="friendly name, displayed in dashboards "
+             "to identify master instead of server address")
+
     return parser
+
+
+class MasterConfig:
+    def __init__(self, name):
+        self.name = name
+
+    def get_name(self):
+        return self.name
 
 
 def main():
@@ -94,6 +106,8 @@ def main():
     scheduler.start()
     atexit_register_coroutine(scheduler.stop)
 
+    config = MasterConfig(args.name)
+
     worker_handlers.update({
         "get_device_db": device_db.get_device_db,
         "get_device": device_db.get,
@@ -109,6 +123,7 @@ def main():
     experiment_db.scan_repository_async()
 
     server_control = RPCServer({
+        "master_config": config,
         "master_device_db": device_db,
         "master_dataset_db": dataset_db,
         "master_schedule": scheduler,

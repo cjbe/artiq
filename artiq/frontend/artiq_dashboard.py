@@ -12,7 +12,7 @@ from quamash import QEventLoop
 from artiq import __artiq_dir__ as artiq_dir, __version__ as artiq_version
 from artiq.tools import (atexit_register_coroutine, verbosity_args,
                          get_user_config_dir)
-from artiq.protocols.pc_rpc import AsyncioClient
+from artiq.protocols.pc_rpc import AsyncioClient, Client
 from artiq.protocols.broadcast import Receiver
 from artiq.gui.models import ModelSubscriber
 from artiq.gui import state, log
@@ -21,9 +21,6 @@ from artiq.dashboard import (experiments, shortcuts, explorer,
 
 
 def get_argparser():
-    default_db_file = os.path.join(get_user_config_dir(),
-                                   "artiq_dashboard.pyon")
-
     parser = argparse.ArgumentParser(description="ARTIQ Dashboard")
     parser.add_argument(
         "-s", "--server", default="::1",
@@ -38,9 +35,10 @@ def get_argparser():
         "--port-broadcast", default=1067, type=int,
         help="TCP port to connect to for broadcasts")
     parser.add_argument(
-        "--db-file", default=default_db_file,
-        help="database file for local GUI settings "
-             "(default: %(default)s)")
+        "--db-file", default=None,
+        help="database file for local GUI settings, "
+             "by default in {} and dependant on master hostname".format(
+                                                        get_user_config_dir()))
     verbosity_args(parser)
     return parser
 
@@ -93,6 +91,12 @@ def main():
     args = get_argparser().parse_args()
     widget_log_handler = log.init_log(args, "dashboard")
 
+    if args.db_file is None:
+        args.db_file = os.path.join(get_user_config_dir(),
+                           "artiq_dashboard_{server}_{port}.pyon".format(
+                            server=args.server.replace(":","."),
+                            port=args.port_notify))
+
     app = QtWidgets.QApplication(["ARTIQ Dashboard"])
     loop = QEventLoop(app)
     asyncio.set_event_loop(loop)
@@ -107,6 +111,12 @@ def main():
             args.server, args.port_control, "master_" + target))
         atexit.register(client.close_rpc)
         rpc_clients[target] = client
+
+    config = Client(args.server, args.port_control, "master_config")
+    try:
+        server_name = config.get_name()
+    finally:
+        config.close_rpc()
 
     disconnect_reported = False
     def report_disconnect():
@@ -137,7 +147,7 @@ def main():
         broadcast_clients[target] = client
 
     # initialize main window
-    main_window = MainWindow(args.server)
+    main_window = MainWindow(args.server if server_name is None else server_name)
     smgr.register(main_window)
     mdi_area = MdiArea()
     mdi_area.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
@@ -208,8 +218,13 @@ def main():
     if d_log0 is not None:
         main_window.tabifyDockWidget(d_schedule, d_log0)
 
+
+    if server_name is not None:
+        server_description = server_name + " ({})".format(args.server)
+    else:
+        server_description = args.server
     logging.info("ARTIQ dashboard %s connected to %s",
-                 artiq_version, args.server)
+                 artiq_version, server_description)
 
     # run
     main_window.show()

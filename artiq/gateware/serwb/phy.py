@@ -13,7 +13,7 @@ from artiq.gateware.serwb.s7phy import S7Serdes
 # 2) Master sends K28.5 commas to allow Slave to calibrate, Slave sends idle pattern.
 # 3) Slave sends K28.5 commas to allow Master to calibrate, Master sends K28.5 commas.
 # 4) Master stops sending K28.5 commas.
-# 5) Slave stops sending K25.5 commas.
+# 5) Slave stops sending K28.5 commas.
 # 6) Link is ready.
 
 class _SerdesMasterInit(Module):
@@ -36,6 +36,8 @@ class _SerdesMasterInit(Module):
 
         self.submodules.fsm = fsm = ResetInserter()(FSM(reset_state="IDLE"))
         self.comb += self.fsm.reset.eq(self.reset)
+
+        self.comb += serdes.rx_delay_inc.eq(1)
 
         fsm.act("IDLE",
             NextValue(delay, 0),
@@ -107,7 +109,6 @@ class _SerdesMasterInit(Module):
                 serdes.rx_delay_rst.eq(1)
             ).Else(
                 NextValue(delay, delay + 1),
-                serdes.rx_delay_inc.eq(1),
                 serdes.rx_delay_ce.eq(1)
             ),
             serdes.tx_comma.eq(1)
@@ -120,13 +121,8 @@ class _SerdesMasterInit(Module):
                NextValue(delay_max_found, 0),
                NextState("WAIT_STABLE")
             ).Else(
-                NextState("RESET_SAMPLING_WINDOW")
-            )
-        )
-        fsm.act("RESET_SAMPLING_WINDOW",
-            NextValue(delay, 0),
-            serdes.rx_delay_rst.eq(1),
-            NextState("WAIT_SAMPLING_WINDOW"),
+                NextState("CONFIGURE_SAMPLING_WINDOW")
+            ),
             serdes.tx_comma.eq(1)
         )
         fsm.act("CONFIGURE_SAMPLING_WINDOW",
@@ -175,6 +171,8 @@ class _SerdesSlaveInit(Module, AutoCSR):
         self.submodules += timer
 
         self.comb += self.reset.eq(serdes.rx_idle)
+
+        self.comb += serdes.rx_delay_inc.eq(1)
 
         self.submodules.fsm = fsm = ResetInserter()(FSM(reset_state="IDLE"))
         fsm.act("IDLE",
@@ -233,7 +231,6 @@ class _SerdesSlaveInit(Module, AutoCSR):
                 serdes.rx_delay_rst.eq(1)
             ).Else(
                 NextValue(delay, delay + 1),
-                serdes.rx_delay_inc.eq(1),
                 serdes.rx_delay_ce.eq(1)
             ),
             serdes.tx_idle.eq(1)
@@ -246,13 +243,9 @@ class _SerdesSlaveInit(Module, AutoCSR):
                NextValue(delay_max_found, 0),
                NextState("WAIT_STABLE")
             ).Else(
-                NextState("RESET_SAMPLING_WINDOW")
-            )
-        )
-        fsm.act("RESET_SAMPLING_WINDOW",
-            NextValue(delay, 0),
-            serdes.rx_delay_rst.eq(1),
-            NextState("WAIT_SAMPLING_WINDOW")
+                NextState("CONFIGURE_SAMPLING_WINDOW")
+            ),
+            serdes.tx_idle.eq(1)
         )
         fsm.act("CONFIGURE_SAMPLING_WINDOW",
             If(delay == (delay_min + (delay_max - delay_min)[1:]),
@@ -368,9 +361,15 @@ class SERWBPLL(Module):
                 p_CLKOUT2_DIVIDE=8//vco_div, p_CLKOUT2_PHASE=0.0,
                 o_CLKOUT2=pll_serwb_serdes_5x_clk
             ),
-            Instance("BUFG", i_I=pll_serwb_serdes_clk, o_O=self.serwb_serdes_clk),
-            Instance("BUFG", i_I=pll_serwb_serdes_20x_clk, o_O=self.serwb_serdes_20x_clk),
-            Instance("BUFG", i_I=pll_serwb_serdes_5x_clk, o_O=self.serwb_serdes_5x_clk)
+            Instance("BUFG", 
+                i_I=pll_serwb_serdes_clk, 
+                o_O=self.serwb_serdes_clk),
+            Instance("BUFG",
+                i_I=pll_serwb_serdes_20x_clk,
+                o_O=self.serwb_serdes_20x_clk),
+            Instance("BUFG",
+                i_I=pll_serwb_serdes_5x_clk,
+                o_O=self.serwb_serdes_5x_clk)
         ]
         self.specials += MultiReg(pll_locked, self.lock)
 

@@ -97,7 +97,7 @@ The board has RTIO SPI buses mapped as follows:
 
 The DDS bus is on channel 32.
 
-This configuration supports a Zotino connected to the KC705 FMC HPC through a FMC DIO 32ch LVDS v1.2 and a VHDCI breakout board rev 1.0.
+This configuration supports a Zotino connected to the KC705 FMC HPC through a FMC DIO 32ch LVDS v1.2 and a VHDCI breakout board rev 1.0. On the VHDCI breakout board, the VHDCI cable to the KC705 should be plugged into to the bottom connector, and the EEM cable to the Zotino should be connected to J41.
 
 The shift registers on the FMC card should be configured to set the directions of its LVDS buffers, using :mod:`artiq.coredevice.shiftreg`.
 
@@ -175,11 +175,10 @@ Installation
 ............
 
 These installation instructions are a short form of those in the ARTIQ manual.
+
 * See the chapter on setting up a :ref:`development environment <develop-from-conda>`.
-* When compiling the binaries, use the ``phaser`` target:::
-  $ python -m artiq.gateware.targets.kc705_phaser
-* From time to time and on request there may be pre-built binaries in the
-  ``artiq-kc705-phaser`` package on the M-Labs conda package label.
+* When compiling the binaries, use the ``phaser`` target: ``python -m artiq.gateware.targets.phaser``
+* From time to time and on request there may be pre-built binaries in the ``artiq-kc705-phaser`` package on the M-Labs conda package label.
 
 Setup
 .....

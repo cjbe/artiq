@@ -3,19 +3,22 @@ use std::{mem, str};
 use std::cell::{Cell, RefCell};
 use std::io::{self, Read, Write};
 use std::error::Error;
-use {config, rtio_mgt, mailbox, rpc_queue, kernel};
-use cache::Cache;
-use rtio_dma::Manager as DmaManager;
+use byteorder::{ByteOrder, NetworkEndian};
+
 use urc::Urc;
 use sched::{ThreadHandle, Io};
 use sched::{TcpListener, TcpStream};
-use byteorder::{ByteOrder, NetworkEndian};
 use board;
+use {config, mailbox, rpc_queue, kernel};
+#[cfg(has_rtio_core)]
+use rtio_mgt;
+use rtio_dma::Manager as DmaManager;
+use cache::Cache;
+use kern_hwreq;
 
 use rpc_proto as rpc;
 use session_proto as host;
 use kernel_proto as kern;
-use kern_hwreq;
 
 macro_rules! unexpected {
     ($($arg:tt)*) => {
@@ -268,11 +271,17 @@ fn process_host_message(io: &Io,
                 unexpected!("attempted to switch RTIO clock while a kernel was running")
             }
 
-            if rtio_mgt::crg::switch_clock(clk) {
-                host_write(stream, host::Reply::ClockSwitchCompleted)
-            } else {
-                host_write(stream, host::Reply::ClockSwitchFailed)
+            #[cfg(has_rtio_core)]
+            {
+                if rtio_mgt::crg::switch_clock(clk) {
+                    host_write(stream, host::Reply::ClockSwitchCompleted)
+                } else {
+                    host_write(stream, host::Reply::ClockSwitchFailed)
+                }
             }
+
+            #[cfg(not(has_rtio_core))]
+            host_write(stream, host::Reply::ClockSwitchFailed)
         }
 
         host::Request::LoadKernel(kernel) =>
@@ -365,9 +374,11 @@ fn process_kern_message(io: &Io, mut stream: Option<&mut TcpStream>,
         }
 
         kern_recv_dotrace(request);
+
         if kern_hwreq::process_kern_hwreq(io, request)? {
             return Ok(false)
         }
+
         match request {
             &kern::Log(args) => {
                 use std::fmt::Write;
@@ -541,9 +552,12 @@ fn host_kernel_worker(io: &Io,
                 return Err(io_error("watchdog expired"))
             }
 
-            if !rtio_mgt::crg::check() {
-                host_write(stream, host::Reply::ClockFailure)?;
-                return Err(io_error("RTIO clock failure"))
+            #[cfg(has_rtio_core)]
+            {
+                if !rtio_mgt::crg::check() {
+                    host_write(stream, host::Reply::ClockFailure)?;
+                    return Err(io_error("RTIO clock failure"))
+                }
             }
         }
 
@@ -583,8 +597,11 @@ fn flash_kernel_worker(io: &Io,
             return Err(io_error("watchdog expired"))
         }
 
-        if !rtio_mgt::crg::check() {
-            return Err(io_error("RTIO clock failure"))
+        #[cfg(has_rtio_core)]
+        {
+            if !rtio_mgt::crg::check() {
+                return Err(io_error("RTIO clock failure"))
+            }
         }
 
         io.relinquish()?

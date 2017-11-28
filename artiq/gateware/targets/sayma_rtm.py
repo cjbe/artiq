@@ -9,6 +9,7 @@ from migen.build.platforms.sinara import sayma_rtm
 from misoc.interconnect import wishbone, stream
 from misoc.interconnect.csr import *
 from misoc.cores import spi
+from misoc.cores import gpio
 from misoc.integration.wb_slaves import WishboneSlaveManager
 from misoc.integration.cpu_interface import get_csr_csv
 
@@ -80,12 +81,12 @@ class SaymaRTM(Module):
         self.submodules.rtm_identifier = RTMIdentifier()
         csr_devices.append("rtm_identifier")
 
-        # clock mux: 125MHz ext SMA clock to HMC830 input
-        self.comb += [
-            platform.request("clk_src_ext_sel").eq(1), # use ext clk from sma
-            platform.request("ref_clk_src_sel").eq(1),
-            platform.request("dac_clk_src_sel").eq(0), # use clk from dac_clk
-        ]
+        # clock mux: 100MHz ext SMA clock to HMC830 input
+        self.submodules.clock_mux = gpio.GPIOOut(Cat(
+            platform.request("clk_src_ext_sel"),
+            platform.request("ref_clk_src_sel"),
+            platform.request("dac_clk_src_sel")))
+        csr_devices.append("clock_mux")
 
         self.comb += [
             platform.request("ad9154_rst_n").eq(1),
@@ -105,22 +106,23 @@ class SaymaRTM(Module):
         self.submodules += serwb_pll
 
         serwb_pads = platform.request("amc_rtm_serwb")
-        serwb_phy = serwb.phy.SERWBPHY(platform.device, serwb_pll, serwb_pads, mode="slave")
-        self.submodules.serwb_phy = serwb_phy
-        self.comb += self.crg.reset.eq(serwb_phy.init.reset)
+        serwb_phy_rtm = serwb.phy.SERWBPHY(platform.device, serwb_pll, serwb_pads, mode="slave")
+        self.submodules.serwb_phy_rtm = serwb_phy_rtm
+        self.comb += self.crg.reset.eq(serwb_phy_rtm.init.reset)
+        csr_devices.append("serwb_phy_rtm")
 
-        serwb_phy.serdes.cd_serwb_serdes.clk.attr.add("keep")
-        serwb_phy.serdes.cd_serwb_serdes_20x.clk.attr.add("keep")
-        serwb_phy.serdes.cd_serwb_serdes_5x.clk.attr.add("keep")
-        platform.add_period_constraint(serwb_phy.serdes.cd_serwb_serdes.clk, 32.0),
-        platform.add_period_constraint(serwb_phy.serdes.cd_serwb_serdes_20x.clk, 1.6),
-        platform.add_period_constraint(serwb_phy.serdes.cd_serwb_serdes_5x.clk, 6.4)
+        serwb_phy_rtm.serdes.cd_serwb_serdes.clk.attr.add("keep")
+        serwb_phy_rtm.serdes.cd_serwb_serdes_20x.clk.attr.add("keep")
+        serwb_phy_rtm.serdes.cd_serwb_serdes_5x.clk.attr.add("keep")
+        platform.add_period_constraint(serwb_phy_rtm.serdes.cd_serwb_serdes.clk, 40*1e9/serwb_pll.linerate),
+        platform.add_period_constraint(serwb_phy_rtm.serdes.cd_serwb_serdes_20x.clk, 2*1e9/serwb_pll.linerate),
+        platform.add_period_constraint(serwb_phy_rtm.serdes.cd_serwb_serdes_5x.clk, 8*1e9/serwb_pll.linerate)
         platform.add_false_path_constraints(
             self.crg.cd_sys.clk,
-            serwb_phy.serdes.cd_serwb_serdes.clk,
-            serwb_phy.serdes.cd_serwb_serdes_5x.clk)
+            serwb_phy_rtm.serdes.cd_serwb_serdes.clk,
+            serwb_phy_rtm.serdes.cd_serwb_serdes_5x.clk)
 
-        serwb_core = serwb.core.SERWBCore(serwb_phy, int(clk_freq), mode="master")
+        serwb_core = serwb.core.SERWBCore(serwb_phy_rtm, int(clk_freq), mode="master")
         self.submodules += serwb_core
 
         # process CSR devices and connect them to serwb
