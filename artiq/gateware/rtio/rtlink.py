@@ -9,11 +9,11 @@ class OInterface:
         self.busy = Signal()
 
         if data_width:
-            self.data = Signal(data_width)
+            self.data = Signal(data_width, reset_less=True)
         if address_width:
-            self.address = Signal(address_width)
+            self.address = Signal(address_width, reset_less=True)
         if fine_ts_width:
-            self.fine_ts = Signal(fine_ts_width)
+            self.fine_ts = Signal(fine_ts_width, reset_less=True)
 
         self.enable_replace = enable_replace
 
@@ -36,9 +36,9 @@ class IInterface:
         self.stb = Signal()
 
         if data_width:
-            self.data = Signal(data_width)
+            self.data = Signal(data_width, reset_less=True)
         if fine_ts_width:
-            self.fine_ts = Signal(fine_ts_width)
+            self.fine_ts = Signal(fine_ts_width, reset_less=True)
 
         assert(not fine_ts_width or timestamped)
         self.timestamped = timestamped
@@ -69,14 +69,13 @@ class Interface:
 
 
 def _get_or_zero(interface, attr):
-    if isinstance(interface, Interface):
-        return max(_get_or_zero(interface.i, attr),
-                   _get_or_zero(interface.o, attr))
+    if interface is None:
+        return 0
+    assert isinstance(interface, (OInterface, IInterface))
+    if hasattr(interface, attr):
+        return len(getattr(interface, attr))
     else:
-        if hasattr(interface, attr):
-            return len(getattr(interface, attr))
-        else:
-            return 0
+        return 0
 
 
 def get_data_width(interface):

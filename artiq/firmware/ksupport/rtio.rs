@@ -1,4 +1,3 @@
-
 #[cfg(has_rtio)]
 mod imp {
     use core::ptr::{read_volatile, write_volatile};
@@ -10,10 +9,11 @@ mod imp {
 
     pub const RTIO_O_STATUS_WAIT:           u8 = 1;
     pub const RTIO_O_STATUS_UNDERFLOW:      u8 = 2;
-    pub const RTIO_O_STATUS_SEQUENCE_ERROR: u8 = 4;
+    pub const RTIO_O_STATUS_LINK_ERROR:     u8 = 4;
     pub const RTIO_I_STATUS_WAIT_EVENT:     u8 = 1;
     pub const RTIO_I_STATUS_OVERFLOW:       u8 = 2;
     pub const RTIO_I_STATUS_WAIT_STATUS:    u8 = 4;
+    pub const RTIO_I_STATUS_LINK_ERROR:     u8 = 8;
 
     pub extern fn init() {
         send(&RtioInitRequest);
@@ -47,12 +47,12 @@ mod imp {
         if status & RTIO_O_STATUS_UNDERFLOW != 0 {
             raise!("RTIOUnderflow",
                 "RTIO underflow at {0} mu, channel {1}, slack {2} mu",
-                timestamp, channel as i64, timestamp - get_counter())
+                timestamp, channel as i64, timestamp - get_counter());
         }
-        if status & RTIO_O_STATUS_SEQUENCE_ERROR != 0 {
-            raise!("RTIOSequenceError",
-                "RTIO sequence error at {0} mu, channel {1}",
-                timestamp, channel as i64, 0)
+        if status & RTIO_O_STATUS_LINK_ERROR != 0 {
+            raise!("RTIOLinkError",
+                "RTIO output link error at {0} mu, channel {1}",
+                timestamp, channel as i64, 0);
         }
     }
 
@@ -100,12 +100,18 @@ mod imp {
             }
 
             if status & RTIO_I_STATUS_OVERFLOW != 0 {
+                csr::rtio::i_overflow_reset_write(1);
                 raise!("RTIOOverflow",
                     "RTIO input overflow on channel {0}",
                     channel as i64, 0, 0);
             }
             if status & RTIO_I_STATUS_WAIT_EVENT != 0 {
                 return !0
+            }
+            if status & RTIO_I_STATUS_LINK_ERROR != 0 {
+                raise!("RTIOLinkError",
+                    "RTIO input link error on channel {0}",
+                    channel as i64, 0, 0);
             }
 
             csr::rtio::i_timestamp_read()
@@ -127,6 +133,11 @@ mod imp {
                 csr::rtio::i_overflow_reset_write(1);
                 raise!("RTIOOverflow",
                     "RTIO input overflow on channel {0}",
+                    channel as i64, 0, 0);
+            }
+            if status & RTIO_I_STATUS_LINK_ERROR != 0 {
+                raise!("RTIOLinkError",
+                    "RTIO input link error on channel {0}",
                     channel as i64, 0, 0);
             }
 
@@ -227,26 +238,14 @@ mod imp {
 
 pub use self::imp::*;
 
-pub mod drtio_dbg {
+pub mod drtio {
     use ::send;
     use ::recv;
     use kernel_proto::*;
 
-    #[repr(C)]
-    pub struct ChannelState(i32, i64);
-
-    pub extern fn get_channel_state(channel: i32) -> ChannelState {
-        send(&DrtioChannelStateRequest { channel: channel as u32 });
-        recv!(&DrtioChannelStateReply { fifo_space, last_timestamp }
-              => ChannelState(fifo_space as i32, last_timestamp as i64))
-    }
-
-    pub extern fn reset_channel_state(channel: i32) {
-        send(&DrtioResetChannelStateRequest { channel: channel as u32 })
-    }
-
-    pub extern fn get_fifo_space(channel: i32) {
-        send(&DrtioGetFifoSpaceRequest { channel: channel as u32 })
+    pub extern fn get_link_status(linkno: i32) -> bool {
+        send(&DrtioLinkStatusRequest { linkno: linkno as u8 });
+        recv!(&DrtioLinkStatusReply { up } => up)
     }
 
     #[repr(C)]
@@ -258,9 +257,9 @@ pub mod drtio_dbg {
               => PacketCounts(tx_cnt as i32, rx_cnt as i32))
     }
 
-    pub extern fn get_fifo_space_req_count(linkno: i32) -> i32 {
-        send(&DrtioFifoSpaceReqCountRequest { linkno: linkno as u8 });
-        recv!(&DrtioFifoSpaceReqCountReply { cnt }
+    pub extern fn get_buffer_space_req_count(linkno: i32) -> i32 {
+        send(&DrtioBufferSpaceReqCountRequest { linkno: linkno as u8 });
+        recv!(&DrtioBufferSpaceReqCountReply { cnt }
               => cnt as i32)
     }
 }

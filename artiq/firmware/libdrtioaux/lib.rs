@@ -1,13 +1,12 @@
 #![no_std]
 
+extern crate byteorder;
+extern crate crc;
 #[macro_use]
 extern crate std_artiq as std;
 extern crate board;
-extern crate byteorder;
 
 mod proto;
-#[cfg(has_drtio)]
-mod crc32;
 
 use std::io::{self, Read, Write};
 #[cfg(has_drtio)]
@@ -18,11 +17,14 @@ use proto::*;
 pub enum Packet {
     EchoRequest,
     EchoReply,
+    ResetRequest { phy: bool },
+    ResetAck,
 
     RtioErrorRequest,
     RtioNoErrorReply,
-    RtioErrorCollisionReply,
-    RtioErrorBusyReply,
+    RtioErrorSequenceErrorReply { channel: u16 },
+    RtioErrorCollisionReply { channel: u16 },
+    RtioErrorBusyReply { channel: u16 },
 
     MonitorRequest { channel: u16, probe: u8 },
     MonitorReply { value: u32 },
@@ -39,8 +41,7 @@ pub enum Packet {
     I2cReadReply { succeeded: bool, data: u8 },
     I2cBasicReply { succeeded: bool },
 
-    SpiSetConfigRequest { busno: u8, flags: u8, write_div: u8, read_div: u8 },
-    SpiSetXferRequest { busno: u8, chip_select: u16, write_length: u8, read_length: u8 },
+    SpiSetConfigRequest { busno: u8, flags: u8, length: u8, div: u8, cs: u8 },
     SpiWriteRequest { busno: u8, data: u32 },
     SpiReadRequest { busno: u8 },
     SpiReadReply { succeeded: bool, data: u32 },
@@ -52,11 +53,22 @@ impl Packet {
         Ok(match read_u8(reader)? {
             0x00 => Packet::EchoRequest,
             0x01 => Packet::EchoReply,
+            0x02 => Packet::ResetRequest {
+                phy: read_bool(reader)?
+            },
+            0x03 => Packet::ResetAck,
 
             0x20 => Packet::RtioErrorRequest,
             0x21 => Packet::RtioNoErrorReply,
-            0x22 => Packet::RtioErrorCollisionReply,
-            0x23 => Packet::RtioErrorBusyReply,
+            0x22 => Packet::RtioErrorSequenceErrorReply {
+                channel: read_u16(reader)?
+            },
+            0x23 => Packet::RtioErrorCollisionReply {
+                channel: read_u16(reader)?
+            },
+            0x24 => Packet::RtioErrorBusyReply {
+                channel: read_u16(reader)?
+            },
 
             0x40 => Packet::MonitorRequest {
                 channel: read_u16(reader)?,
@@ -110,15 +122,11 @@ impl Packet {
             0x90 => Packet::SpiSetConfigRequest {
                 busno: read_u8(reader)?,
                 flags: read_u8(reader)?,
-                write_div: read_u8(reader)?,
-                read_div: read_u8(reader)?
+                length: read_u8(reader)?,
+                div: read_u8(reader)?,
+                cs: read_u8(reader)?
             },
-            0x91 => Packet::SpiSetXferRequest {
-                busno: read_u8(reader)?,
-                chip_select: read_u16(reader)?,
-                write_length: read_u8(reader)?,
-                read_length: read_u8(reader)?
-            },
+            /* 0x91: was Packet::SpiSetXferRequest */
             0x92 => Packet::SpiWriteRequest {
                 busno: read_u8(reader)?,
                 data: read_u32(reader)?
@@ -142,11 +150,26 @@ impl Packet {
         match *self {
             Packet::EchoRequest => write_u8(writer, 0x00)?,
             Packet::EchoReply => write_u8(writer, 0x01)?,
+            Packet::ResetRequest { phy } => {
+                write_u8(writer, 0x02)?;
+                write_bool(writer, phy)?;
+            },
+            Packet::ResetAck => write_u8(writer, 0x03)?,
 
             Packet::RtioErrorRequest => write_u8(writer, 0x20)?,
             Packet::RtioNoErrorReply => write_u8(writer, 0x21)?,
-            Packet::RtioErrorCollisionReply => write_u8(writer, 0x22)?,
-            Packet::RtioErrorBusyReply => write_u8(writer, 0x23)?,
+            Packet::RtioErrorSequenceErrorReply { channel } => {
+                write_u8(writer, 0x22)?;
+                write_u16(writer, channel)?;
+            },
+            Packet::RtioErrorCollisionReply { channel } => {
+                write_u8(writer, 0x23)?;
+                write_u16(writer, channel)?;
+            },
+            Packet::RtioErrorBusyReply { channel } => {
+                write_u8(writer, 0x24)?;
+                write_u16(writer, channel)?;
+            },
 
             Packet::MonitorRequest { channel, probe } => {
                 write_u8(writer, 0x40)?;
@@ -210,19 +233,13 @@ impl Packet {
                 write_bool(writer, succeeded)?;
             },
 
-            Packet::SpiSetConfigRequest { busno, flags, write_div, read_div } => {
+            Packet::SpiSetConfigRequest { busno, flags, length, div, cs } => {
                 write_u8(writer, 0x90)?;
                 write_u8(writer, busno)?;
                 write_u8(writer, flags)?;
-                write_u8(writer, write_div)?;
-                write_u8(writer, read_div)?;
-            },
-            Packet::SpiSetXferRequest { busno, chip_select, write_length, read_length } => {
-                write_u8(writer, 0x91)?;
-                write_u8(writer, busno)?;
-                write_u16(writer, chip_select)?;
-                write_u8(writer, write_length)?;
-                write_u8(writer, read_length)?;
+                write_u8(writer, length)?;
+                write_u8(writer, div)?;
+                write_u8(writer, cs)?;
             },
             Packet::SpiWriteRequest { busno, data } => {
                 write_u8(writer, 0x92)?;
@@ -252,6 +269,17 @@ pub mod hw {
     use super::*;
     use std::io::Cursor;
 
+    pub fn reset(linkno: u8) {
+        let linkno = linkno as usize;
+        unsafe {
+            // clear buffer first to limit race window with buffer overflow
+            // error. We assume the CPU is fast enough so that no two packets
+            // will be received between the buffer and the error flag are cleared.
+            (board::csr::DRTIO[linkno].aux_rx_present_write)(1);
+            (board::csr::DRTIO[linkno].aux_rx_error_write)(1);
+        }
+    }
+
     fn rx_has_error(linkno: u8) -> bool {
         let linkno = linkno as usize;
         unsafe {
@@ -278,7 +306,7 @@ pub mod hw {
         unsafe {
             if (board::csr::DRTIO[linkidx].aux_rx_present_read)() == 1 {
                 let length = (board::csr::DRTIO[linkidx].aux_rx_length_read)();
-                let base = board::mem::DRTIO_AUX[linkidx].base + board::mem::DRTIO_AUX[linkidx].size/2; 
+                let base = board::mem::DRTIO_AUX[linkidx].base + board::mem::DRTIO_AUX[linkidx].size/2;
                 let sl = slice::from_raw_parts(base as *mut u8, length as usize);
                 Some(RxBuffer(linkno, sl))
             } else {
@@ -301,7 +329,7 @@ pub mod hw {
                 if len < 8 {
                     return Err(io::Error::new(io::ErrorKind::InvalidData, "packet too short"))
                 }
-                let computed_crc = crc32::checksum_ieee(&reader.get_ref()[0..len-4]);
+                let computed_crc = crc::crc32::checksum_ieee(&reader.get_ref()[0..len-4]);
                 reader.set_position((len-4) as u64);
                 let crc = read_u32(&mut reader)?;
                 if crc != computed_crc {
@@ -365,7 +393,7 @@ pub mod hw {
             len += padding;
         }
 
-        let crc = crc32::checksum_ieee(&writer.get_ref()[0..len as usize]);
+        let crc = crc::crc32::checksum_ieee(&writer.get_ref()[0..len as usize]);
         write_u32(&mut writer, crc)?;
         len += 4;
 

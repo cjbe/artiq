@@ -71,20 +71,13 @@ class CacheError(Exception):
 
 
 class RTIOUnderflow(Exception):
-    """Raised when the CPU fails to submit a RTIO event early enough
-    (with respect to the event's timestamp).
+    """Raised when the CPU or DMA core fails to submit a RTIO event early
+    enough (with respect to the event's timestamp).
 
     The offending event is discarded and the RTIO core keeps operating.
     """
     artiq_builtin = True
 
-class RTIOSequenceError(Exception):
-    """Raised when an event is submitted on a given channel with a timestamp
-    not larger than the previous one.
-
-    The offending event is discarded and the RTIO core keeps operating.
-    """
-    artiq_builtin = True
 
 class RTIOOverflow(Exception):
     """Raised when at least one event could not be registered into the RTIO
@@ -96,9 +89,18 @@ class RTIOOverflow(Exception):
     """
     artiq_builtin = True
 
+
+class RTIOLinkError(Exception):
+    """Raised with a RTIO operation could not be completed due to a DRTIO link
+    being down.
+    """
+    artiq_builtin = True
+
+
 class DMAError(Exception):
     """Raised when performing an invalid DMA operation."""
     artiq_builtin = True
+
 
 class DDSError(Exception):
     """Raised when attempting to start a DDS batch while already in a batch,
@@ -106,15 +108,19 @@ class DDSError(Exception):
     incorrect.
     """
 
+
 class WatchdogExpired(Exception):
     """Raised when a watchdog expires."""
+
 
 class ClockFailure(Exception):
     """Raised when RTIO PLL has lost lock."""
 
+
 class I2CError(Exception):
     """Raised when a I2C transaction fails."""
     pass
+
 
 class SPIError(Exception):
     """Raised when a SPI transaction fails."""

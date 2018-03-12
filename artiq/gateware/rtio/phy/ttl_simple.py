@@ -1,5 +1,6 @@
 from migen import *
 from migen.genlib.cdc import MultiReg
+from migen.genlib.io import DifferentialInput, DifferentialOutput
 
 from artiq.gateware.rtio import rtlink
 
@@ -7,7 +8,8 @@ from artiq.gateware.rtio import rtlink
 class Output(Module):
     def __init__(self, pad, pad_n=None):
         self.rtlink = rtlink.Interface(rtlink.OInterface(1))
-        self.probes = [pad]
+        pad_o = Signal(reset_less=True)
+        self.probes = [pad_o]
         override_en = Signal()
         override_o = Signal()
         self.overrides = [override_en, override_o]
@@ -26,6 +28,10 @@ class Output(Module):
                 pad_o.eq(pad_k)
             )
         ]
+        if pad_n is None:
+            self.comb += pad.eq(pad_o)
+        else:
+            self.specials += DifferentialOutput(pad_o, pad, pad_n)
 
         if pad_n is None:
             self.comb += pad.eq(pad_o)
@@ -57,8 +63,12 @@ class Input(Module):
         ]
 
         i = Signal()
-        i_d = Signal()
+        i_d = Signal(reset_less=True)
         pad_i = Signal()
+        if pad_n is None:
+            self.comb += pad_i.eq(pad)
+        else:
+            self.specials += DifferentialInput(pad, pad_n, pad_i)
         self.specials += MultiReg(pad_i, i, "rio_phy")
         self.sync.rio_phy += i_d.eq(i)
         self.comb += [

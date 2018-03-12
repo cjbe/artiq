@@ -13,41 +13,59 @@ import select
 import threading
 import os
 import shutil
+import re
+import shlex
 
-from artiq.tools import verbosity_args, init_logger, logger, SSHClient
+from artiq.tools import verbosity_args, init_logger
+from artiq.remoting import SSHClient
+
+logger = logging.getLogger(__name__)
 
 
 def get_argparser():
-    parser = argparse.ArgumentParser(description="ARTIQ core device development tool")
+    parser = argparse.ArgumentParser(
+        description="ARTIQ core device development tool",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
     verbosity_args(parser)
 
-    parser.add_argument("-H", "--host", metavar="HOSTNAME",
+    parser.add_argument("-t", "--target", metavar="TARGET",
+                        type=str, default="kc705",
+                        help="target to build, one of: "
+                             "kc705 kasli sayma")
+    parser.add_argument("-V", "--variant", metavar="VARIANT",
+                        type=str, default=None,
+                        help="variant to build, dependent on the target")
+    parser.add_argument("-g", "--build-gateware",
+                        default=False, action="store_true",
+                        help="build gateware, not just software")
+    parser.add_argument("--args", metavar="ARGS",
+                        type=shlex.split, default=[],
+                        help="extra arguments for gateware/firmware build")
+
+    parser.add_argument("-H", "--host",
                         type=str, default="lab.m-labs.hk",
                         help="SSH host where the development board is located")
-    parser.add_argument("-D", "--device", metavar="HOSTNAME",
-                        type=str, default="kc705.lab.m-labs.hk",
-                        help="address or domain corresponding to the development board")
-    parser.add_argument("-s", "--serial", metavar="PATH",
-                        type=str, default="/dev/ttyUSB_kc705",
+    parser.add_argument("-b", "--board",
+                        type=str, default="{board_type}-1",
+                        help="board to connect to on the development SSH host")
+    parser.add_argument("-B", "--board-file",
+                        type=str, default="/var/lib/artiq/boards/{board}",
+                        help="the board file containing the openocd initialization commands; "
+                             "it is also used as the lock file")
+    parser.add_argument("-s", "--serial",
+                        type=str, default="/dev/ttyUSB_{board}",
                         help="TTY device corresponding to the development board")
-    parser.add_argument("-l", "--lockfile", metavar="PATH",
-                        type=str, default="/run/boards/kc705",
-                        help="The lockfile to be acquired for the duration of the actions")
+    parser.add_argument("-d", "--device",
+                        type=str, default="{board}.{host}",
+                        help="address or domain corresponding to the development board")
     parser.add_argument("-w", "--wait", action="store_true",
-                        help="Wait for the board to unlock instead of aborting the actions")
-    parser.add_argument("-t", "--target", metavar="TARGET",
-                        type=str, default="kc705_dds",
-                        help="Target to build, one of: "
-                             "kc705_dds kc705_drtio_master kc705_drtio_satellite")
-    parser.add_argument("-c", "--config", metavar="PATH",
-                        type=str, default="openocd-kc705.cfg",
-                        help="OpenOCD configuration file corresponding to the development board")
+                        help="wait for the board to unlock instead of aborting the actions")
 
     parser.add_argument("actions", metavar="ACTION",
                         type=str, default=[], nargs="+",
                         help="actions to perform, sequence of: "
-                             "build reset boot boot+log connect hotswap clean")
+                             "build clean reset flash flash+log connect hotswap")
 
     return parser
 
@@ -58,19 +76,24 @@ def main():
     if args.verbose == args.quiet == 0:
         logging.getLogger().setLevel(logging.INFO)
 
-    if args.target == "kc705_dds" or args.target == "kc705_drtio_master":
-        firmware = "runtime"
-    elif args.target == "kc705_drtio_satellite":
-        firmware = "satman"
+    def build_dir(*path, target=args.target):
+        return os.path.join("/tmp/", "artiq_" + target, *path)
+
+    if args.target == "kc705":
+        board_type, firmware = "kc705", "runtime"
+        variant = "nist_clock" if args.variant is None else args.variant
+    elif args.target == "sayma":
+        board_type, firmware = "sayma", "runtime"
+        variant = "standalone" if args.variant is None else args.variant
     else:
         raise NotImplementedError("unknown target {}".format(args.target))
 
+    board      = args.board.format(board_type=board_type)
+    board_file = args.board_file.format(board=board)
+    device     = args.device.format(board=board, host=args.host)
+    serial     = args.serial.format(board=board)
+
     client = SSHClient(args.host)
-    substs = {
-        "env":      "bash -c 'export PATH=$HOME/miniconda/bin:$PATH; exec $0 $*' ",
-        "serial":   args.serial,
-        "firmware": firmware,
-    }
 
     flock_acquired = False
     flock_file = None # GC root
@@ -79,11 +102,23 @@ def main():
         nonlocal flock_file
 
         if not flock_acquired:
+            fuser_args = ["fuser", "-u", board_file]
+            fuser = client.spawn_command(fuser_args)
+            fuser_file = fuser.makefile('r')
+            fuser_match = re.search(r"\((.+?)\)", fuser_file.readline())
+            if fuser_match and fuser_match.group(1) == os.getenv("USER"):
+                logger.info("Lock already acquired by {}".format(os.getenv("USER")))
+                flock_acquired = True
+                return
+
             logger.info("Acquiring device lock")
-            flock = client.spawn_command("flock --verbose {block} {lockfile} sleep 86400"
-                                            .format(block="" if args.wait else "--nonblock",
-                                                    lockfile=args.lockfile),
-                                         get_pty=True)
+            flock_args = ["flock"]
+            if not args.wait:
+                flock_args.append("--nonblock")
+            flock_args += ["--verbose", board_file]
+            flock_args += ["sleep", "86400"]
+
+            flock = client.spawn_command(flock_args, get_pty=True)
             flock_file = flock.makefile('r')
             while not flock_acquired:
                 line = flock_file.readline()
@@ -96,59 +131,72 @@ def main():
                     logger.error("Failed to get lock")
                     sys.exit(1)
 
+    def command(*args, on_failure="Command failed"):
+        logger.debug("Running {}".format(" ".join([shlex.quote(arg) for arg in args])))
+        try:
+            subprocess.check_call(args)
+        except subprocess.CalledProcessError:
+            logger.error(on_failure)
+            sys.exit(1)
+
+    def build(target, *extra_args, output_dir=build_dir(), variant=variant):
+        build_args = ["python3", "-m", "artiq.gateware.targets." + target, *extra_args]
+        if not args.build_gateware:
+            build_args.append("--no-compile-gateware")
+        if variant:
+            build_args += ["--variant", variant]
+        build_args += ["--output-dir", output_dir]
+        command(*build_args, on_failure="Build failed")
+
+    def flash(*steps):
+        lock()
+
+        flash_args = ["artiq_flash"]
+        for _ in range(args.verbose):
+            flash_args.append("-v")
+        flash_args += ["-H", args.host]
+        flash_args += ["-t", board_type]
+        flash_args += ["-V", variant]
+        flash_args += ["-I", "source {}".format(board_file)]
+        flash_args += ["--srcbuild", build_dir()]
+        flash_args += steps
+        command(*flash_args, on_failure="Flashing failed")
+
     for action in args.actions:
         if action == "build":
-            logger.info("Building firmware")
-            try:
-                subprocess.check_call(["python3",
-                                        "-m", "artiq.gateware.targets." + args.target,
-                                        "--no-compile-gateware",
-                                        "--output-dir",
-                                        "/tmp/{target}".format(target=args.target)])
-            except subprocess.CalledProcessError:
-                logger.error("Build failed")
-                sys.exit(1)
+            logger.info("Building target")
+            if args.target == "sayma":
+                build("sayma_rtm", output_dir=build_dir("rtm_gateware"), variant=None)
+                build("sayma_amc", "--rtm-csr-csv", build_dir("rtm_gateware", "rtm_csr.csv"))
+            else:
+                build(args.target)
 
         elif action == "clean":
             logger.info("Cleaning build directory")
-            target_dir = "/tmp/{target}".format(target=args.target)
-            if os.path.isdir(target_dir):
-                shutil.rmtree(target_dir)
+            shutil.rmtree(build_dir(), ignore_errors=True)
 
         elif action == "reset":
-            lock()
-
             logger.info("Resetting device")
-            client.run_command(
-                "{env} artiq_flash start" +
-                (" --target-file " + args.config if args.config else ""),
-                **substs)
+            flash("start")
 
-        elif action == "boot" or action == "boot+log":
-            lock()
+        elif action == "flash":
+            logger.info("Flashing and booting firmware")
+            flash("bootloader", "firmware", "start")
 
-            logger.info("Uploading firmware")
-            client.get_sftp().put("/tmp/{target}/software/{firmware}/{firmware}.bin"
-                                      .format(target=args.target, firmware=firmware),
-                                  "{tmp}/{firmware}.bin"
-                                      .format(tmp=client.tmp, firmware=firmware))
+        elif action == "flash+log":
+            logger.info("Flashing firmware")
+            flash("bootloader", "firmware")
 
+            flterm = client.spawn_command(["flterm", serial, "--output-only"])
             logger.info("Booting firmware")
-            flterm = client.spawn_command(
-                "{env} python3 flterm.py {serial} " +
-                "--kernel {tmp}/{firmware}.bin " +
-                ("--upload-only" if action == "boot" else "--output-only"),
-                **substs)
-            artiq_flash = client.spawn_command(
-                "{env} artiq_flash start" +
-                (" --target-file " + args.config if args.config else ""),
-                **substs)
+            flash("start")
             client.drain(flterm)
 
         elif action == "connect":
             lock()
 
             transport = client.get_transport()
+            transport.set_keepalive(30)
 
             def forwarder(local_stream, remote_stream):
                 try:
@@ -177,10 +225,10 @@ def main():
                 while True:
                     local_stream, peer_addr = listener.accept()
                     logger.info("Accepting %s:%s and opening SSH channel to %s:%s",
-                                *peer_addr, args.device, port)
+                                *peer_addr, device, port)
                     try:
                         remote_stream = \
-                            transport.open_channel('direct-tcpip', (args.device, port), peer_addr)
+                            transport.open_channel('direct-tcpip', (device, port), peer_addr)
                     except Exception:
                         logger.exception("Cannot open channel on port %s", port)
                         continue
@@ -197,20 +245,13 @@ def main():
 
             logger.info("Forwarding ports {} to core device and logs from core device"
                             .format(", ".join(map(str, ports))))
-            client.run_command(
-                "{env} python3 flterm.py {serial} --output-only",
-                **substs)
+            client.run_command(["flterm", serial, "--output-only"])
 
         elif action == "hotswap":
             logger.info("Hotswapping firmware")
-            try:
-                subprocess.check_call(["python3",
-                    "-m", "artiq.frontend.artiq_coreboot", "hotswap",
-                    "/tmp/{target}/software/{firmware}/{firmware}.bin"
-                        .format(target=args.target, firmware=firmware)])
-            except subprocess.CalledProcessError:
-                logger.error("Build failed")
-                sys.exit(1)
+            firmware = build_dir(variant, "software", firmware, firmware + ".bin")
+            command("artiq_coreboot", "hotswap", firmware,
+                    on_failure="Hotswapping failed")
 
         else:
             logger.error("Unknown action {}".format(action))

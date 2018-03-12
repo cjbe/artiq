@@ -3,14 +3,47 @@
 Release notes
 =============
 
-4.0 (unreleased)
-----------------
+4.0
+---
 
+* RTIO outputs use a new architecture called Scalable Event Dispatcher (SED),
+  which allows building systems with large number of RTIO channels more
+  efficiently.
+  From the user perspective, collision errors become asynchronous, and non-
+  monotonic timestamps on any combination of channels are generally allowed
+  (instead of producing sequence errors).
+  RTIO inputs are not affected.
 * The DDS channel number for the NIST CLOCK target has changed.
 * The dashboard configuration files are now stored one-per-master, keyed by the
   server address argument and the notify port.
 * The master now has a ``--name`` argument. If given, the dashboard is labelled
   with this name rather than the server address.
+* ``artiq_flash -m/--adapter`` has been changed to ``artiq_flash -V/--variant``.
+* ``kc705_dds`` has been renamed ``kc705``.
+* the ``-H/--hw-adapter`` option of ``kc705`` has ben renamed ``-V/--variant``.
+* SPI masters have been switched from misoc-spi to misoc-spi2. This affects
+  all out-of-tree RTIO core device drivers using those buses. See the various
+  commits on e.g. the ``ad5360`` driver for an example how to port from the old
+  to the new bus.
+
+3.3
+---
+
+No further notes.
+
+
+3.2
+---
+
+* To accommodate larger runtimes, the flash layout as changed. As a result, the
+  contents of the flash storage will be lost when upgrading. Set the values back
+  (IP, MAC address, startup kernel, etc.) after the upgrade.
+
+
+3.1
+---
+
+No further notes.
 
 
 3.0

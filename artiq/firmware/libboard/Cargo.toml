@@ -9,11 +9,22 @@ name = "board"
 path = "lib.rs"
 
 [build-dependencies]
-build_artiq = { path = "../libbuild_artiq" }
+cc = "1.0"
+build_misoc = { path = "../libbuild_misoc" }
 
 [dependencies]
-log = { version = "0.3", default-features = false }
-bitflags = { version = "1.0" }
+byteorder = { version = "1.0", default-features = false }
+
+[dependencies.compiler_builtins]
+git = "https://github.com/m-labs/compiler-builtins"
+rev = "ca06a5e"
+features = ["mem"]
+
+[dependencies.smoltcp]
+git = "https://github.com/m-labs/smoltcp"
+rev = "181083f"
+default-features = false
+optional = true
 
 [features]
 uart_console = []

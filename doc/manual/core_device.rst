@@ -35,7 +35,7 @@ Common problems
 +++++++++++++++
 
 * The SW13 switches on the board need to be set to 00001.
-* When connected, CLOCK adapter breaks the JTAG chain due to TDI not being connect to TDO on the FMC mezzanine.
+* When connected, the CLOCK adapter breaks the JTAG chain due to TDI not being connected to TDO on the FMC mezzanine.
 * On some boards, the JTAG USB connector is not correctly soldered.
 
 VADJ
@@ -76,28 +76,42 @@ With the CLOCK hardware, the TTL lines are mapped as follows:
 +--------------------+-----------------------+--------------+
 | 31                 | ZOTINO_LDAC           | Output       |
 +--------------------+-----------------------+--------------+
+| 33                 | URUKUL_IO_UPDATE      | Output       |
++--------------------+-----------------------+--------------+
+| 34                 | URUKUL_DDS_RESET      | Output       |
++--------------------+-----------------------+--------------+
+| 35                 | URUKUL_SW0            | Output       |
++--------------------+-----------------------+--------------+
+| 36                 | URUKUL_SW1            | Output       |
++--------------------+-----------------------+--------------+
+| 37                 | URUKUL_SW2            | Output       |
++--------------------+-----------------------+--------------+
+| 38                 | URUKUL_SW3            | Output       |
++--------------------+-----------------------+--------------+
 
 The board has RTIO SPI buses mapped as follows:
 
-+--------------+--------------+--------------+--------------+------------+
-| RTIO channel | CS_N         | MOSI         | MISO         | CLK        |
-+==============+==============+==============+==============+============+
-| 22           | AMS101_CS_N  | AMS101_MOSI  |              | AMS101_CLK |
-+--------------+--------------+--------------+--------------+------------+
-| 23           | SPI0_CS_N    | SPI0_MOSI    | SPI0_MISO    | SPI0_CLK   |
-+--------------+--------------+--------------+--------------+------------+
-| 24           | SPI1_CS_N    | SPI1_MOSI    | SPI1_MISO    | SPI1_CLK   |
-+--------------+--------------+--------------+--------------+------------+
-| 25           | SPI2_CS_N    | SPI2_MOSI    | SPI2_MISO    | SPI2_CLK   |
-+--------------+--------------+--------------+--------------+------------+
-| 26           | MMC_SPI_CS_N | MMC_SPI_MOSI | MMC_SPI_MISO | MMC_SPI_CLK|
-+--------------+--------------+--------------+--------------+------------+
-| 30           | ZOTINO_CS_N  | ZOTINO_MOSI  | ZOTINO_MISO  | ZOTINO_CLK |
-+--------------+--------------+--------------+--------------+------------+
++--------------+------------------+--------------+--------------+------------+
+| RTIO channel | CS_N             | MOSI         | MISO         | CLK        |
++==============+==================+==============+==============+============+
+| 22           | AMS101_CS_N      | AMS101_MOSI  |              | AMS101_CLK |
++--------------+------------------+--------------+--------------+------------+
+| 23           | SPI0_CS_N        | SPI0_MOSI    | SPI0_MISO    | SPI0_CLK   |
++--------------+------------------+--------------+--------------+------------+
+| 24           | SPI1_CS_N        | SPI1_MOSI    | SPI1_MISO    | SPI1_CLK   |
++--------------+------------------+--------------+--------------+------------+
+| 25           | SPI2_CS_N        | SPI2_MOSI    | SPI2_MISO    | SPI2_CLK   |
++--------------+------------------+--------------+--------------+------------+
+| 26           | MMC_SPI_CS_N     | MMC_SPI_MOSI | MMC_SPI_MISO | MMC_SPI_CLK|
++--------------+------------------+--------------+--------------+------------+
+| 30           | ZOTINO_CS_N      | ZOTINO_MOSI  | ZOTINO_MISO  | ZOTINO_CLK |
++--------------+------------------+--------------+--------------+------------+
+| 32           | URUKUL_CS_N[0:2] | URUKUL_MOSI  | URUKUL_MISO  | URUKUL_CLK |
++--------------+------------------+--------------+--------------+------------+
 
-The DDS bus is on channel 32.
+The DDS bus is on channel 39.
 
-This configuration supports a Zotino connected to the KC705 FMC HPC through a FMC DIO 32ch LVDS v1.2 and a VHDCI breakout board rev 1.0. On the VHDCI breakout board, the VHDCI cable to the KC705 should be plugged into to the bottom connector, and the EEM cable to the Zotino should be connected to J41.
+This configuration supports a Zotino and/or an Urukul connected to the KC705 FMC HPC through a FMC DIO 32ch LVDS v1.2 and a VHDCI breakout board rev 1.0 or rev 1.1. On the VHDCI breakout board, the VHDCI cable to the KC705 should be plugged into to the bottom connector. The EEM cable to the Zotino should be connected to J41 and the EEM cables to Urukul to J42 and J43.
 
 The shift registers on the FMC card should be configured to set the directions of its LVDS buffers, using :mod:`artiq.coredevice.shiftreg`.
 
@@ -145,86 +159,40 @@ To avoid I/O contention, the startup kernel should first program the TCA6424A ex
 
 See :mod:`artiq.coredevice.i2c` for more details.
 
+Kasli
+-----
 
-.. _phaser:
+`Kasli <https://github.com/m-labs/sinara/wiki/Kasli>`_ is a versatile core device designed for ARTIQ as part of the `Sinara <https://github.com/m-labs/sinara/wiki>`_ family of boards.
 
-Phaser
-++++++
+Opticlock
++++++++++
 
-The Phaser adapter is an AD9154-FMC-EBZ, a 4 channel 2.4 GHz DAC on an FMC HPC card.
+In the opticlock variant, Kasli is the core device controlling three `DIO_BNC <https://github.com/m-labs/sinara/wiki/DIO_BNC>`_ boards, one `Urukul-AD9912 <https://github.com/m-labs/sinara/wiki/Urukul>`_, one `Urukul-AD9910 <https://github.com/m-labs/sinara/wiki/Urukul>`_, and one Sampler `<https://github.com/m-labs/sinara/wiki/Sampler>`_.
 
-Phaser is a proof-of-concept design of a GHz-datarate, multi-channel, interpolating, multi-tone, direct digital synthesizer (DDS) compatible with ARTIQ's RTIO channels.
-Ultimately it will be the basis for the ARTIQ Sayma Smart Arbitrary Waveform Generator project. See https://github.com/m-labs/sinara.
+Kasli is connected to the network using a 1000Base-X SFP module. `No-name
+<fs.com>`_ BiDi (1000Base-BX) modules have been used successfully. The SFP module for the network
+should be installed into the SFP0 cage.
 
-*Features*:
+Kasli is supplied with 100 MHz reference at its SMA input.
+Both Urukul boards are supplied with a 100 MHz reference clock on their external
+SMA inputs.
 
-* up to 4 channels
-* up to 500 MHz data rate per channel (KC705 limitation)
-* up to 8x interpolation to 2.4 GHz DAC sample rate
-* Real-time sample-coherent control over amplitude, frequency, phase of each channel through ARTIQ RTIO commands
-* Full configurability of the AD9154 and AD9516 through SPI with ARTIQ kernel support
-* All SPI registers and register bits exposed as human readable names
-* Parametrized JESD204B core (also capable of operation with eight lanes)
-* The code can be reconfigured. Possible example configurations are: support 2 channels at 1 GHz datarate, support 4 channels at 300 MHz data rate, no interpolation, and using mix mode to stress the second and third Nyquist zones (150-300 MHz and 300-450 MHz). Please contact M-Labs if you need help with this.
+The RTIO clock frequency is 125 MHz, which is synthesized from the 100 MHz reference using the Si5324.
 
-The hardware required is a KC705 with an AD9154-FMC-EBZ plugged into the HPC connector and a low-noise sample rate reference clock.
+The first four TTL channels are used as inputs. The rest are outputs.
 
-This work was supported by the Army Research Lab and the University of Maryland.
+DRTIO master
+++++++++++++
 
-Installation
-............
+Kasli can be used as a DRTIO master that provides local RTIO channels and can additionally control one DRTIO satellite.
 
-These installation instructions are a short form of those in the ARTIQ manual.
+The RTIO clock frequency is 150 MHz, which is synthesized from the Si5324 crystal. The DRTIO line rate is 3 Gbps.
 
-* See the chapter on setting up a :ref:`development environment <develop-from-conda>`.
-* When compiling the binaries, use the ``phaser`` target: ``python -m artiq.gateware.targets.phaser``
-* From time to time and on request there may be pre-built binaries in the ``artiq-kc705-phaser`` package on the M-Labs conda package label.
+The SFP module for the Ethernet network should be installed into the SFP0 cage, and the DRTIO connection is on SFP2.
 
-Setup
-.....
+DRTIO satellite
++++++++++++++++
 
-* Setup the KC705 (jumpers, etc.) observing the ARTIQ manual. VADJ does not need to be changed.
-* On the AD9154-FMC-EBZ put jumpers:
+Kasli can be used as a DRTIO satellite with a 150 MHz RTIO clock and a 3 Gbps DRTIO line rate.
 
-  - on XP1, between pin 5 and 6 (will keep the PIC in reset)
-  - on JP3 (will force output enable on FXLA108)
-
-* Refer to the ARTIQ documentation to configure the MAC and IP addresses and other settings. If the board was running stock ARTIQ before, the settings will be kept.
-* A 300 MHz clock of roughly 10 dBm (0.2 to 3.4 V peak-to-peak into 50 Ohm) must be connected to the AD9154-FMC-EBZ J1. The input is 50 Ohm terminated. The RTIO clock, DAC deviceclock, FPGA deviceclock, and SYSREF are derived from this signal.
-* The RTIO coarse clock (the rate of the RTIO timestamp counter) is 150 MHz. The RTIO ``ref_period`` is 1/150 MHz = 5ns/6. The RTIO ``ref_multiplier`` is ``8``. C.f. ``device_db.py`` for both variables. The JED204B DAC data rate and DAC device clock are both 300 MHz. The JESD204B line rate is 6 GHz.
-* Configure an oscilloscope to trigger at 0.5 V on rising edge of ttl_sma (user_gpio_n on the KC705 board). Monitor DAC0 (J17) on the oscilloscope set for 100 mV/div and 200 ns/div.
-* An example device database, several status and test scripts are provided in ``artiq/examples/phaser/``. ::
-
-    cd artiq/examples/phaser
-
-* Edit ``device_db.py`` to match the hostname or IP address of the core device.
-* Use ``ping`` and ``flterm`` to verify that the core device starts up and boots correctly.
-
-Usage
-.....
-
-* Run ``artiq_run repository/demo.py`` for an example that exercises several different use cases of synchronized phase, amplitude, and frequency updates.
-  for an example that exercises several different use cases of synchronized phase, amplitude, and frequency updates.
-* Run ``artiq_run repository/demo_2tone.py`` for an example that emits a shaped two-tone pulse.
-* Implement your own experiments using the SAWG channels.
-* Verify clock stability between the sample rate reference clock and the DAC outputs.
-
-RTIO channels
-.............
-
-+--------------+------------+--------------+
-| RTIO channel | TTL line   | Capability   |
-+==============+============+==============+
-| 0            | SMA_GPIO_N | Input+Output |
-+--------------+------------+--------------+
-| 1            | LED        | Output       |
-+--------------+------------+--------------+
-| 2            | SYSREF     | Input        |
-+--------------+------------+--------------+
-| 3            | SYNC       | Input        |
-+--------------+------------+--------------+
-
-The SAWG channels start with RTIO channel number 3, each SAWG channel occupying 10 RTIO channels.
-
-The board has one non-RTIO SPI bus that is accessible through
-:mod:`artiq.coredevice.ad9154`.
+The DRTIO connection is on SFP0.

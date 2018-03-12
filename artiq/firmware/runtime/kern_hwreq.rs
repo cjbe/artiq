@@ -120,14 +120,14 @@ mod drtio_i2c {
 }
 
 mod i2c {
-    use board;
+    use board_artiq::i2c as local_i2c;
     use super::drtio_i2c;
 
     pub fn start(busno: u32) -> Result<(), ()> {
         let nodeno = (busno >> 16) as u8;
         let node_busno = busno as u8;
         if nodeno == 0 {
-            board::i2c::start(node_busno)
+            local_i2c::start(node_busno)
         } else {
             drtio_i2c::start(nodeno, node_busno)
         }
@@ -137,7 +137,7 @@ mod i2c {
         let nodeno = (busno >> 16) as u8;
         let node_busno = busno as u8;
         if nodeno == 0 {
-            board::i2c::restart(node_busno)
+            local_i2c::restart(node_busno)
         } else {
             drtio_i2c::restart(nodeno, node_busno)
         }
@@ -147,7 +147,7 @@ mod i2c {
         let nodeno = (busno >> 16) as u8;
         let node_busno = busno as u8;
         if nodeno == 0 {
-            board::i2c::stop(node_busno)
+            local_i2c::stop(node_busno)
         } else {
             drtio_i2c::stop(nodeno, node_busno)
         }
@@ -157,7 +157,7 @@ mod i2c {
         let nodeno = (busno >> 16 )as u8;
         let node_busno = busno as u8;
         if nodeno == 0 {
-            board::i2c::write(node_busno, data)
+            local_i2c::write(node_busno, data)
         } else {
             drtio_i2c::write(nodeno, node_busno, data)
         }
@@ -167,7 +167,7 @@ mod i2c {
         let nodeno = (busno >> 16) as u8;
         let node_busno = busno as u8;
         if nodeno == 0 {
-            board::i2c::read(node_busno, ack)
+            local_i2c::read(node_busno, ack)
         } else {
             drtio_i2c::read(nodeno, node_busno, ack)
         }
@@ -194,25 +194,13 @@ mod drtio_spi {
         }
     }
 
-    pub fn set_config(nodeno: u8, busno: u8, flags: u8, write_div: u8, read_div: u8) -> Result<(), ()> {
+    pub fn set_config(nodeno: u8, busno: u8, flags: u8, length: u8, div: u8, cs: u8) -> Result<(), ()> {
         let request = drtioaux::Packet::SpiSetConfigRequest {
             busno: busno,
             flags: flags,
-            write_div: write_div,
-            read_div: read_div
-        };
-        if drtioaux::hw::send(nodeno, &request).is_err() {
-            return Err(())
-        }
-        basic_reply(nodeno)
-    }
-
-    pub fn set_xfer(nodeno: u8, busno: u8, chip_select: u16, write_length: u8, read_length: u8) -> Result<(), ()> {
-        let request = drtioaux::Packet::SpiSetXferRequest {
-            busno: busno,
-            chip_select: chip_select,
-            write_length: write_length,
-            read_length: read_length
+            length: length,
+            div: div,
+            cs: cs
         };
         if drtioaux::hw::send(nodeno, &request).is_err() {
             return Err(())
@@ -254,11 +242,8 @@ mod drtio_spi {
 
 #[cfg(not(has_drtio))]
 mod drtio_spi {
-    pub fn set_config(_nodeno: u8, _busno: u8, _flags: u8, _write_div: u8, _read_div: u8) -> Result<(), ()> {
-        Err(())
-    }
-
-    pub fn set_xfer(_nodeno: u8, _busno: u8, _chip_select: u16, _write_length: u8, _read_length: u8) -> Result<(), ()> {
+    pub fn set_config(_nodeno: u8, _busno: u8, _flags: u8,
+                      _length: u8, _div: u8, _cs: u8) -> Result<(), ()> {
         Err(())
     }
 
@@ -272,26 +257,16 @@ mod drtio_spi {
 }
 
 mod spi {
-    use board;
+    use board_artiq::spi as local_spi;
     use super::drtio_spi;
 
-    pub fn set_config(busno: u32, flags: u8, write_div: u8, read_div: u8) -> Result<(), ()> {
+    pub fn set_config(busno: u32, flags: u8, length: u8, div: u8, cs: u8) -> Result<(), ()> {
         let nodeno = (busno >> 16) as u8;
         let node_busno = busno as u8;
         if nodeno == 0 {
-            board::spi::set_config(node_busno, flags, write_div, read_div)
+            local_spi::set_config(node_busno, flags, length, div, cs)
         } else {
-            drtio_spi::set_config(nodeno, node_busno, flags, write_div, read_div)
-        }
-    }
-
-    pub fn set_xfer(busno: u32, chip_select: u16, write_length: u8, read_length: u8) -> Result<(), ()> {
-        let nodeno = (busno >> 16) as u8;
-        let node_busno = busno as u8;
-        if nodeno == 0 {
-            board::spi::set_xfer(node_busno, chip_select, write_length, read_length)
-        } else {
-            drtio_spi::set_xfer(nodeno, node_busno, chip_select, write_length, read_length)
+            drtio_spi::set_config(nodeno, node_busno, flags, length, div, cs)
         }
     }
 
@@ -299,7 +274,7 @@ mod spi {
         let nodeno = (busno >> 16) as u8;
         let node_busno = busno as u8;
         if nodeno == 0 {
-            board::spi::write(node_busno, data)
+            local_spi::write(node_busno, data)
         } else {
             drtio_spi::write(nodeno, node_busno, data)
         }
@@ -309,7 +284,7 @@ mod spi {
         let nodeno = (busno >> 16) as u8;
         let node_busno = busno as u8;
         if nodeno == 0 {
-            board::spi::read(node_busno)
+            local_spi::read(node_busno)
         } else {
             drtio_spi::read(nodeno, node_busno)
         }
@@ -326,30 +301,20 @@ pub fn process_kern_hwreq(io: &Io, request: &kern::Message) -> io::Result<bool> 
         }
 
         #[cfg(has_rtio_core)]
-        &kern::DrtioChannelStateRequest { channel } => {
-            let (fifo_space, last_timestamp) = rtio_mgt::drtio_dbg::get_channel_state(channel);
-            kern_send(io, &kern::DrtioChannelStateReply { fifo_space: fifo_space,
-                                                          last_timestamp: last_timestamp })
+        &kern::DrtioLinkStatusRequest { linkno } => {
+            let up = rtio_mgt::drtio::link_up(linkno);
+            kern_send(io, &kern::DrtioLinkStatusReply { up: up })
         }
-        #[cfg(has_rtio_core)]
-        &kern::DrtioResetChannelStateRequest { channel } => {
-            rtio_mgt::drtio_dbg::reset_channel_state(channel);
-            kern_acknowledge()
-        }
-        #[cfg(has_rtio_core)]
-        &kern::DrtioGetFifoSpaceRequest { channel } => {
-            rtio_mgt::drtio_dbg::get_fifo_space(channel);
-            kern_acknowledge()
-        }
+
         #[cfg(has_rtio_core)]
         &kern::DrtioPacketCountRequest { linkno } => {
             let (tx_cnt, rx_cnt) = rtio_mgt::drtio_dbg::get_packet_counts(linkno);
             kern_send(io, &kern::DrtioPacketCountReply { tx_cnt: tx_cnt, rx_cnt: rx_cnt })
         }
         #[cfg(has_rtio_core)]
-        &kern::DrtioFifoSpaceReqCountRequest { linkno } => {
-            let cnt = rtio_mgt::drtio_dbg::get_fifo_space_req_count(linkno);
-            kern_send(io, &kern::DrtioFifoSpaceReqCountReply { cnt: cnt })
+        &kern::DrtioBufferSpaceReqCountRequest { linkno } => {
+            let cnt = rtio_mgt::drtio_dbg::get_buffer_space_req_count(linkno);
+            kern_send(io, &kern::DrtioBufferSpaceReqCountReply { cnt: cnt })
         }
 
         &kern::I2cStartRequest { busno } => {
@@ -377,14 +342,10 @@ pub fn process_kern_hwreq(io: &Io, request: &kern::Message) -> io::Result<bool> 
             }
         }
 
-        &kern::SpiSetConfigRequest { busno, flags, write_div, read_div } => {
-            let succeeded = spi::set_config(busno, flags, write_div, read_div).is_ok();
+        &kern::SpiSetConfigRequest { busno, flags, length, div, cs } => {
+            let succeeded = spi::set_config(busno, flags, length, div, cs).is_ok();
             kern_send(io, &kern::SpiBasicReply { succeeded: succeeded })
         },
-        &kern::SpiSetXferRequest { busno, chip_select, write_length, read_length } => {
-            let succeeded = spi::set_xfer(busno, chip_select, write_length, read_length).is_ok();
-            kern_send(io, &kern::SpiBasicReply { succeeded: succeeded })
-        }
         &kern::SpiWriteRequest { busno, data } => {
             let succeeded = spi::write(busno, data).is_ok();
             kern_send(io, &kern::SpiBasicReply { succeeded: succeeded })

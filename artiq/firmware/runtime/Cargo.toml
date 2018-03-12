@@ -7,27 +7,25 @@ build = "build.rs"
 [lib]
 name = "runtime"
 crate-type = ["staticlib"]
-path = "lib.rs"
+path = "main.rs"
 
 [build-dependencies]
+build_misoc = { path = "../libbuild_misoc" }
 build_artiq = { path = "../libbuild_artiq" }
 
 [dependencies]
 byteorder = { version = "1.0", default-features = false }
 cslice = { version = "0.3" }
-log = { version = "0.3", default-features = false }
+log = { version = "0.4", default-features = false }
+board = { path = "../libboard", features = ["uart_console", "smoltcp"] }
 alloc_list = { path = "../liballoc_list" }
 std_artiq = { path = "../libstd_artiq", features = ["alloc", "io_error_alloc"] }
 logger_artiq = { path = "../liblogger_artiq" }
-board = { path = "../libboard", features = ["uart_console"] }
+backtrace_artiq = { path = "../libbacktrace_artiq" }
+board_artiq = { path = "../libboard_artiq" }
 proto = { path = "../libproto", features = ["log"] }
 amp = { path = "../libamp" }
 drtioaux = { path = "../libdrtioaux" }
-
-[dependencies.compiler_builtins]
-git = "https://github.com/rust-lang-nursery/compiler-builtins"
-rev = "631b568"
-features = ["mem"]
 
 [dependencies.fringe]
 git = "https://github.com/m-labs/libfringe"
@@ -37,6 +35,6 @@ features = ["alloc"]
 
 [dependencies.smoltcp]
 git = "https://github.com/m-labs/smoltcp"
-rev = "9914616"
+rev = "181083f"
 default-features = false
-features = ["alloc", "log", "socket-tcp"]
+features = ["alloc", "log", "proto-ipv4", "socket-tcp"]

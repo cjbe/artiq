@@ -1,6 +1,9 @@
 Developing ARTIQ
 ^^^^^^^^^^^^^^^^
 
+.. note::
+    Developing ARTIQ is currently only possible on Linux.
+
 We describe two different approaches to creating a development environment for ARTIQ.
 
 The first method uses existing pre-compiled Anaconda packages and the ``artiq-dev`` meta-package for the development environment.
@@ -27,7 +30,7 @@ ARTIQ Anaconda development environment
            $ git clone --recursive https://github.com/m-labs/artiq ~/artiq-dev/artiq
            $ cd ~/artiq-dev/artiq
 
-       Add ``-b release-X`` to the ``git clone`` command if you are building a stable branch of ARTIQ (the default will fetch the development ``master`` branch).
+       Add ``-b release-X`` to the ``git clone`` command if you are building a stable branch of ARTIQ. Replace ``X`` with the major release. The default will fetch the development ``master`` branch.
     3. :ref:`Install Anaconda or Miniconda <install-anaconda>`
     4. Create and activate a conda environment named ``artiq-dev`` and install the ``artiq-dev`` package which pulls in all the packages required to develop ARTIQ::
 
@@ -37,10 +40,9 @@ ARTIQ Anaconda development environment
 
            $ pip install -e .
     6. :ref:`Install Vivado <install-xilinx>`
-    7. :ref:`Obtain and install the JTAG SPI flash proxy bitstream <install-bscan-spi>`
-    8. :ref:`Configure OpenOCD <setup-openocd>`
-    9. :ref:`Build target binaries <build-target-binaries>`
-    10. :ref:`Flash target binaries <flash-target-binaries>`
+    7. :ref:`Configure OpenOCD <setup-openocd>`
+    8. :ref:`Build target binaries <build-target-binaries>`
+    9. :ref:`Flash target binaries <flash-target-binaries>`
 
 .. _install-from-source:
 
@@ -90,22 +92,22 @@ and the ARTIQ kernels.
 * Install LLVM and Clang: ::
 
         $ cd ~/artiq-dev
-        $ git clone -b artiq-3.9 https://github.com/m-labs/llvm-or1k
+        $ git clone -b artiq-4.0 https://github.com/m-labs/llvm-or1k
         $ cd llvm-or1k
-        $ git clone -b artiq-3.9 https://github.com/m-labs/clang-or1k tools/clang
+        $ git clone -b artiq-4.0 https://github.com/m-labs/clang-or1k tools/clang
 
         $ mkdir build
         $ cd build
-        $ cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local/llvm-or1k -DLLVM_TARGETS_TO_BUILD="OR1K;X86" -DLLVM_ENABLE_ASSERTIONS=ON -DLLVM_INSTALL_UTILS=ON
+        $ cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local/llvm-or1k -DLLVM_TARGETS_TO_BUILD=X86 -DLLVM_EXPERIMENTAL_TARGETS_TO_BUILD=OR1K -DLLVM_ENABLE_ASSERTIONS=ON -DLLVM_INSTALL_UTILS=ON -DCLANG_ENABLE_ARCMT=OFF -DCLANG_ENABLE_STATIC_ANALYZER=OFF
         $ make -j4
         $ sudo make install
 
 * Install Rust: ::
 
         $ cd ~/artiq-dev
-        $ git clone -b artiq-1.20.0 https://github.com/m-labs/rust
+        $ git clone -b artiq-1.23.0 https://github.com/m-labs/rust
         $ cd rust
-        $ git submodule update --init
+        $ git submodule update --init --recursive
         $ mkdir build
         $ cd build
         $ ../configure --prefix=/usr/local/rust-or1k --llvm-root=/usr/local/llvm-or1k --disable-manage-submodules --disable-docs
@@ -113,14 +115,16 @@ and the ARTIQ kernels.
         $ sudo chown $USER.$USER /usr/local/rust-or1k
         $ make install
 
-        $ libs="libcore libstd_unicode liballoc liblibc_mini libunwind"
-        $ rustc="/usr/local/rust-or1k/bin/rustc --target or1k-unknown-none -g -C target-feature=+mul,+div,+ffl1,+cmov,+addc -C opt-level=s -L ."
+        $ libs="core std_unicode alloc"
+        $ rustc="/usr/local/rust-or1k/bin/rustc --target or1k-unknown-none -C target-feature=+mul,+div,+ffl1,+cmov,+addc -C opt-level=s -g --crate-type rlib -L ."
         $ destdir="/usr/local/rust-or1k/lib/rustlib/or1k-unknown-none/lib/"
         $ mkdir ../build-or1k
         $ cd ../build-or1k
-        $ for lib in ${libs}; do ${rustc} ../src/${lib}/lib.rs; done
-        $ ${rustc} -Cpanic=abort ../src/libpanic_abort/lib.rs
-        $ ${rustc} -Cpanic=unwind ../src/libpanic_unwind/lib.rs --cfg llvm_libunwind
+        $ for lib in ${libs}; do ${rustc} --crate-name ${lib} ../src/lib${lib}/lib.rs; done
+        $ ${rustc} --crate-name libc ../src/liblibc_mini/lib.rs
+        $ ${rustc} --crate-name unwind ../src/libunwind/lib.rs
+        $ ${rustc} -Cpanic=abort --crate-name panic_abort ../src/libpanic_abort/lib.rs
+        $ ${rustc} -Cpanic=unwind --crate-name panic_unwind ../src/libpanic_unwind/lib.rs --cfg llvm_libunwind
         $ mkdir -p ${destdir}
         $ cp *.rlib ${destdir}
 
@@ -137,6 +141,13 @@ These steps are required to generate gateware bitstream (``.bit``) files, build 
 * Install the FPGA vendor tools (i.e. Vivado):
 
     * Get Vivado from http://www.xilinx.com/support/download/index.htm.
+
+    * The "appropriate" Vivado version to use for building the bitstream can
+      vary. Some versions contain bugs that lead to hidden or visible failures,
+      others work fine.
+      Refer to the `M-Labs buildbot logs <http://buildbot.m-labs.hk/>`_ to
+      determine which version is currently used when building the binary
+      packages.
 
     * During the Vivado installation, uncheck ``Install cable drivers`` (they are not required as we use better and open source alternatives).
 
@@ -213,7 +224,7 @@ These steps are required to generate gateware bitstream (``.bit``) files, build 
 
     * For KC705::
 
-        $ python3 -m artiq.gateware.targets.kc705_dds -H nist_clock # or nist_qc2
+        $ python3 -m artiq.gateware.targets.kc705 -V nist_clock # or nist_qc2
 
     .. note:: Add ``--toolchain ise`` if you wish to use ISE instead of Vivado. ISE needs a separate installation step.
 

@@ -30,10 +30,15 @@ class _OSERDESE2_8X(Module):
         if pad_n is None:
             self.comb += pad.eq(pad_o)
         else:
-            self.specials += Instance("OBUFDS",
+            self.specials += Instance("IOBUFDS_INTERMDISABLE",
+                                      p_DIFF_TERM="FALSE",
+                                      p_IBUF_LOW_PWR="TRUE",
+                                      p_USE_IBUFDISABLE="TRUE",
+                                      i_IBUFDISABLE=1,
+                                      i_INTERMDISABLE=1,
                                       i_I=pad_o,
-                                      o_O=pad, o_OB=pad_n)
-
+                                      i_T=self.t_out,
+                                      io_IO=pad, io_IOB=pad_n)
 
 class _ISERDESE2_8X(Module):
     def __init__(self, pad, pad_n=None, invert=False):
@@ -72,7 +77,14 @@ class _ISERDESE2_8X(Module):
         if pad_n is None:
             self.comb += pad_i.eq(pad)
         else:
-            self.specials += Instance("IBUFDS", o_O=pad_i, i_I=pad, i_IB=pad_n)
+            self.specials += Instance("IBUFDS_INTERMDISABLE",
+                                      p_DIFF_TERM="TRUE",
+                                      p_IBUF_LOW_PWR="TRUE",
+                                      p_USE_IBUFDISABLE="TRUE",
+                                      i_IBUFDISABLE=0,
+                                      i_INTERMDISABLE=0,
+                                      o_O=pad_i,
+                                      io_I=pad, io_IB=pad_n)
 
 
 class _IOSERDESE2_8X(Module):
@@ -114,15 +126,22 @@ class _IOSERDESE2_8X(Module):
         
         oserdes = _OSERDESE2_8X(pad_o, invert=invert)
         self.submodules += oserdes
+
         if pad_n is None:
             self.specials += Instance("IOBUF",
                                       i_I=pad_o, o_O=pad_i, i_T=oserdes.t_out,
                                       io_IO=pad)
         else:
-            self.specials += Instance("IOBUFDS",
+            self.specials += Instance("IOBUFDS_INTERMDISABLE",
+                                      p_DIFF_TERM="TRUE",
+                                      p_IBUF_LOW_PWR="TRUE",
+                                      p_USE_IBUFDISABLE="TRUE",
+                                      i_IBUFDISABLE=~oserdes.t_out,
+                                      i_INTERMDISABLE=~oserdes.t_out,
                                       i_I=pad_o, o_O=pad_i, i_T=oserdes.t_out,
                                       io_IO=pad, io_IOB=pad_n)
         self.comb += [
+            self.i.eq(iserdes.i),
             oserdes.t_in.eq(~self.oe),
             oserdes.o.eq(self.o)
         ]

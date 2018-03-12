@@ -8,13 +8,14 @@ use byteorder::{ByteOrder, NetworkEndian};
 use urc::Urc;
 use sched::{ThreadHandle, Io};
 use sched::{TcpListener, TcpStream};
-use board;
-use {config, mailbox, rpc_queue, kernel};
+use board::{self, config};
+use {mailbox, rpc_queue, kernel};
 #[cfg(has_rtio_core)]
 use rtio_mgt;
 use rtio_dma::Manager as DmaManager;
 use cache::Cache;
 use kern_hwreq;
+use watchdog::WatchdogSet;
 
 use rpc_proto as rpc;
 use session_proto as host;
@@ -66,7 +67,7 @@ enum KernelState {
 struct Session<'a> {
     congress: &'a mut Congress,
     kernel_state: KernelState,
-    watchdog_set: board::clock::WatchdogSet,
+    watchdog_set: WatchdogSet,
     log_buffer: String
 }
 
@@ -75,7 +76,7 @@ impl<'a> Session<'a> {
         Session {
             congress: congress,
             kernel_state: KernelState::Absent,
-            watchdog_set: board::clock::WatchdogSet::new(),
+            watchdog_set: WatchdogSet::new(),
             log_buffer: String::new()
         }
     }
@@ -226,7 +227,7 @@ fn process_host_message(io: &Io,
     match host_read(stream)? {
         host::Request::SystemInfo => {
             host_write(stream, host::Reply::SystemInfo {
-                ident: board::ident(&mut [0; 64]),
+                ident: board::ident::read(&mut [0; 64]),
                 finished_cleanly: session.congress.finished_cleanly.get()
             })?;
             session.congress.finished_cleanly.set(true);
@@ -238,7 +239,7 @@ fn process_host_message(io: &Io,
             config::read(key, |result| {
                 match result {
                     Ok(value) => host_write(stream, host::Reply::FlashRead(&value)),
-                    Err(())   => host_write(stream, host::Reply::FlashError)
+                    Err(_)    => host_write(stream, host::Reply::FlashError)
                 }
             })
         }
@@ -634,7 +635,7 @@ pub fn thread(io: Io) {
     {
         let congress = congress.clone();
         respawn(&io, &mut kernel_thread, move |io| {
-            let mut congress = borrow_mut!(congress);
+            let mut congress = congress.borrow_mut();
             info!("running startup kernel");
             match flash_kernel_worker(&io, &mut congress, "startup_kernel") {
                 Ok(()) => info!("startup kernel finished"),
@@ -669,7 +670,7 @@ pub fn thread(io: Io) {
             let congress = congress.clone();
             let stream = stream.into_handle();
             respawn(&io, &mut kernel_thread, move |io| {
-                let mut congress = borrow_mut!(congress);
+                let mut congress = congress.borrow_mut();
                 let mut stream = TcpStream::from_handle(&io, stream);
                 match host_kernel_worker(&io, &mut stream, &mut *congress) {
                     Ok(()) => (),
@@ -692,7 +693,7 @@ pub fn thread(io: Io) {
 
             let congress = congress.clone();
             respawn(&io, &mut kernel_thread, move |io| {
-                let mut congress = borrow_mut!(congress);
+                let mut congress = congress.borrow_mut();
                 match flash_kernel_worker(&io, &mut *congress, "idle_kernel") {
                     Ok(()) =>
                         info!("idle kernel finished, standing by"),

@@ -682,6 +682,11 @@ class Inferencer(algorithm.Visitor):
                 pass
             else:
                 diagnose(valid_forms())
+        elif types.is_builtin(typ, "str"):
+            diag = diagnostic.Diagnostic("error",
+                "strings currently cannot be constructed", {},
+                node.loc)
+            self.engine.process(diag)
         elif types.is_builtin(typ, "list") or types.is_builtin(typ, "array"):
             if types.is_builtin(typ, "list"):
                 valid_forms = lambda: [
@@ -999,6 +1004,17 @@ class Inferencer(algorithm.Visitor):
             elif keyword.arg in typ_optargs:
                 self._unify(keyword.value.type, typ_optargs[keyword.arg],
                             keyword.value.loc, None)
+            else:
+                note = diagnostic.Diagnostic("note",
+                    "extraneous argument", {},
+                    keyword.loc)
+                diag = diagnostic.Diagnostic("error",
+                    "this function of type {type} does not accept argument '{name}'",
+                    {"type": types.TypePrinter().name(node.func.type),
+                     "name": keyword.arg},
+                    node.func.loc, [], [note])
+                self.engine.process(diag)
+                return
             passed_args[keyword.arg] = keyword.arg_loc
 
         for formalname in typ_args:

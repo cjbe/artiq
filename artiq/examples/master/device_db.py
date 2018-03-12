@@ -1,8 +1,8 @@
-# This is an example device database that needs to be adapted to your setup.
-# The RTIO channel numbers here are for NIST CLOCK on KC705.
-# The list of devices here is not exhaustive.
+# Copy of the KC705 device database, for compatibility of the buildbot and
+# unit tests with release-3.
+# Remove and update buildbot when release-3 is no longer maintained.
 
-core_addr = "kc705.lab.m-labs.hk"
+core_addr = "kc705-1.lab.m-labs.hk"
 
 device_db = {
     # Core device
@@ -34,7 +34,7 @@ device_db = {
         "class": "DDSGroupAD9914",
         "arguments": {
             "sysclk": 3e9,
-            "first_dds_bus_channel": 32,
+            "first_dds_bus_channel": 39,
             "dds_bus_count": 2,
             "dds_channel_count": 3
         }
@@ -120,13 +120,13 @@ device_db = {
     # Generic SPI
     "spi0": {
         "type": "local",
-        "module": "artiq.coredevice.spi",
+        "module": "artiq.coredevice.spi2",
         "class": "SPIMaster",
         "arguments": {"channel": 23}
     },
-    "spi_mmc": { 
+    "spi_mmc": {
         "type": "local",
-        "module": "artiq.coredevice.spi",
+        "module": "artiq.coredevice.spi2",
         "class": "SPIMaster",
         "arguments": {"channel": 26}
     },
@@ -162,7 +162,7 @@ device_db = {
     # DAC
     "spi_ams101": {
         "type": "local",
-        "module": "artiq.coredevice.spi",
+        "module": "artiq.coredevice.spi2",
         "class": "SPIMaster",
         "arguments": {"channel": 22}
     },
@@ -174,7 +174,7 @@ device_db = {
     },
     "spi_zotino": {
         "type": "local",
-        "module": "artiq.coredevice.spi",
+        "module": "artiq.coredevice.spi2",
         "class": "SPIMaster",
         "arguments": {"channel": 30}
     },
@@ -188,7 +188,147 @@ device_db = {
         "type": "local",
         "module": "artiq.coredevice.ad5360",
         "class": "AD5360",
-        "arguments": {"spi_device": "spi_zotino", "ldac_device": "ttl_zotino_ldac"}
+        "arguments": {
+            "spi_device": "spi_zotino",
+            "ldac_device": "ttl_zotino_ldac",
+            "div_write": 30,
+            "div_read": 40
+        }
+    },
+
+    "spi_urukul": {
+        "type": "local",
+        "module": "artiq.coredevice.spi2",
+        "class": "SPIMaster",
+        "arguments": {"channel": 32}
+    },
+    "ttl_urukul_io_update": {
+        "type": "local",
+        "module": "artiq.coredevice.ttl",
+        "class": "TTLOut",
+        "arguments": {"channel": 33}
+    },
+    "ttl_urukul_sw0": {
+        "type": "local",
+        "module": "artiq.coredevice.ttl",
+        "class": "TTLOut",
+        "arguments": {"channel": 35}
+    },
+    "ttl_urukul_sw1": {
+        "type": "local",
+        "module": "artiq.coredevice.ttl",
+        "class": "TTLOut",
+        "arguments": {"channel": 36}
+    },
+    "ttl_urukul_sw2": {
+        "type": "local",
+        "module": "artiq.coredevice.ttl",
+        "class": "TTLOut",
+        "arguments": {"channel": 37}
+    },
+    "ttl_urukul_sw3": {
+        "type": "local",
+        "module": "artiq.coredevice.ttl",
+        "class": "TTLOut",
+        "arguments": {"channel": 38}
+    },
+    "urukul_cpld": {
+        "type": "local",
+        "module": "artiq.coredevice.urukul",
+        "class": "CPLD",
+        "arguments": {
+            "spi_device": "spi_urukul",
+            "io_update_device": "ttl_urukul_io_update",
+            "refclk": 100e6
+        }
+    },
+    "urukul_ch0a": {
+        "type": "local",
+        "module": "artiq.coredevice.ad9912",
+        "class": "AD9912",
+        "arguments": {
+            "pll_n": 10,
+            "chip_select": 4,
+            "cpld_device": "urukul_cpld",
+            "sw_device": "ttl_urukul_sw0"
+        }
+    },
+    "urukul_ch1a": {
+        "type": "local",
+        "module": "artiq.coredevice.ad9912",
+        "class": "AD9912",
+        "arguments": {
+            "pll_n": 10,
+            "chip_select": 5,
+            "cpld_device": "urukul_cpld",
+            "sw_device": "ttl_urukul_sw1"
+        }
+    },
+    "urukul_ch2a": {
+        "type": "local",
+        "module": "artiq.coredevice.ad9912",
+        "class": "AD9912",
+        "arguments": {
+            "pll_n": 10,
+            "chip_select": 6,
+            "cpld_device": "urukul_cpld",
+            "sw_device": "ttl_urukul_sw2"
+        }
+    },
+    "urukul_ch3a": {
+        "type": "local",
+        "module": "artiq.coredevice.ad9912",
+        "class": "AD9912",
+        "arguments": {
+            "pll_n": 10,
+            "chip_select": 7,
+            "cpld_device": "urukul_cpld",
+            "sw_device": "ttl_urukul_sw3"
+        }
+    },
+    "urukul_ch0b": {
+        "type": "local",
+        "module": "artiq.coredevice.ad9910",
+        "class": "AD9910",
+        "arguments": {
+            "pll_n": 40,
+            "chip_select": 4,
+            "cpld_device": "urukul_cpld",
+            "sw_device": "ttl_urukul_sw0"
+        }
+    },
+    "urukul_ch1b": {
+        "type": "local",
+        "module": "artiq.coredevice.ad9910",
+        "class": "AD9910",
+        "arguments": {
+            "pll_n": 40,
+            "chip_select": 5,
+            "cpld_device": "urukul_cpld",
+            "sw_device": "ttl_urukul_sw1"
+        }
+    },
+    "urukul_ch2b": {
+        "type": "local",
+        "module": "artiq.coredevice.ad9910",
+        "class": "AD9910",
+        "arguments": {
+            "pll_n": 40,
+            "chip_select": 6,
+            "cpld_device": "urukul_cpld",
+            "sw_device": "ttl_urukul_sw2"
+        }
+    },
+    "urukul_ch3b": {
+        "type": "local",
+        "module": "artiq.coredevice.ad9910",
+        "class": "AD9910",
+        "arguments": {
+            "pll_n": 40,
+            "chip_select": 7,
+            "cpld_device": "urukul_cpld",
+            "sw_device": "ttl_urukul_sw3"
+        }
     },
 
     # AD9914 DDS
@@ -196,42 +336,20 @@ device_db = {
         "type": "local",
         "module": "artiq.coredevice.dds",
         "class": "DDSChannelAD9914",
-        "arguments": {"bus_channel": 32, "channel": 0},
+        "arguments": {"bus_channel": 39, "channel": 0},
         "comment": "Comments work in DDS panel as well"
     },
     "dds1": {
         "type": "local",
         "module": "artiq.coredevice.dds",
         "class": "DDSChannelAD9914",
-        "arguments": {"bus_channel": 32, "channel": 1}
+        "arguments": {"bus_channel": 39, "channel": 1}
     },
     "dds2": {
         "type": "local",
         "module": "artiq.coredevice.dds",
         "class": "DDSChannelAD9914",
-        "arguments": {"bus_channel": 32, "channel": 2}
-    },
-
-    # Controllers
-    "lda": {
-        "type": "controller",
-        "best_effort": True,
-        "host": "::1",
-        "port": 3253,
-        "command": "aqctl_lda -p {port} --bind {bind} --simulation"
-    },
-
-    "camera_sim": {
-        "type": "controller",
-        "host": "::1",
-        "port": 6283,
-        "target_name": "camera_sim",
-        "command": "python3 -m artiq.examples.remote_exec_controller"
-    },
-    "camera_sim_rexec": {
-        "type": "controller_aux_target",
-        "controller": "camera_sim",
-        "target_name": "camera_sim_rexec"
+        "arguments": {"bus_channel": 39, "channel": 2}
     },
 
     # Aliases

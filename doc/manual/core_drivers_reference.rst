@@ -27,10 +27,10 @@ These drivers are for the core device and the peripherals closely integrated int
 .. automodule:: artiq.coredevice.dma
     :members:
 
-:mod:`artiq.coredevice.spi` module
-----------------------------------
+:mod:`artiq.coredevice.spi2` module
+-----------------------------------
 
-.. automodule:: artiq.coredevice.spi
+.. automodule:: artiq.coredevice.spi2
     :members:
 
 :mod:`artiq.coredevice.ad5360` module
@@ -43,6 +43,12 @@ These drivers are for the core device and the peripherals closely integrated int
 ----------------------------------
 
 .. automodule:: artiq.coredevice.i2c
+    :members:
+
+:mod:`artiq.coredevice.pcf8574a` module
+---------------------------------------
+
+.. automodule:: artiq.coredevice.pcf8574a
     :members:
 
 :mod:`artiq.coredevice.cache` module
@@ -67,4 +73,28 @@ These drivers are for the core device and the peripherals closely integrated int
 -----------------------------------
 
 .. automodule:: artiq.coredevice.sawg
+    :members:
+
+:mod:`artiq.coredevice.novogorny` module
+----------------------------------------
+
+.. automodule:: artiq.coredevice.novogorny
+    :members:
+
+:mod:`artiq.coredevice.urukul` module
+-------------------------------------
+
+.. automodule:: artiq.coredevice.urukul
+    :members:
+
+:mod:`artiq.coredevice.ad9912` module
+-------------------------------------
+
+.. automodule:: artiq.coredevice.ad9912
+    :members:
+
+:mod:`artiq.coredevice.ad9910` module
+-------------------------------------
+
+.. automodule:: artiq.coredevice.ad9910
     :members:

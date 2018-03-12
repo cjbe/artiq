@@ -31,8 +31,6 @@ static mut API: &'static [(&'static str, *const ())] = &[
     api!(__ltdf2),
     api!(__nedf2),
     api!(__gtdf2),
-    api!(__negsf2),
-    api!(__negdf2),
     api!(__addsf3),
     api!(__subsf3),
     api!(__mulsf3),
@@ -57,8 +55,6 @@ static mut API: &'static [(&'static str, *const ())] = &[
     api!(__fixdfsi),
     api!(__fixdfdi),
     api!(__fixunsdfsi),
-    api!(__clzsi2),
-    api!(__ctzsi2),
     api!(__udivdi3),
     api!(__umoddi3),
     api!(__moddi3),
@@ -113,11 +109,9 @@ static mut API: &'static [(&'static str, *const ())] = &[
     api!(dma_retrieve = ::dma_retrieve),
     api!(dma_playback = ::dma_playback),
 
-    api!(drtio_get_channel_state = ::rtio::drtio_dbg::get_channel_state),
-    api!(drtio_reset_channel_state = ::rtio::drtio_dbg::reset_channel_state),
-    api!(drtio_get_fifo_space = ::rtio::drtio_dbg::get_fifo_space),
-    api!(drtio_get_packet_counts = ::rtio::drtio_dbg::get_packet_counts),
-    api!(drtio_get_fifo_space_req_count = ::rtio::drtio_dbg::get_fifo_space_req_count),
+    api!(drtio_get_link_status = ::rtio::drtio::get_link_status),
+    api!(drtio_get_packet_counts = ::rtio::drtio::get_packet_counts),
+    api!(drtio_get_buffer_space_req_count = ::rtio::drtio::get_buffer_space_req_count),
 
     api!(i2c_start = ::nrt_bus::i2c::start),
     api!(i2c_restart = ::nrt_bus::i2c::restart),
@@ -126,7 +120,6 @@ static mut API: &'static [(&'static str, *const ())] = &[
     api!(i2c_read = ::nrt_bus::i2c::read),
 
     api!(spi_set_config = ::nrt_bus::spi::set_config),
-    api!(spi_set_xfer = ::nrt_bus::spi::set_xfer),
     api!(spi_write = ::nrt_bus::spi::write),
     api!(spi_read = ::nrt_bus::spi::read),
 ];

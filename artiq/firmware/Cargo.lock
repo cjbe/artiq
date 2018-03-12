@@ -14,38 +14,90 @@ dependencies = [
 ]
 
 [[package]]
+name = "backtrace_artiq"
+version = "0.0.0"
+
+[[package]]
 name = "bitflags"
-version = "1.0.0"
+version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
 name = "board"
 version = "0.0.0"
 dependencies = [
- "bitflags 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "build_misoc 0.0.0",
+ "byteorder 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "cc 1.0.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "compiler_builtins 0.1.0 (git+https://github.com/m-labs/compiler-builtins?rev=ca06a5e)",
+ "smoltcp 0.4.0 (git+https://github.com/m-labs/smoltcp?rev=181083f)",
+]
+
+[[package]]
+name = "board_artiq"
+version = "0.0.0"
+dependencies = [
+ "bitflags 1.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "board 0.0.0",
  "build_artiq 0.0.0",
- "log 0.3.6 (registry+https://github.com/rust-lang/crates.io-index)",
+ "build_misoc 0.0.0",
+ "byteorder 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "log 0.4.1 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "bootloader"
+version = "0.0.0"
+dependencies = [
+ "board 0.0.0",
+ "build_misoc 0.0.0",
+ "byteorder 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "crc 1.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "smoltcp 0.4.0 (git+https://github.com/m-labs/smoltcp?rev=181083f)",
 ]
 
 [[package]]
 name = "build_artiq"
 version = "0.0.0"
 dependencies = [
- "walkdir 1.0.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "walkdir 1.0.7 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
+name = "build_const"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
+name = "build_misoc"
+version = "0.0.0"
+
+[[package]]
 name = "byteorder"
-version = "1.0.0"
+version = "1.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
+name = "cc"
+version = "1.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
+name = "cfg-if"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
 name = "compiler_builtins"
 version = "0.1.0"
-source = "git+https://github.com/rust-lang-nursery/compiler-builtins?rev=631b568#631b5687b24af413fdbffa4c2644484e60660b00"
+source = "git+https://github.com/m-labs/compiler-builtins?rev=ca06a5e#ca06a5e3d5ff9a17210f22401fdf6325f632c59e"
+
+[[package]]
+name = "crc"
+version = "1.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
- "gcc 0.3.42 (registry+https://github.com/rust-lang/crates.io-index)",
- "rustc-cfg 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "build_const 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -58,8 +110,10 @@ name = "drtioaux"
 version = "0.0.0"
 dependencies = [
  "board 0.0.0",
- "byteorder 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "log 0.3.6 (registry+https://github.com/rust-lang/crates.io-index)",
+ "build_misoc 0.0.0",
+ "byteorder 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "crc 1.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "log 0.4.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "std_artiq 0.0.0",
 ]
 
@@ -72,13 +126,8 @@ name = "fringe"
 version = "1.1.0"
 source = "git+https://github.com/m-labs/libfringe?rev=bd23494#bd2349467157969324ca7da5d2ae033c7ffac0c0"
 dependencies = [
- "libc 0.2.18 (registry+https://github.com/rust-lang/crates.io-index)",
+ "libc 0.2.34 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
-
-[[package]]
-name = "gcc"
-version = "0.3.42"
-source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
 name = "kernel32-sys"
@@ -96,8 +145,8 @@ dependencies = [
  "alloc_stub 0.0.0",
  "amp 0.0.0",
  "board 0.0.0",
- "build_artiq 0.0.0",
- "byteorder 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "build_misoc 0.0.0",
+ "byteorder 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "cslice 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "dyld 0.0.0",
  "proto 0.0.0",
@@ -106,13 +155,21 @@ dependencies = [
 
 [[package]]
 name = "libc"
-version = "0.2.18"
+version = "0.2.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
 name = "log"
-version = "0.3.6"
+version = "0.3.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
+name = "log"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+dependencies = [
+ "cfg-if 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
+]
 
 [[package]]
 name = "log_buffer"
@@ -124,23 +181,23 @@ name = "logger_artiq"
 version = "0.0.0"
 dependencies = [
  "board 0.0.0",
- "log 0.3.6 (registry+https://github.com/rust-lang/crates.io-index)",
+ "log 0.4.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "log_buffer 1.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
 name = "managed"
-version = "0.4.0"
-source = "git+https://github.com/m-labs/rust-managed.git?rev=629a6786a1cf1692015f464ed16c04eafa5cb8d1#629a6786a1cf1692015f464ed16c04eafa5cb8d1"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
 name = "proto"
 version = "0.0.0"
 dependencies = [
- "byteorder 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "byteorder 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "cslice 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "dyld 0.0.0",
- "log 0.3.6 (registry+https://github.com/rust-lang/crates.io-index)",
+ "log 0.4.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "std_artiq 0.0.0",
 ]
 
@@ -150,24 +207,30 @@ version = "0.0.0"
 dependencies = [
  "alloc_list 0.0.0",
  "amp 0.0.0",
+ "backtrace_artiq 0.0.0",
  "board 0.0.0",
+ "board_artiq 0.0.0",
  "build_artiq 0.0.0",
- "byteorder 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "compiler_builtins 0.1.0 (git+https://github.com/rust-lang-nursery/compiler-builtins?rev=631b568)",
+ "build_misoc 0.0.0",
+ "byteorder 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "cslice 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "drtioaux 0.0.0",
  "fringe 1.1.0 (git+https://github.com/m-labs/libfringe?rev=bd23494)",
- "log 0.3.6 (registry+https://github.com/rust-lang/crates.io-index)",
+ "log 0.4.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "logger_artiq 0.0.0",
  "proto 0.0.0",
- "smoltcp 0.4.0 (git+https://github.com/m-labs/smoltcp?rev=9914616)",
+ "smoltcp 0.4.0 (git+https://github.com/m-labs/smoltcp?rev=181083f)",
  "std_artiq 0.0.0",
 ]
 
 [[package]]
-name = "rustc-cfg"
-version = "0.3.0"
+name = "same-file"
+version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
+dependencies = [
+ "kernel32-sys 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "winapi 0.2.8 (registry+https://github.com/rust-lang/crates.io-index)",
+]
 
 [[package]]
 name = "satman"
@@ -175,10 +238,11 @@ version = "0.0.0"
 dependencies = [
  "alloc_list 0.0.0",
  "board 0.0.0",
+ "board_artiq 0.0.0",
  "build_artiq 0.0.0",
- "compiler_builtins 0.1.0 (git+https://github.com/rust-lang-nursery/compiler-builtins?rev=631b568)",
+ "build_misoc 0.0.0",
  "drtioaux 0.0.0",
- "log 0.3.6 (registry+https://github.com/rust-lang/crates.io-index)",
+ "log 0.4.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "logger_artiq 0.0.0",
  "std_artiq 0.0.0",
 ]
@@ -186,11 +250,11 @@ dependencies = [
 [[package]]
 name = "smoltcp"
 version = "0.4.0"
-source = "git+https://github.com/m-labs/smoltcp?rev=9914616#9914616893c373de3fb52fcd2f06e0fffb4c8904"
+source = "git+https://github.com/m-labs/smoltcp?rev=181083f#181083f18c977b8a0463a67e360e4db20594fa21"
 dependencies = [
- "byteorder 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "log 0.3.6 (registry+https://github.com/rust-lang/crates.io-index)",
- "managed 0.4.0 (git+https://github.com/m-labs/rust-managed.git?rev=629a6786a1cf1692015f464ed16c04eafa5cb8d1)",
+ "byteorder 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "log 0.3.8 (registry+https://github.com/rust-lang/crates.io-index)",
+ "managed 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -199,10 +263,11 @@ version = "0.0.0"
 
 [[package]]
 name = "walkdir"
-version = "1.0.3"
+version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "kernel32-sys 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "same-file 0.1.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "winapi 0.2.8 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
@@ -217,19 +282,23 @@ version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [metadata]
-"checksum bitflags 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)" = "f5cde24d1b2e2216a726368b2363a273739c91f4e3eb4e0dd12d672d396ad989"
-"checksum byteorder 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)" = "c40977b0ee6b9885c9013cd41d9feffdd22deb3bb4dc3a71d901cc7a77de18c8"
-"checksum compiler_builtins 0.1.0 (git+https://github.com/rust-lang-nursery/compiler-builtins?rev=631b568)" = "<none>"
+"checksum bitflags 1.0.1 (registry+https://github.com/rust-lang/crates.io-index)" = "b3c30d3802dfb7281680d6285f2ccdaa8c2d8fee41f93805dba5c4cf50dc23cf"
+"checksum build_const 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)" = "e90dc84f5e62d2ebe7676b83c22d33b6db8bd27340fb6ffbff0a364efa0cb9c9"
+"checksum byteorder 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)" = "652805b7e73fada9d85e9a6682a4abd490cb52d96aeecc12e33a0de34dfd0d23"
+"checksum cc 1.0.3 (registry+https://github.com/rust-lang/crates.io-index)" = "a9b13a57efd6b30ecd6598ebdb302cca617930b5470647570468a65d12ef9719"
+"checksum cfg-if 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)" = "d4c819a1287eb618df47cc647173c5c4c66ba19d888a6e50d605672aed3140de"
+"checksum compiler_builtins 0.1.0 (git+https://github.com/m-labs/compiler-builtins?rev=ca06a5e)" = "<none>"
+"checksum crc 1.7.0 (registry+https://github.com/rust-lang/crates.io-index)" = "bd5d02c0aac6bd68393ed69e00bbc2457f3e89075c6349db7189618dc4ddc1d7"
 "checksum cslice 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)" = "0f8cb7306107e4b10e64994de6d3274bd08996a7c1322a27b86482392f96be0a"
 "checksum fringe 1.1.0 (git+https://github.com/m-labs/libfringe?rev=bd23494)" = "<none>"
-"checksum gcc 0.3.42 (registry+https://github.com/rust-lang/crates.io-index)" = "291055c78f59ca3d84c99026c9501c469413d386bb46be1e1cf1d285cd1db3b0"
 "checksum kernel32-sys 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)" = "7507624b29483431c0ba2d82aece8ca6cdba9382bff4ddd0f7490560c056098d"
-"checksum libc 0.2.18 (registry+https://github.com/rust-lang/crates.io-index)" = "a51822fc847e7a8101514d1d44e354ba2ffa7d4c194dcab48870740e327cac70"
-"checksum log 0.3.6 (registry+https://github.com/rust-lang/crates.io-index)" = "ab83497bf8bf4ed2a74259c1c802351fcd67a65baa86394b6ba73c36f4838054"
+"checksum libc 0.2.34 (registry+https://github.com/rust-lang/crates.io-index)" = "36fbc8a8929c632868295d0178dd8f63fc423fd7537ad0738372bd010b3ac9b0"
+"checksum log 0.3.8 (registry+https://github.com/rust-lang/crates.io-index)" = "880f77541efa6e5cc74e76910c9884d9859683118839d6a1dc3b11e63512565b"
+"checksum log 0.4.1 (registry+https://github.com/rust-lang/crates.io-index)" = "89f010e843f2b1a31dbd316b3b8d443758bc634bed37aabade59c686d644e0a2"
 "checksum log_buffer 1.1.0 (registry+https://github.com/rust-lang/crates.io-index)" = "ec57723b84bbe7bdf76aa93169c9b59e67473317c6de3a83cb2a0f8ccb2aa493"
-"checksum managed 0.4.0 (git+https://github.com/m-labs/rust-managed.git?rev=629a6786a1cf1692015f464ed16c04eafa5cb8d1)" = "<none>"
-"checksum rustc-cfg 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)" = "56a596b5718bf5e059d59a30af12f7f462a152de147aa462b70892849ee18704"
-"checksum smoltcp 0.4.0 (git+https://github.com/m-labs/smoltcp?rev=9914616)" = "<none>"
-"checksum walkdir 1.0.3 (registry+https://github.com/rust-lang/crates.io-index)" = "dd7c16466ecc507c7cb5988db03e6eab4aaeab89a5c37a29251fcfd3ac9b7afe"
+"checksum managed 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)" = "786bd3519bdfb0e1a57146a74b7584555dd6c4f1b6e1137c70e177d60dde8186"
+"checksum same-file 0.1.3 (registry+https://github.com/rust-lang/crates.io-index)" = "d931a44fdaa43b8637009e7632a02adc4f2b2e0733c08caa4cf00e8da4a117a7"
+"checksum smoltcp 0.4.0 (git+https://github.com/m-labs/smoltcp?rev=181083f)" = "<none>"
+"checksum walkdir 1.0.7 (registry+https://github.com/rust-lang/crates.io-index)" = "bb08f9e670fab86099470b97cd2b252d6527f0b3cc1401acdb595ffc9dd288ff"
 "checksum winapi 0.2.8 (registry+https://github.com/rust-lang/crates.io-index)" = "167dc9d6949a9b857f3451275e911c3f44255842c1f7a76f33c55103a909087a"
 "checksum winapi-build 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)" = "2d315eee3b34aca4797b2da6b13ed88266e6d612562a0c46390af8299fc699bc"

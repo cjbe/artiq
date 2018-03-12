@@ -1,14 +1,13 @@
 #![feature(lang_items, asm, libc, panic_unwind, unwind_attributes, global_allocator)]
 #![no_std]
 
-extern crate unwind;
-extern crate libc;
 extern crate byteorder;
 extern crate cslice;
+extern crate unwind;
+extern crate libc;
 
 extern crate alloc_stub;
 extern crate std_artiq as std;
-
 extern crate board;
 extern crate dyld;
 extern crate proto;
@@ -167,7 +166,7 @@ extern fn rpc_recv(slot: *mut ()) -> usize {
     })
 }
 
-fn terminate(exception: &eh::Exception, mut backtrace: &mut [usize]) -> ! {
+fn terminate(exception: &eh::Exception, backtrace: &mut [usize]) -> ! {
     let mut cursor = 0;
     for index in 0..backtrace.len() {
         if backtrace[index] > kernel_proto::KERNELCPU_PAYLOAD_ADDRESS {
@@ -333,8 +332,8 @@ extern fn dma_record_output_wide(timestamp: i64, channel: i32, address: i32, wor
         if DMA_RECORDER.buffer.len() - DMA_RECORDER.data_len < length {
             dma_record_flush()
         }
-        let mut dst = &mut DMA_RECORDER.buffer[DMA_RECORDER.data_len..
-                                               DMA_RECORDER.data_len + length];
+        let dst = &mut DMA_RECORDER.buffer[DMA_RECORDER.data_len..
+                                           DMA_RECORDER.data_len + length];
         dst[..header_length].copy_from_slice(&header[..]);
         dst[header_length..].copy_from_slice(&data[..]);
         DMA_RECORDER.data_len += length;
@@ -385,21 +384,20 @@ extern fn dma_playback(timestamp: i64, ptr: i32) {
         while csr::rtio_dma::enable_read() != 0 {}
         csr::cri_con::selected_write(0);
 
-        let status = csr::rtio_dma::error_status_read();
-        if status != 0 {
+        let error = csr::rtio_dma::error_read();
+        if error != 0 {
             let timestamp = csr::rtio_dma::error_timestamp_read();
             let channel = csr::rtio_dma::error_channel_read();
-            if status & rtio::RTIO_O_STATUS_UNDERFLOW != 0 {
-                csr::rtio_dma::error_underflow_reset_write(1);
+            csr::rtio_dma::error_write(1);
+            if error & 1 != 0 {
                 raise!("RTIOUnderflow",
                     "RTIO underflow at {0} mu, channel {1}",
-                    timestamp as i64, channel as i64, 0)
+                    timestamp as i64, channel as i64, 0);
             }
-            if status & rtio::RTIO_O_STATUS_SEQUENCE_ERROR != 0 {
-                csr::rtio_dma::error_sequence_error_reset_write(1);
-                raise!("RTIOSequenceError",
-                    "RTIO sequence error at {0} mu, channel {1}",
-                    timestamp as i64, channel as i64, 0)
+            if error & 2 != 0 {
+                raise!("RTIOLinkError",
+                    "RTIO output link error at {0} mu, channel {1}",
+                    timestamp as i64, channel as i64, 0);
             }
         }
     }
@@ -492,12 +490,11 @@ pub unsafe fn main() {
 }
 
 #[no_mangle]
-pub extern fn exception_handler(vect: u32, _regs: *const u32, pc: u32, ea: u32) {
+pub extern fn exception(vect: u32, _regs: *const u32, pc: u32, ea: u32) {
     panic!("exception {:?} at PC 0x{:x}, EA 0x{:x}", vect, pc, ea)
 }
 
-// We don't export this because libbase does.
-// #[no_mangle]
+#[no_mangle]
 pub extern fn abort() {
     panic!("aborted")
 }
