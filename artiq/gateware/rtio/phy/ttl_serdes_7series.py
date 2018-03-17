@@ -100,34 +100,9 @@ class _IOSERDESE2_8X(Module):
         pad_i = Signal()
         pad_o = Signal()
         i = self.i
-        
-        if invert:
-            iInv = Signal(8)
-            self.comb += i.eq(~iInv)
-            self.specials += Instance("ISERDESE2", p_DATA_RATE="DDR",
-                                  p_DATA_WIDTH=8,
-                                  p_INTERFACE_TYPE="NETWORKING", p_NUM_CE=1,
-                                  o_Q1=iInv[7], o_Q2=iInv[6], o_Q3=iInv[5], o_Q4=iInv[4],
-                                  o_Q5=iInv[3], o_Q6=iInv[2], o_Q7=iInv[1], o_Q8=iInv[0],
-                                  i_D=pad_i,
-                                  i_CLK=ClockSignal("rtiox4"),
-                                  i_CLKB=~ClockSignal("rtiox4"),
-                                  i_CE1=1, i_RST=0,
-                                  i_CLKDIV=ClockSignal("rio_phy"))
-        else:
-            self.specials += Instance("ISERDESE2", p_DATA_RATE="DDR",
-                                  p_DATA_WIDTH=8,
-                                  p_INTERFACE_TYPE="NETWORKING", p_NUM_CE=1,
-                                  o_Q1=i[7], o_Q2=i[6], o_Q3=i[5], o_Q4=i[4],
-                                  o_Q5=i[3], o_Q6=i[2], o_Q7=i[1], o_Q8=i[0],
-                                  i_D=pad_i,
-                                  i_CLK=ClockSignal("rtiox4"),
-                                  i_CLKB=~ClockSignal("rtiox4"),
-                                  i_CE1=1, i_RST=0,
-                                  i_CLKDIV=ClockSignal("rio_phy"))
-        
+        iserdes = _ISERDESE2_8X(pad_i, invert=invert)
         oserdes = _OSERDESE2_8X(pad_o, invert=invert)
-        self.submodules += oserdes
+        self.submodules += iserdes, oserdes
 
         if pad_n is None:
             self.specials += Instance("IOBUF",
