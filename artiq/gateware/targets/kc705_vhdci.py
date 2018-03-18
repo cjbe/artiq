@@ -14,7 +14,7 @@ from misoc.cores import gpio
 from misoc.targets.kc705 import MiniSoC, soc_kc705_args, soc_kc705_argdict
 from misoc.integration.builder import builder_args, builder_argdict
 
-from artiq.gateware.amp import AMPSoC, build_artiq_soc
+from artiq.gateware.amp import AMPSoC
 from artiq.gateware import rtio, vhdci
 from artiq.gateware.rtio.phy import (ttl_simple, ttl_serdes_7series,
                                      dds, spi, serdes_tdc, ad5360_monitor)
@@ -59,9 +59,7 @@ class _RTIOCRG(Module, AutoCSR):
         ]
 
 
-
-
-class _NIST_Ions(MiniSoC, AMPSoC):
+class _StandaloneBase(MiniSoC, AMPSoC):
     mem_map = {
         "cri_con":       0x10000000,
         "rtio":          0x20000000,
@@ -70,9 +68,9 @@ class _NIST_Ions(MiniSoC, AMPSoC):
     }
     mem_map.update(MiniSoC.mem_map)
 
-    def __init__(self, cpu_type="or1k", **kwargs):
+    def __init__(self, **kwargs):
         MiniSoC.__init__(self,
-                         cpu_type=cpu_type,
+                         cpu_type="or1k",
                          sdram_controller_type="minicon",
                          l2_size=128*1024,
                          ident=artiq_version,
@@ -91,6 +89,12 @@ class _NIST_Ions(MiniSoC, AMPSoC):
             self.platform.request("user_led", 0),
             self.platform.request("user_led", 1)))
         self.csr_devices.append("leds")
+
+
+        i2c = self.platform.request("i2c")
+        self.submodules.i2c = gpio.GPIOTristate([i2c.scl, i2c.sda])
+        self.csr_devices.append("i2c")
+        self.config["I2C_BUS_COUNT"] = 1
 
         self.config["HAS_DDS"] = None
 
@@ -111,7 +115,6 @@ class _NIST_Ions(MiniSoC, AMPSoC):
         self.submodules.rtio_moninj = rtio.MonInj(rtio_channels)
         self.csr_devices.append("rtio_moninj")
 
-        self.rtio_crg.cd_rtio.clk.attr.add("keep")
         self.platform.add_period_constraint(self.rtio_crg.cd_rtio.clk, 8.)
         self.platform.add_false_path_constraints(
             self.crg.cd_sys.clk,
@@ -135,12 +138,12 @@ class spi_wrapper:
             self.miso_n = pad_miso.n
 
 
-class VHDCI(_NIST_Ions):
+class VHDCI(_StandaloneBase):
     """
     KC705 with VHDCI -> EEM adapter on HPC and LPC FMCs
     """
-    def __init__(self, cpu_type="or1k", **kwargs):
-        _NIST_Ions.__init__(self, cpu_type, **kwargs)
+    def __init__(self, **kwargs):
+        _StandaloneBase.__init__(self, cpu_type="or1k", **kwargs)
 
         platform = self.platform
         platform.add_extension(vhdci.fmc_adapter_io)
@@ -222,20 +225,9 @@ class VHDCI(_NIST_Ions):
         add_tdc(input_phys[4], input_phys[5])
         add_tdc(input_phys[6], input_phys[7])
 
-        self.platform.add_platform_command(
-            "set_false_path -from [get_pins *_serdes_oe_reg/C] -to [get_pins ISERDESE2_*/D]"
-            )
-        self.platform.add_platform_command(
-            "set_false_path -from [get_pins OSERDESE2_*/CLK] -to [get_pins ISERDESE2_*/D]"
-            )
-
         phy = ttl_simple.Output(platform.request("user_led", 2))
         self.submodules += phy
         rtio_channels.append(rtio.Channel.from_phy(phy))
-
-        eth = platform.lookup_request("eth", 0)
-        self.submodules.mdio = gpio.GPIOTristate([eth.mdc, eth.mdio])
-        self.csr_devices.append("mdio")
 
         lpc_i2c = self.platform.request("LPC_i2c")
         hpc_i2c = self.platform.request("HPC_i2c")
