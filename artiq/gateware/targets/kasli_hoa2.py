@@ -61,7 +61,10 @@ class Master(_MasterBase):
         platform = self.platform
 
         # EEM clock fan-out from Si5324, not MMCX
-        self.comb += platform.request("clk_sel").eq(1)
+        try:
+            self.comb += platform.request("clk_sel").eq(1)
+        except ConstraintError:
+            pass
 
         rtio_channels = []
 
@@ -83,7 +86,10 @@ class Satellite(_SatelliteBase):
         platform = self.platform
 
         # EEM clock fan-out from Si5324, not MMCX
-        self.comb += platform.request("clk_sel").eq(1)
+        try:
+            self.comb += platform.request("clk_sel").eq(1)
+        except ConstraintError:
+            pass
 
         rtio_channels = []
 
