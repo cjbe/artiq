@@ -226,6 +226,13 @@ class VHDCI(_StandaloneBase):
         add_tdc(input_phys[4], input_phys[5])
         add_tdc(input_phys[6], input_phys[7])
 
+        self.platform.add_platform_command(
+            "set_false_path -from [get_pins *_serdes_oe_reg/C] -to [get_pins ISERDESE2_*/D]"
+            )
+        self.platform.add_platform_command(
+            "set_false_path -from [get_pins OSERDESE2_*/CLK] -to [get_pins ISERDESE2_*/D]"
+            )
+
         phy = ttl_simple.Output(platform.request("user_led", 2))
         self.submodules += phy
         rtio_channels.append(rtio.Channel.from_phy(phy))
