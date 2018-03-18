@@ -68,9 +68,9 @@ class Master(_MasterBase):
 
         rtio_channels = []
 
-        rtio_channels += add_dio(platform, "eem0")
-        rtio_channels += add_dio(platform, "eem1")
-        rtio_channels += add_urukul(platform, "eem3", "eem2")
+        rtio_channels += add_dio(self, "eem0")
+        rtio_channels += add_dio(self, "eem1")
+        rtio_channels += add_urukul(self, "eem3", "eem2")
 
         self.config["HAS_RTIO_LOG"] = None
         self.config["RTIO_LOG_CHANNEL"] = len(rtio_channels)
@@ -93,8 +93,8 @@ class Satellite(_SatelliteBase):
 
         rtio_channels = []
 
-        rtio_channels += add_urukul(platform, "eem1", "eem0")
-        rtio_channels += add_urukul(platform, "eem3", "eem2")
+        rtio_channels += add_urukul(self, "eem1", "eem0")
+        rtio_channels += add_urukul(self, "eem3", "eem2")
 
         self.add_rtio(rtio_channels)
 
