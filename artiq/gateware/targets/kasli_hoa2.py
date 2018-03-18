@@ -38,7 +38,7 @@ def add_urukul(cls, eem, eem_aux):
     cls.submodules += phy
     rtio_channels.append(rtio.Channel.from_phy(phy, ififo_depth=4))
 
-    pads = platform.request(eem+"_dds_reset")
+    pads = cls.platform.request(eem+"_dds_reset")
     s = Signal()
     cls.specials += DifferentialOutput(s, pads.p, pads.n)
     phy = ttl_simple.ClockGen(s)
@@ -46,7 +46,7 @@ def add_urukul(cls, eem, eem_aux):
     rtio_channels.append(rtio.Channel.from_phy(phy))
 
     for signal in "io_update sw0 sw1 sw2 sw3".split():
-        pads = platform.request(eem+"_{}".format(signal))
+        pads = cls.platform.request(eem+"_{}".format(signal))
         phy = ttl_serdes_7series.Output_8X(pads.p, pads.n)
         cls.submodules += phy
         rtio_channels.append(rtio.Channel.from_phy(phy))
