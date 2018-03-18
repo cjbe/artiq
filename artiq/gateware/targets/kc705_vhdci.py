@@ -250,7 +250,18 @@ def main():
     soc_kc705_args(parser)
     args = parser.parse_args()
 
-    soc = VHDCI(**soc_kc705_argdict(args))
+    parser.add_argument("-V", "--variant", default="vhdci",
+                        help="variant: "
+                             "vhdci")
+    args = parser.parse_args()
+
+    variant = args.variant.lower()
+    if variant == "vhdci":
+        cls = VHDCI
+    else:
+        raise SystemExit("Invalid variant (-V/--variant)")
+
+    soc = cls(**soc_kc705_argdict(args))
     build_artiq_soc(soc, builder_argdict(args))
 
 
