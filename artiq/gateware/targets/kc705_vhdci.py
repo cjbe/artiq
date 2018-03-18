@@ -248,7 +248,6 @@ def main():
                     "with VHDCI-EEM adapters on HPC and LPC FMCs")
     builder_args(parser)
     soc_kc705_args(parser)
-    args = parser.parse_args()
 
     parser.add_argument("-V", "--variant", default="vhdci",
                         help="variant: "
