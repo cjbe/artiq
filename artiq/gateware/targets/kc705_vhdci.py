@@ -143,7 +143,7 @@ class VHDCI(_StandaloneBase):
     KC705 with VHDCI -> EEM adapter on HPC and LPC FMCs
     """
     def __init__(self, **kwargs):
-        _StandaloneBase.__init__(self, cpu_type="or1k", **kwargs)
+        _StandaloneBase.__init__(self, **kwargs)
 
         platform = self.platform
         platform.add_extension(vhdci.fmc_adapter_io)

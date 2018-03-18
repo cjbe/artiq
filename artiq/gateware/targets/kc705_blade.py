@@ -14,7 +14,7 @@ from misoc.cores import gpio
 from misoc.targets.kc705 import MiniSoC, soc_kc705_args, soc_kc705_argdict
 from misoc.integration.builder import builder_args, builder_argdict
 
-from artiq.gateware.amp import AMPSoC, build_artiq_soc
+from artiq.gateware.amp import AMPSoC
 from artiq.gateware import rtio, oxford
 from artiq.gateware.rtio.phy import (ttl_simple, ttl_serdes_7series,
                                      dds, spi)
@@ -59,9 +59,7 @@ class _RTIOCRG(Module, AutoCSR):
         ]
 
 
-
-
-class _NIST_Ions(MiniSoC, AMPSoC):
+class _StandaloneBase(MiniSoC, AMPSoC):
     mem_map = {
         "cri_con":       0x10000000,
         "rtio":          0x20000000,
@@ -70,9 +68,9 @@ class _NIST_Ions(MiniSoC, AMPSoC):
     }
     mem_map.update(MiniSoC.mem_map)
 
-    def __init__(self, cpu_type="or1k", **kwargs):
+    def __init__(self, **kwargs):
         MiniSoC.__init__(self,
-                         cpu_type=cpu_type,
+                         cpu_type="or1k",
                          sdram_controller_type="minicon",
                          l2_size=128*1024,
                          ident=artiq_version,
@@ -91,6 +89,12 @@ class _NIST_Ions(MiniSoC, AMPSoC):
             self.platform.request("user_led", 0),
             self.platform.request("user_led", 1)))
         self.csr_devices.append("leds")
+
+
+        i2c = self.platform.request("i2c")
+        self.submodules.i2c = gpio.GPIOTristate([i2c.scl, i2c.sda])
+        self.csr_devices.append("i2c")
+        self.config["I2C_BUS_COUNT"] = 1
 
         self.config["HAS_DDS"] = None
 
@@ -111,7 +115,6 @@ class _NIST_Ions(MiniSoC, AMPSoC):
         self.submodules.rtio_moninj = rtio.MonInj(rtio_channels)
         self.csr_devices.append("rtio_moninj")
 
-        self.rtio_crg.cd_rtio.clk.attr.add("keep")
         self.platform.add_period_constraint(self.rtio_crg.cd_rtio.clk, 8.)
         self.platform.add_false_path_constraints(
             self.crg.cd_sys.clk,
@@ -120,7 +123,6 @@ class _NIST_Ions(MiniSoC, AMPSoC):
         self.submodules.rtio_analyzer = rtio.Analyzer(self.rtio_core.cri,
                                                       self.get_native_sdram_if())
         self.csr_devices.append("rtio_analyzer")
-
 
 
 # The input and output 8-channel buffer boards scramble and invert the channels.
@@ -137,12 +139,12 @@ class spi_wrapper:
             self.miso = pad_miso
 
 
-class Blade(_NIST_Ions):
+class Blade(_StandaloneBase):
     """
     KC705 with VHDCI -> EEM adapter on HPC and LPC FMCs
     """
-    def __init__(self, cpu_type="or1k", **kwargs):
-        _NIST_Ions.__init__(self, cpu_type, **kwargs)
+    def __init__(self, **kwargs):
+        _StandaloneBase.__init__(self, **kwargs)
 
         platform = self.platform
         platform.add_extension(oxford.fmc_adapter_io)
@@ -204,12 +206,21 @@ class Blade(_NIST_Ions):
 def main():
     parser = argparse.ArgumentParser(
         description="ARTIQ device binary builder for KC705 system"
-                    "with Oxford hardware adapters")
+                    "with Blade trap hardware adapter")
     builder_args(parser)
     soc_kc705_args(parser)
+    parser.add_argument("-V", "--variant", default="blade",
+                        help="variant: "
+                             "blade")
     args = parser.parse_args()
 
-    soc = Blade(**soc_kc705_argdict(args))
+    variant = args.variant.lower()
+    if variant == "blade":
+        cls = Blade
+    else:
+        raise SystemExit("Invalid variant (-V/--variant)")
+
+    soc = cls(**soc_kc705_argdict(args))
     build_artiq_soc(soc, builder_argdict(args))
 
 
