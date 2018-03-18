@@ -18,6 +18,7 @@ from artiq.gateware.amp import AMPSoC
 from artiq.gateware import rtio, vhdci
 from artiq.gateware.rtio.phy import (ttl_simple, ttl_serdes_7series,
                                      dds, spi, serdes_tdc, ad5360_monitor)
+from artiq.build_soc import build_artiq_soc
 from artiq import __version__ as artiq_version
 
 
