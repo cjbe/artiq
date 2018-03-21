@@ -18,28 +18,29 @@ class _OSERDESE2_8X(Module):
 
         pad_o = Signal()
         self.specials += Instance("OSERDESE2",
-                                  p_DATA_RATE_OQ="DDR", p_DATA_RATE_TQ="BUF",
-                                  p_DATA_WIDTH=8, p_TRISTATE_WIDTH=1,
-                                  o_OQ=pad_o, o_TQ=self.t_out,
-                                  i_RST=ResetSignal("rio_phy"),
-                                  i_CLK=ClockSignal("rtiox4"),
-                                  i_CLKDIV=ClockSignal("rio_phy"),
-                                  i_D1=o[0], i_D2=o[1], i_D3=o[2], i_D4=o[3],
-                                  i_D5=o[4], i_D6=o[5], i_D7=o[6], i_D8=o[7],
-                                  i_TCE=1, i_OCE=1,
-                                  i_T1=self.t_in)
+            p_DATA_RATE_OQ="DDR", p_DATA_RATE_TQ="BUF",
+            p_DATA_WIDTH=8, p_TRISTATE_WIDTH=1,
+            o_OQ=pad_o, o_TQ=self.t_out,
+            i_RST=ResetSignal("rio_phy"),
+            i_CLK=ClockSignal("rtiox4"),
+            i_CLKDIV=ClockSignal("rio_phy"),
+            i_D1=o[0], i_D2=o[1], i_D3=o[2], i_D4=o[3],
+            i_D5=o[4], i_D6=o[5], i_D7=o[6], i_D8=o[7],
+            i_TCE=1, i_OCE=1,
+            i_T1=self.t_in)
         if pad_n is None:
             self.comb += pad.eq(pad_o)
         else:
             self.specials += Instance("IOBUFDS_INTERMDISABLE",
-                                      p_DIFF_TERM="FALSE",
-                                      p_IBUF_LOW_PWR="TRUE",
-                                      p_USE_IBUFDISABLE="TRUE",
-                                      i_IBUFDISABLE=1,
-                                      i_INTERMDISABLE=1,
-                                      i_I=pad_o,
-                                      i_T=self.t_out,
-                                      io_IO=pad, io_IOB=pad_n)
+                p_DIFF_TERM="FALSE",
+                p_IBUF_LOW_PWR="TRUE",
+                p_USE_IBUFDISABLE="TRUE",
+                i_IBUFDISABLE=1,
+                i_INTERMDISABLE=1,
+                i_I=pad_o,
+                i_T=self.t_out,
+                io_IO=pad, io_IOB=pad_n)
+
 
 class _ISERDESE2_8X(Module):
     def __init__(self, pad, pad_n=None, invert=False):
@@ -51,6 +52,7 @@ class _ISERDESE2_8X(Module):
 
         pad_i = Signal()
         i = self.i
+
         if invert:
             iInv = Signal(8)
             self.comb += i.eq(~iInv)
@@ -76,17 +78,18 @@ class _ISERDESE2_8X(Module):
                                   i_CE1=1,
                                   i_RST=ResetSignal("rio_phy"),
                                   i_CLKDIV=ClockSignal("rio_phy"))
+
         if pad_n is None:
             self.comb += pad_i.eq(pad)
         else:
             self.specials += Instance("IBUFDS_INTERMDISABLE",
-                                      p_DIFF_TERM="TRUE",
-                                      p_IBUF_LOW_PWR="TRUE",
-                                      p_USE_IBUFDISABLE="TRUE",
-                                      i_IBUFDISABLE=0,
-                                      i_INTERMDISABLE=0,
-                                      o_O=pad_i,
-                                      io_I=pad, io_IB=pad_n)
+                p_DIFF_TERM="TRUE",
+                p_IBUF_LOW_PWR="TRUE",
+                p_USE_IBUFDISABLE="TRUE",
+                i_IBUFDISABLE=0,
+                i_INTERMDISABLE=0,
+                o_O=pad_i,
+                io_I=pad, io_IB=pad_n)
 
 
 class _IOSERDESE2_8X(Module):
@@ -106,17 +109,17 @@ class _IOSERDESE2_8X(Module):
 
         if pad_n is None:
             self.specials += Instance("IOBUF",
-                                      i_I=pad_o, o_O=pad_i, i_T=oserdes.t_out,
-                                      io_IO=pad)
+                i_I=pad_o, o_O=pad_i, i_T=oserdes.t_out,
+                io_IO=pad)
         else:
             self.specials += Instance("IOBUFDS_INTERMDISABLE",
-                                      p_DIFF_TERM="TRUE",
-                                      p_IBUF_LOW_PWR="TRUE",
-                                      p_USE_IBUFDISABLE="TRUE",
-                                      i_IBUFDISABLE=~oserdes.t_out,
-                                      i_INTERMDISABLE=~oserdes.t_out,
-                                      i_I=pad_o, o_O=pad_i, i_T=oserdes.t_out,
-                                      io_IO=pad, io_IOB=pad_n)
+                p_DIFF_TERM="TRUE",
+                p_IBUF_LOW_PWR="TRUE",
+                p_USE_IBUFDISABLE="TRUE",
+                i_IBUFDISABLE=~oserdes.t_out,
+                i_INTERMDISABLE=~oserdes.t_out,
+                i_I=pad_o, o_O=pad_i, i_T=oserdes.t_out,
+                io_IO=pad, io_IOB=pad_n)
         self.comb += [
             self.i.eq(iserdes.i),
             oserdes.t_in.eq(~self.oe),

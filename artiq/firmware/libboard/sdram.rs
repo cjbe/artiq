@@ -1,7 +1,6 @@
 #[cfg(has_ddrphy)]
 mod ddr {
     use core::{ptr, fmt};
-    use core::cell::Cell;
     use csr::{dfii, ddrphy};
     use sdram_phy::{self, spin_cycles};
     use sdram_phy::{DFII_COMMAND_CS, DFII_COMMAND_WE, DFII_COMMAND_CAS, DFII_COMMAND_RAS,
@@ -31,18 +30,19 @@ mod ddr {
         ddrphy::wlevel_en_write(enabled as u8);
     }
 
-    #[cfg(kusddrphy)]
+    #[cfg(ddrphy_wlevel)]
     unsafe fn write_level_scan(logger: &mut Option<&mut fmt::Write>) {
+        #[cfg(kusddrphy)]
         log!(logger, "DQS initial delay: {} taps\n", ddrphy::wdly_dqs_taps_read());
         log!(logger, "Write leveling scan:\n");
 
         enable_write_leveling(true);
         spin_cycles(100);
 
-        let mut ddrphy_max_delay : u16 = DDRPHY_MAX_DELAY;
-        #[cfg(kusddrphy)] {
-            ddrphy_max_delay -= ddrphy::wdly_dqs_taps_read();
-        }
+        #[cfg(not(kusddrphy))]
+        let ddrphy_max_delay : u16 = DDRPHY_MAX_DELAY;
+        #[cfg(kusddrphy)]
+        let ddrphy_max_delay : u16 = DDRPHY_MAX_DELAY - ddrphy::wdly_dqs_taps_read();
 
         for n in 0..DQS_SIGNAL_COUNT {
             let dq_addr = dfii::PI0_RDDATA_ADDR
@@ -92,11 +92,11 @@ mod ddr {
         enable_write_leveling(true);
         spin_cycles(100);
 
-        let mut ddrphy_max_delay : u16 = DDRPHY_MAX_DELAY;
-        #[cfg(kusddrphy)] {
-            ddrphy_max_delay -= ddrphy::wdly_dqs_taps_read();
-        }
-        
+        #[cfg(not(kusddrphy))]
+        let ddrphy_max_delay : u16 = DDRPHY_MAX_DELAY;
+        #[cfg(kusddrphy)]
+        let ddrphy_max_delay : u16 = DDRPHY_MAX_DELAY - ddrphy::wdly_dqs_taps_read();
+
         let mut failed = false;
         for n in 0..DQS_SIGNAL_COUNT {
             let dq_addr = dfii::PI0_RDDATA_ADDR
@@ -203,7 +203,6 @@ mod ddr {
         }
     }
 
-    #[cfg(kusddrphy)]
     unsafe fn read_level_scan(logger: &mut Option<&mut fmt::Write>) {
         log!(logger, "Read leveling scan:\n");
 
@@ -251,7 +250,7 @@ mod ddr {
 
                 let mut working = true;
                 for p in 0..DFII_NPHASES {
-                    for _ in 0..64 {
+                    for _ in 0..1024 {
                         for &offset in [n, n + DQS_SIGNAL_COUNT].iter() {
                             let addr = DFII_PIX_RDDATA_ADDR[p].offset(offset as isize);
                             let data = prs[DFII_PIX_DATA_SIZE * p + offset];
@@ -281,7 +280,7 @@ mod ddr {
         spin_cycles(15);
     }
 
-    unsafe fn read_level(logger: &mut Option<&mut fmt::Write>) {
+    unsafe fn read_level(logger: &mut Option<&mut fmt::Write>) -> bool {
         log!(logger, "Read leveling: ");
 
         // Generate pseudo-random sequence
@@ -317,63 +316,75 @@ mod ddr {
         for n in 0..DQS_SIGNAL_COUNT {
             ddrphy::dly_sel_write(1 << (DQS_SIGNAL_COUNT - n - 1));
 
+            // Find the first (min_delay) and last (max_delay) tap that bracket
+            // the largest tap interval of correct reads.
+            let mut min_delay = 0;
+            let mut max_delay = 0;
+
+            let mut first_valid = 0;
+            let mut seen_valid = 0;
+            let mut seen_invalid = 0;
+            let mut max_seen_valid = 0;
+
             ddrphy::rdly_dq_rst_write(1);
 
-            let delay = Cell::new(0);
-            let incr_delay_until = |expected| {
-                while delay.get() < DDRPHY_MAX_DELAY {
-                    let mut working = true;
-                    for _ in 0..64 {
-                        sdram_phy::command_prd(DFII_COMMAND_CAS|DFII_COMMAND_CS|
-                                               DFII_COMMAND_RDDATA);
-                        spin_cycles(15);
+            for delay in 0..DDRPHY_MAX_DELAY {
+                let mut valid = true;
+                for _ in 0..256 {
+                    sdram_phy::command_prd(DFII_COMMAND_CAS|DFII_COMMAND_CS|
+                                           DFII_COMMAND_RDDATA);
+                    spin_cycles(15);
 
-                        for p in 0..DFII_NPHASES {
-                            for &offset in [n, n + DQS_SIGNAL_COUNT].iter() {
-                                let addr = DFII_PIX_RDDATA_ADDR[p].offset(offset as isize);
-                                let data = prs[DFII_PIX_DATA_SIZE * p + offset];
-                                if ptr::read_volatile(addr) as u8 != data {
-                                    working = false;
-                                }
+                    for p in 0..DFII_NPHASES {
+                        for &offset in [n, n + DQS_SIGNAL_COUNT].iter() {
+                            let addr = DFII_PIX_RDDATA_ADDR[p].offset(offset as isize);
+                            let data = prs[DFII_PIX_DATA_SIZE * p + offset];
+                            if ptr::read_volatile(addr) as u8 != data {
+                                valid = false;
                             }
                         }
                     }
-
-                    if working == expected {
-                        break
-                    }
-
-                    delay.set(delay.get() + 1);
-                    ddrphy::rdly_dq_inc_write(1);
                 }
-            };
 
-            // Find smallest working delay
-            incr_delay_until(true);
-            let min_delay = delay.get();
-
-            // Get a bit further into the working zone
-            #[cfg(kusddrphy)]
-            for _ in 0..32 {
-                delay.set(delay.get() + 1);
+                if valid {
+                    if seen_valid == 0 {
+                        first_valid = delay;
+                    }
+                    seen_valid += 1;
+                    seen_invalid = 0;
+                    if seen_valid > max_seen_valid {
+                        min_delay = first_valid;
+                        max_delay = delay;
+                        max_seen_valid = seen_valid;
+                    }
+                } else {
+                    seen_invalid += 1;
+                    if seen_invalid >= DDRPHY_MAX_DELAY / 8 {
+                        seen_valid = 0;
+                    }
+                }
                 ddrphy::rdly_dq_inc_write(1);
             }
-            #[cfg(not(kusddrphy))]
-            {
-                delay.set(delay.get() + 1);
-                ddrphy::rdly_dq_inc_write(1);
+
+            if max_delay <= min_delay {
+                log!(logger, "Zero window: {}: {}-{} ({})\n",
+                     DQS_SIGNAL_COUNT - n - 1, min_delay, max_delay,
+                     max_seen_valid);
+                return false
+            }
+            if max_seen_valid <= 5 {
+                log!(logger, "Small window: {}: {}-{} ({})\n",
+                     DQS_SIGNAL_COUNT - n - 1, min_delay, max_delay,
+                     max_seen_valid);
+                return false
             }
 
-            // Find largest working delay
-            incr_delay_until(false);
-            let max_delay = delay.get();
-
-            log!(logger, "{}:{:02}-{:02} ", DQS_SIGNAL_COUNT - n - 1,
-                 min_delay, max_delay);
+            let mean_delay = (min_delay + max_delay) / 2;
+            log!(logger, "{}+-{} ", mean_delay, max_seen_valid / 2);
 
             // Set delay to the middle
             ddrphy::rdly_dq_rst_write(1);
-            for _ in 0..(min_delay + max_delay) / 2 {
+            for _ in 0..mean_delay {
                 ddrphy::rdly_dq_inc_write(1);
             }
         }
@@ -385,6 +396,7 @@ mod ddr {
         spin_cycles(15);
 
         log!(logger, "done\n");
+        true
     }
 
     pub unsafe fn level(logger: &mut Option<&mut fmt::Write>) -> bool {
@@ -392,7 +404,6 @@ mod ddr {
         {
             let mut delay = [0; DQS_SIGNAL_COUNT];
             let mut high_skew = [false; DQS_SIGNAL_COUNT];
-            #[cfg(kusddrphy)]
             write_level_scan(logger);
             if !write_level(logger, &mut delay, &mut high_skew) {
                 return false
@@ -400,9 +411,10 @@ mod ddr {
             read_bitslip(logger, &delay, &high_skew);
         }
 
-        #[cfg(kusddrphy)]
         read_level_scan(logger);
-        read_level(logger);
+        if !read_level(logger) {
+            return false
+        }
 
         true
     }
