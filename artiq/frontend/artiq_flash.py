@@ -138,7 +138,7 @@ class Programmer:
 
         bitfile = self._client.upload(bitfile)
         add_commands(self._script,
-            "pld load {pld} {filename}",
+            "pld load {pld} {{{filename}}}",
             pld=pld, filename=bitfile)
 
     def load_proxy(self):
@@ -152,8 +152,8 @@ class Programmer:
         add_commands(self._script,
             "flash probe {bankname}",
             "flash erase_sector {bankname} {firstsector} {lastsector}",
-            "flash write_bank {bankname} {filename} {address:#x}",
-            "flash verify_bank {bankname} {filename} {address:#x}",
+            "flash write_bank {bankname} {{{filename}}} {address:#x}",
+            "flash verify_bank {bankname} {{{filename}}} {address:#x}",
             bankname=bankname, address=address, filename=filename,
             firstsector=address // self._sector_size,
             lastsector=(address + size - 1) // self._sector_size)
@@ -164,7 +164,7 @@ class Programmer:
         filename = self._client.prepare_download(filename)
         add_commands(self._script,
             "flash probe {bankname}",
-            "flash read_bank {bankname} {filename} {address:#x} {length}",
+            "flash read_bank {bankname} {{{filename}}} {address:#x} {length}",
             bankname=bankname, filename=filename, address=address, length=length)
 
     def start(self):
@@ -184,7 +184,6 @@ class Programmer:
             cmdline += ["-s", scripts_path()]
         cmdline += ["-c", "; ".join(self.script())]
 
-        cmdline = [arg.replace("{", "{{").replace("}", "}}") for arg in cmdline]
         self._client.run_command(cmdline)
         self._client.download()
 
@@ -327,46 +326,43 @@ def main():
         atexit.register(lambda: os.unlink(bin_filename))
         return bin_filename
 
-    try:
-        for action in args.action:
-            if action == "gateware":
-                gateware_bin = convert_gateware(
-                    artifact_path(variant, "gateware", "top.bit"))
-                programmer.write_binary(*config["gateware"], gateware_bin)
-                if args.target == "sayma":
-                    rtm_gateware_bin = convert_gateware(
-                        artifact_path("rtm_gateware", "rtm.bit"), header=True)
-                    programmer.write_binary(*config["rtm_gateware"],
-                                            rtm_gateware_bin)
-            elif action == "bootloader":
-                bootloader_bin = artifact_path(variant, "software", "bootloader", "bootloader.bin")
-                programmer.write_binary(*config["bootloader"], bootloader_bin)
-            elif action == "storage":
-                storage_img = args.storage
-                programmer.write_binary(*config["storage"], storage_img)
-            elif action == "firmware":
-                if variant == "satellite":
-                    firmware = "satman"
-                else:
-                    firmware = "runtime"
-
-                firmware_fbi = artifact_path(variant, "software", firmware, firmware + ".fbi")
-                programmer.write_binary(*config["firmware"], firmware_fbi)
-            elif action == "load":
-                if args.target == "sayma":
-                    rtm_gateware_bit = artifact_path("rtm_gateware", "rtm.bit")
-                    programmer.load(rtm_gateware_bit, 0)
-                    gateware_bit = artifact_path(variant, "gateware", "top.bit")
-                    programmer.load(gateware_bit, 1)
-                else:
-                    gateware_bit = artifact_path(variant, "gateware", "top.bit")
-                    programmer.load(gateware_bit, 0)
-            elif action == "start":
-                programmer.start()
+    for action in args.action:
+        if action == "gateware":
+            gateware_bin = convert_gateware(
+                artifact_path(variant, "gateware", "top.bit"))
+            programmer.write_binary(*config["gateware"], gateware_bin)
+            if args.target == "sayma":
+                rtm_gateware_bin = convert_gateware(
+                    artifact_path("rtm_gateware", "rtm.bit"), header=True)
+                programmer.write_binary(*config["rtm_gateware"],
+                                        rtm_gateware_bin)
+        elif action == "bootloader":
+            bootloader_bin = artifact_path(variant, "software", "bootloader", "bootloader.bin")
+            programmer.write_binary(*config["bootloader"], bootloader_bin)
+        elif action == "storage":
+            storage_img = args.storage
+            programmer.write_binary(*config["storage"], storage_img)
+        elif action == "firmware":
+            if variant == "satellite":
+                firmware = "satman"
             else:
-                raise ValueError("invalid action", action)
-    except FileNotFoundError as e:
-        raise SystemExit(e)
+                firmware = "runtime"
+
+            firmware_fbi = artifact_path(variant, "software", firmware, firmware + ".fbi")
+            programmer.write_binary(*config["firmware"], firmware_fbi)
+        elif action == "load":
+            if args.target == "sayma":
+                rtm_gateware_bit = artifact_path("rtm_gateware", "rtm.bit")
+                programmer.load(rtm_gateware_bit, 0)
+                gateware_bit = artifact_path(variant, "gateware", "top.bit")
+                programmer.load(gateware_bit, 1)
+            else:
+                gateware_bit = artifact_path(variant, "gateware", "top.bit")
+                programmer.load(gateware_bit, 0)
+        elif action == "start":
+            programmer.start()
+        else:
+            raise ValueError("invalid action", action)
 
     if args.dry_run:
         print("\n".join(programmer.script()))
