@@ -311,5 +311,34 @@ device_db = {
         "module": "artiq.coredevice.ttl",
         "class": "TTLOut",
         "arguments": {"channel": 33}
+    },
+
+    "spi_zotino0": {
+        "type": "local",
+        "module": "artiq.coredevice.spi2",
+        "class": "SPIMaster",
+        "arguments": {"channel": 36}
+    },
+    "ttl_zotino0_ldac": {
+        "type": "local",
+        "module": "artiq.coredevice.ttl",
+        "class": "TTLOut",
+        "arguments": {"channel": 37}
+    },
+    "ttl_zotino0_clr": {
+        "type": "local",
+        "module": "artiq.coredevice.ttl",
+        "class": "TTLOut",
+        "arguments": {"channel": 38}
+    },
+    "zotino0": {
+        "type": "local",
+        "module": "artiq.coredevice.zotino",
+        "class": "Zotino",
+        "arguments": {
+            "spi_device": "spi_zotino0",
+            "ldac_device": "ttl_zotino0_ldac",
+            "clr_device": "ttl_zotino0_clr"
+        }
     }
 }
