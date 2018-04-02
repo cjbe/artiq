@@ -80,6 +80,17 @@ class _RTIOCRG(Module, AutoCSR):
         ]
 
 
+def fix_serdes_timing_path(platform):
+    # ignore timing of path from OSERDESE2 through the pad to ISERDESE2
+    platform.add_platform_command(
+        "set_false_path -quiet "
+        "-through [get_pins -filter {{REF_PIN_NAME == OQ || REF_PIN_NAME == TQ}} "
+            "-of [get_cells -filter {{REF_NAME == OSERDESE2}}]] "
+        "-to [get_pins -filter {{REF_PIN_NAME == D}} "
+            "-of [get_cells -filter {{REF_NAME == ISERDESE2}}]]"
+    )
+
+
 class _StandaloneBase(MiniSoC, AMPSoC):
     mem_map = {
         "cri_con":       0x10000000,
@@ -114,6 +125,7 @@ class _StandaloneBase(MiniSoC, AMPSoC):
     def add_rtio(self, rtio_channels):
         self.submodules.rtio_crg = _RTIOCRG(self.platform, self.crg.cd_sys.clk)
         self.csr_devices.append("rtio_crg")
+        fix_serdes_timing_path(self.platform)
         self.submodules.rtio_core = rtio.Core(rtio_channels)
         self.csr_devices.append("rtio_core")
         self.submodules.rtio = rtio.KernelInitiator()
@@ -135,15 +147,6 @@ class _StandaloneBase(MiniSoC, AMPSoC):
         self.submodules.rtio_analyzer = rtio.Analyzer(self.rtio_core.cri,
                                                       self.get_native_sdram_if())
         self.csr_devices.append("rtio_analyzer")
-
-        # ignore timing of path from OSERDESE2 through the pad to ISERDESE2
-        self.platform.add_platform_command(
-            "set_false_path -quiet "
-            "-through [get_pins -filter {{REF_PIN_NAME == OQ || REF_PIN_NAME == TQ}} "
-                "-of [get_cells -filter {{REF_NAME == OSERDESE2}}]] "
-            "-to [get_pins -filter {{REF_PIN_NAME == D}} "
-                "-of [get_cells -filter {{REF_NAME == ISERDESE2}}]]"
-        )
 
 
 def _eem_signal(i):
@@ -681,11 +684,12 @@ class _MasterBase(MiniSoC, AMPSoC):
             self.crg.cd_sys.clk,
             gtp.txoutclk, gtp.rxoutclk)
         for gtp in self.drtio_transceiver.gtps[1:]:
-            platform.add_period_constraint(gtp.txoutclk, rtio_clk_period)
+            platform.add_period_constraint(gtp.rxoutclk, rtio_clk_period)
             platform.add_false_path_constraints(
                 self.crg.cd_sys.clk, gtp.rxoutclk)
 
         self.submodules.rtio_clkmul = _RTIOClockMultiplier(rtio_clk_freq)
+        fix_serdes_timing_path(platform)
 
     def add_rtio(self, rtio_channels):
         self.submodules.rtio_moninj = rtio.MonInj(rtio_channels)
@@ -787,8 +791,9 @@ class _SatelliteBase(BaseSoC):
         self.config["RTIO_FREQUENCY"] = str(rtio_clk_freq/1e6)
         self.submodules.siphaser = SiPhaser7Series(
             si5324_clkin=platform.request("si5324_clkin"),
-            si5324_clkout_fabric=platform.request("si5324_clkout_fabric")
-        )
+            si5324_clkout_fabric=platform.request("si5324_clkout_fabric"))
+        platform.add_false_path_constraints(
+            self.crg.cd_sys.clk, self.siphaser.mmcm_freerun_output)
         self.csr_devices.append("siphaser")
         i2c = self.platform.request("i2c")
         self.submodules.i2c = gpio.GPIOTristate([i2c.scl, i2c.sda])
@@ -806,6 +811,7 @@ class _SatelliteBase(BaseSoC):
             gtp.txoutclk, gtp.rxoutclk)
 
         self.submodules.rtio_clkmul = _RTIOClockMultiplier(rtio_clk_freq)
+        fix_serdes_timing_path(platform)
 
     def add_rtio(self, rtio_channels):
         self.submodules.rtio_moninj = rtio.MonInj(rtio_channels)

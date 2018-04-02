@@ -82,7 +82,6 @@ class AD9154JESD(Module, AutoCSR):
             cpll = JESD204BGTHChannelPLL(
                     jesd_crg.refclk, jesd_crg.refclk_freq, jesd_crg.linerate)
             self.submodules += cpll
-            #print(cpll)
             phy = JESD204BPhyTX(
                     cpll, PhyPads(jesd_pads.txp[i], jesd_pads.txn[i]),
                     jesd_crg.fabric_freq, transceiver="gth")
@@ -440,10 +439,11 @@ class Satellite(BaseSoC):
         self.config["RTIO_FREQUENCY"] = str(rtio_clk_freq/1e6)
         self.submodules.siphaser = SiPhaser7Series(
             si5324_clkin=platform.request("si5324_clkin"),
-            si5324_clkout_fabric=platform.request("si5324_clkout_fabric")
-        )
+            si5324_clkout_fabric=platform.request("si5324_clkout_fabric"))
         platform.add_platform_command("set_property CLOCK_DEDICATED_ROUTE FALSE [get_nets {mmcm_ps}]",
             mmcm_ps=self.siphaser.mmcm_ps_output)
+        platform.add_false_path_constraints(
+            self.crg.cd_sys.clk, self.siphaser.mmcm_freerun_output)
         self.csr_devices.append("siphaser")
         self.submodules.si5324_rst_n = gpio.GPIOOut(platform.request("si5324").rst_n)
         self.csr_devices.append("si5324_rst_n")
