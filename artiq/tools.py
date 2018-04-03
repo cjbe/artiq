@@ -83,6 +83,8 @@ def file_import(filename, prefix="file_import_"):
 
     path = os.path.dirname(os.path.realpath(filename))
     sys.path.insert(0, path)
+    if modname in sys.modules:
+        del sys.modules[modname]
     try:
         loader = importlib.machinery.SourceFileLoader(modname, filename)
         module = loader.load_module()
