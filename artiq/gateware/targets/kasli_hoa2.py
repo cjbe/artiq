@@ -15,7 +15,7 @@ from artiq.build_soc import build_artiq_soc
 from artiq import __version__ as artiq_version
 
 from artiq.gateware.targets.kasli import (_MasterBase, _SatelliteBase, _dio,
-    _urukul)
+    _urukul, _zotino)
 
 
 def add_dio(cls, eem):
@@ -54,6 +54,24 @@ def add_urukul(cls, eem, eem_aux):
     return rtio_channels
 
 
+def add_zotino(cls, eem):
+    cls.platform.add_extension(_zotino(eem))
+    rtio_channels = []
+
+    phy = spi2.SPIMaster(cls.platform.request(eem+"_spi_p"),
+            cls.platform.request(eem+"_spi_n"))
+    cls.submodules += phy
+    rtio_channels.append(rtio.Channel.from_phy(phy, ififo_depth=4))
+
+    for signal in "ldac_n clr_n".split():
+        pads = cls.platform.request(eem+"_{}".format(signal))
+        phy = ttl_serdes_7series.Output_8X(pads.p, pads.n)
+        cls.submodules += phy
+        rtio_channels.append(rtio.Channel.from_phy(phy))
+
+    return rtio_channels
+
+
 class Master(_MasterBase):
     def __init__(self, *args, **kwargs):
         _MasterBase.__init__(self, *args, **kwargs)
@@ -71,6 +89,7 @@ class Master(_MasterBase):
         rtio_channels += add_dio(self, "eem0")
         rtio_channels += add_dio(self, "eem1")
         rtio_channels += add_urukul(self, "eem3", "eem2")
+        rtio_channels += add_zotino(self, "eem4")
 
         self.config["HAS_RTIO_LOG"] = None
         self.config["RTIO_LOG_CHANNEL"] = len(rtio_channels)
