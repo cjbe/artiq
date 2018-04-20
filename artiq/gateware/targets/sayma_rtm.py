@@ -21,16 +21,15 @@ from artiq import __version__ as artiq_version
 
 class CRG(Module):
     def __init__(self, platform):
-        self.clock_domains.cd_sys0p2x = ClockDomain()
         self.clock_domains.cd_sys = ClockDomain()
         self.clock_domains.cd_sys4x = ClockDomain()
         self.clock_domains.cd_clk200 = ClockDomain()
 
         self.serwb_refclk = Signal()
+        self.serwb_reset = Signal()
 
         pll_locked = Signal()
         pll_fb = Signal()
-        pll_sys0p2x = Signal()
         pll_sys = Signal()
         pll_sys4x = Signal()
         pll_clk200 = Signal()
@@ -43,26 +42,21 @@ class CRG(Module):
                      p_CLKFBOUT_MULT=10, p_DIVCLK_DIVIDE=1,
                      i_CLKIN1=self.serwb_refclk, i_CLKFBIN=pll_fb, o_CLKFBOUT=pll_fb,
 
-                     # 25MHz
-                     p_CLKOUT0_DIVIDE=40, p_CLKOUT0_PHASE=0.0, o_CLKOUT0=pll_sys0p2x,
-
                      # 125MHz
-                     p_CLKOUT1_DIVIDE=8, p_CLKOUT1_PHASE=0.0, o_CLKOUT1=pll_sys,
+                     p_CLKOUT0_DIVIDE=8, p_CLKOUT0_PHASE=0.0, o_CLKOUT0=pll_sys,
 
                      # 500MHz
-                     p_CLKOUT2_DIVIDE=2, p_CLKOUT2_PHASE=0.0, o_CLKOUT2=pll_sys4x,
+                     p_CLKOUT1_DIVIDE=2, p_CLKOUT1_PHASE=0.0, o_CLKOUT1=pll_sys4x,
 
                      # 200MHz
-                     p_CLKOUT3_DIVIDE=5, p_CLKOUT3_PHASE=0.0, o_CLKOUT3=pll_clk200
+                     p_CLKOUT2_DIVIDE=5, p_CLKOUT2_PHASE=0.0, o_CLKOUT2=pll_clk200
             ),
-            Instance("BUFG", i_I=pll_sys0p2x, o_O=self.cd_sys0p2x.clk),
             Instance("BUFG", i_I=pll_sys, o_O=self.cd_sys.clk),
             Instance("BUFG", i_I=pll_sys4x, o_O=self.cd_sys4x.clk),
             Instance("BUFG", i_I=pll_clk200, o_O=self.cd_clk200.clk),
-            AsyncResetSynchronizer(self.cd_sys0p2x, ~pll_locked),
-            AsyncResetSynchronizer(self.cd_sys, ~pll_locked),
-            AsyncResetSynchronizer(self.cd_sys4x, ~pll_locked),
-            AsyncResetSynchronizer(self.cd_clk200, ~pll_locked)
+            AsyncResetSynchronizer(self.cd_sys, ~pll_locked | self.serwb_reset),
+            AsyncResetSynchronizer(self.cd_sys4x, ~pll_locked | self.serwb_reset),
+            AsyncResetSynchronizer(self.cd_clk200, ~pll_locked | self.serwb_reset)
         ]
 
         reset_counter = Signal(4, reset=15)
@@ -165,10 +159,13 @@ class SaymaRTM(Module):
         platform.add_period_constraint(serwb_pads.clk_p, 10.)
         serwb_phy_rtm = serwb.phy.SERWBPHY(platform.device, serwb_pads, mode="slave")
         self.submodules.serwb_phy_rtm = serwb_phy_rtm
-        self.comb += self.crg.serwb_refclk.eq(serwb_phy_rtm.serdes.refclk)
+        self.comb += [
+            self.crg.serwb_refclk.eq(serwb_phy_rtm.serdes.refclk),
+            self.crg.serwb_reset.eq(serwb_phy_rtm.serdes.reset)
+        ]
         csr_devices.append("serwb_phy_rtm")
 
-        serwb_core = serwb.core.SERWBCore(serwb_phy_rtm, int(clk_freq), mode="master", with_scrambling=True)
+        serwb_core = serwb.core.SERWBCore(serwb_phy_rtm, int(clk_freq), mode="master")
         self.submodules += serwb_core
 
         # process CSR devices and connect them to serwb
