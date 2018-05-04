@@ -22,7 +22,7 @@ from artiq import __version__ as artiq_version
 class CRG(Module):
     def __init__(self, platform):
         self.clock_domains.cd_sys = ClockDomain()
-        self.clock_domains.cd_sys4x = ClockDomain()
+        self.clock_domains.cd_sys4x = ClockDomain(reset_less=True)
         self.clock_domains.cd_clk200 = ClockDomain()
 
         self.serwb_refclk = Signal()
@@ -30,32 +30,27 @@ class CRG(Module):
 
         pll_locked = Signal()
         pll_fb = Signal()
-        pll_sys = Signal()
         pll_sys4x = Signal()
         pll_clk200 = Signal()
         self.specials += [
-            Instance("PLLE2_BASE",
-                     p_STARTUP_WAIT="FALSE", o_LOCKED=pll_locked,
+            Instance("MMCME2_BASE",
+                p_STARTUP_WAIT="FALSE", o_LOCKED=pll_locked,
 
-                     # VCO @ 1GHz
-                     p_REF_JITTER1=0.01, p_CLKIN1_PERIOD=10.0,
-                     p_CLKFBOUT_MULT=10, p_DIVCLK_DIVIDE=1,
-                     i_CLKIN1=self.serwb_refclk, i_CLKFBIN=pll_fb, o_CLKFBOUT=pll_fb,
+                # VCO @ 1GHz
+                p_REF_JITTER1=0.01, p_CLKIN1_PERIOD=10.0,
+                p_CLKFBOUT_MULT_F=10, p_DIVCLK_DIVIDE=1,
+                i_CLKIN1=self.serwb_refclk, i_CLKFBIN=pll_fb, o_CLKFBOUT=pll_fb,
 
-                     # 125MHz
-                     p_CLKOUT0_DIVIDE=8, p_CLKOUT0_PHASE=0.0, o_CLKOUT0=pll_sys,
+                # 500MHz
+                p_CLKOUT0_DIVIDE_F=2, p_CLKOUT0_PHASE=0.0, o_CLKOUT0=pll_sys4x,
 
-                     # 500MHz
-                     p_CLKOUT1_DIVIDE=2, p_CLKOUT1_PHASE=0.0, o_CLKOUT1=pll_sys4x,
-
-                     # 200MHz
-                     p_CLKOUT2_DIVIDE=5, p_CLKOUT2_PHASE=0.0, o_CLKOUT2=pll_clk200
+                # 200MHz
+                p_CLKOUT1_DIVIDE=5, p_CLKOUT1_PHASE=0.0, o_CLKOUT1=pll_clk200
             ),
-            Instance("BUFG", i_I=pll_sys, o_O=self.cd_sys.clk),
-            Instance("BUFG", i_I=pll_sys4x, o_O=self.cd_sys4x.clk),
+            Instance("BUFR", p_BUFR_DIVIDE="4", i_I=pll_sys4x, o_O=self.cd_sys.clk),
+            Instance("BUFIO", i_I=pll_sys4x, o_O=self.cd_sys4x.clk),
             Instance("BUFG", i_I=pll_clk200, o_O=self.cd_clk200.clk),
             AsyncResetSynchronizer(self.cd_sys, ~pll_locked | self.serwb_reset),
-            AsyncResetSynchronizer(self.cd_sys4x, ~pll_locked | self.serwb_reset),
             AsyncResetSynchronizer(self.cd_clk200, ~pll_locked | self.serwb_reset)
         ]
 
@@ -81,12 +76,6 @@ CSR_RANGE_SIZE = 0x800
 
 class SaymaRTM(Module):
     def __init__(self, platform):
-        platform.toolchain.bitstream_commands.extend([
-            "set_property BITSTREAM.GENERAL.COMPRESS True [current_design]",
-            "set_property CFGBVS VCCO [current_design]",
-            "set_property CONFIG_VOLTAGE 3.3 [current_design]",
-            ])
-
         csr_devices = []
 
         self.submodules.crg = CRG(platform)

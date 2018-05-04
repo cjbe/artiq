@@ -10,7 +10,7 @@ from artiq.gateware.rtio.phy import ttl_simple
 
 
 class DUT(Module):
-    def __init__(self):
+    def __init__(self, **kwargs):
         self.ttl0 = Signal()
         self.ttl1 = Signal()
 
@@ -22,15 +22,15 @@ class DUT(Module):
             rtio.Channel.from_phy(self.phy1)
         ]
 
-        self.submodules.sed = SED(rtio_channels, 0, "sync")
+        self.submodules.sed = SED(rtio_channels, 0, "sync", **kwargs)
         self.sync += [
             self.sed.coarse_timestamp.eq(self.sed.coarse_timestamp + 1),
             self.sed.minimum_coarse_timestamp.eq(self.sed.coarse_timestamp + 16)
         ]
 
 
-def simulate(input_events):
-    dut = DUT()
+def simulate(input_events, **kwargs):
+    dut = DUT(**kwargs)
 
     ttl_changes = []
     access_results = []
@@ -73,7 +73,7 @@ def simulate(input_events):
 
     run_simulation(dut, {"sys": [
         gen(), monitor(),
-        (None for _ in range(45))
+        (None for _ in range(max(ts for ts, _ in input_events) + 15))
     ]}, {"sys": 5, "rio": 5, "rio_phy": 5})
 
     return ttl_changes, access_results
@@ -86,3 +86,30 @@ class TestSED(unittest.TestCase):
         ttl_changes, access_results = simulate(input_events)
         self.assertEqual(ttl_changes, [e[0] + latency for e in input_events])
         self.assertEqual(access_results, [("ok", 0)]*len(input_events))
+
+    def test_replace(self):
+        input_events = []
+        now = 19
+        for i in range(5):
+            now += 10
+            input_events += [(now, 1)]
+            now += 10
+            input_events += [(now, 1), (now, 0)]
+
+        ttl_changes, access_results = simulate(input_events)
+        self.assertEqual(access_results, [("ok", 0)]*len(input_events))
+        self.assertEqual(ttl_changes, list(range(40, 40+5*20, 10)))
+
+    def test_replace_rollover(self):
+        input_events = []
+        now = 24
+        for i in range(40):
+            now += 10
+            input_events += [(now, 1)]
+            now += 10
+            input_events += [(now, 1), (now, 0)]
+
+        ttl_changes, access_results = simulate(input_events,
+            lane_count=2, fifo_depth=2, enable_spread=False)
+        self.assertEqual([r[0] for r in access_results], ["ok"]*len(input_events))
+        self.assertEqual(ttl_changes, list(range(40, 40+40*20, 10)))

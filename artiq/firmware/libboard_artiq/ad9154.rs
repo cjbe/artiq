@@ -1,5 +1,6 @@
 use board::{csr, clock};
 use ad9154_reg;
+use hmc830_7043::hmc7043;
 
 fn spi_setup(dacno: u8) {
     unsafe {
@@ -607,6 +608,44 @@ fn dac_cfg_retry(dacno: u8) -> Result<(), &'static str> {
     dac_cfg(dacno)
 }
 
+fn dac_sysref_cfg(dacno: u8) {
+    let mut sync_error: u16 = 0;
+    let mut sync_error_last: u16 = 0;
+    let mut phase_min_found: bool = false;
+    let mut phase_min: u16 = 0;
+    let mut phase_max_found: bool = false;
+    let mut phase_max: u16 = 0;
+    let mut phase_opt: u16 = 0;
+
+    info!("AD9154-{} SYSREF scan/conf...", dacno);
+    for phase in 0..512 {
+        hmc7043::cfg_dac_sysref(dacno, phase);
+        clock::spin_us(10000);
+        spi_setup(dacno);
+        sync_error = ((read(ad9154_reg::SYNC_CURRERR_L) as u16) |
+                     ((read(ad9154_reg::SYNC_CURRERR_H) as u16) << 8))
+                     & 0x1ff;
+        info!("  phase: {}, sync error: {}", phase, sync_error);
+        if sync_error != 0 {
+            if phase_min_found {
+                if sync_error != sync_error_last {
+                    phase_max_found = true;
+                    phase_max = phase - 1;
+                    break;
+                }
+            } else {
+                phase_min_found = true;
+                phase_min = phase;
+            }
+        }
+        sync_error_last = sync_error;
+    }
+
+    phase_opt = phase_min + (phase_max-phase_min)/2;
+    info!("  phase min: {}, phase max: {}, phase opt: {}", phase_min, phase_max, phase_opt);
+    hmc7043::cfg_dac_sysref(dacno, phase_opt);
+}
+
 pub fn init() -> Result<(), &'static str> {
     // Release the JESD clock domain reset late, as we need to
     // set up clock chips before.
@@ -617,6 +656,7 @@ pub fn init() -> Result<(), &'static str> {
         debug!("setting up AD9154-{} DAC...", dacno);
         dac_cfg_retry(dacno)?;
         dac_prbs(dacno)?;
+        dac_sysref_cfg(dacno);
         dac_cfg_retry(dacno)?;
     }
 

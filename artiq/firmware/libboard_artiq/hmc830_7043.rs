@@ -124,7 +124,7 @@ mod hmc830 {
     }
 }
 
-mod hmc7043 {
+pub mod hmc7043 {
     use board::csr;
 
     // To do: check which output channels we actually need
@@ -249,6 +249,24 @@ mod hmc7043 {
 
         Ok(())
     }
+
+    pub fn cfg_dac_sysref(dacno: u8, phase: u16) {
+        spi_setup();
+        /*  Analog delay resolution: 25ps
+         *  Digital delay resolution: 1/2 input clock cycle = 416ps for 1.2GHz
+         *  16*25ps = 400ps: limit analog delay to 16 steps instead of 32.
+         */
+        if dacno == 0 {
+            write(0x00d5, (phase & 0xf) as u8);
+            write(0x00d6, ((phase >> 4) & 0x1f) as u8);
+        } else if dacno == 1 {
+            write(0x00e9, (phase & 0xf) as u8);
+            write(0x00ea, ((phase >> 4) & 0x1f) as u8);
+        } else {
+            unimplemented!();
+        }
+    }
+
 }
 
 pub fn init() -> Result<(), &'static str> {
