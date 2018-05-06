@@ -28,13 +28,14 @@ class RunTool:
         for argument in self._pattern:
             cmdline.append(argument.format(**self._tempnames))
 
-        process = subprocess.Popen(cmdline, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        process = subprocess.Popen(cmdline, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                   universal_newlines=True)
         stdout, stderr = process.communicate()
         if process.returncode != 0:
             raise Exception("{} invocation failed: {}".
-                            format(cmdline[0], stderr.decode('utf-8')))
+                            format(cmdline[0], stderr))
 
-        self._tempfiles["__stdout__"] = io.StringIO(stdout.decode('utf-8'))
+        self._tempfiles["__stdout__"] = io.StringIO(stdout)
         for key in self._tempdata:
             if self._tempdata[key] is None:
                 self._tempfiles[key] = open(self._tempnames[key], "rb")
