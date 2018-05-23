@@ -1,7 +1,12 @@
+#![feature(lang_items, alloc, global_allocator, try_from, nonzero, nll, needs_panic_runtime)]
 #![no_std]
-#![feature(lang_items, alloc, global_allocator, try_from, nonzero, nll)]
+#![needs_panic_runtime]
 
+#[macro_use]
 extern crate alloc;
+extern crate failure;
+#[macro_use]
+extern crate failure_derive;
 extern crate cslice;
 #[macro_use]
 extern crate log;
@@ -11,27 +16,26 @@ extern crate managed;
 extern crate smoltcp;
 
 extern crate alloc_list;
+extern crate unwind_backtrace;
+extern crate io;
 #[macro_use]
-extern crate std_artiq as std;
-extern crate logger_artiq;
-extern crate backtrace_artiq;
-#[macro_use]
-extern crate board;
+extern crate board_misoc;
 extern crate board_artiq;
-extern crate proto;
-extern crate amp;
-#[cfg(has_drtio)]
-extern crate drtioaux;
+extern crate logger_artiq;
+extern crate proto_artiq;
 
 use core::convert::TryFrom;
 use smoltcp::wire::{EthernetAddress, IpAddress, IpCidr};
 
-use board::irq;
-use board::config;
+use board_misoc::{csr, irq, ident, clock, boot, config};
 #[cfg(has_ethmac)]
-use board::ethmac;
-use proto::{mgmt_proto, analyzer_proto, moninj_proto, rpc_proto, session_proto, kernel_proto};
-use amp::{mailbox, rpc_queue};
+use board_misoc::ethmac;
+#[cfg(has_drtio)]
+use board_artiq::drtioaux;
+use board_artiq::{mailbox, rpc_queue};
+use proto_artiq::{mgmt_proto, moninj_proto, rpc_proto, session_proto,kernel_proto};
+#[cfg(has_rtio_analyzer)]
+use proto_artiq::analyzer_proto;
 
 #[cfg(has_rtio_core)]
 mod rtio_mgt;
@@ -53,11 +57,12 @@ mod moninj;
 mod analyzer;
 
 fn startup() {
+    irq::set_mask(0);
     irq::set_ie(true);
-    board::clock::init();
+    clock::init();
     info!("ARTIQ runtime starting...");
     info!("software version {}", include_str!(concat!(env!("OUT_DIR"), "/git-describe")));
-    info!("gateware version {}", board::ident::read(&mut [0; 64]));
+    info!("gateware version {}", ident::read(&mut [0; 64]));
 
     match config::read_str("log_level", |r| r.map(|s| s.parse())) {
         Ok(Ok(log_level_filter)) => {
@@ -83,10 +88,10 @@ fn startup() {
     board_artiq::serwb::wait_init();
 
     #[cfg(has_uart)] {
-        let t = board::clock::get_ms();
+        let t = clock::get_ms();
         info!("press 'e' to erase startup and idle kernels...");
-        while board::clock::get_ms() < t + 1000 {
-            if unsafe { board::csr::uart::rxtx_read() == b'e' } {
+        while clock::get_ms() < t + 1000 {
+            if unsafe { csr::uart::rxtx_read() == b'e' } {
                 config::remove("startup_kernel").unwrap();
                 config::remove("idle_kernel").unwrap();
                 info!("startup and idle kernels erased");
@@ -240,7 +245,7 @@ fn startup_ethernet() {
         {
             let sockets = &mut *scheduler.sockets().borrow_mut();
             loop {
-                match interface.poll(sockets, board::clock::get_ms()) {
+                match interface.poll(sockets, clock::get_ms()) {
                     Ok(true) => (),
                     Ok(false) => break,
                     Err(smoltcp::Error::Unrecognized) => (),
@@ -282,7 +287,7 @@ pub extern fn exception(vect: u32, _regs: *const u32, pc: u32, ea: u32) {
             while irq::pending_mask() != 0 {
                 match () {
                     #[cfg(has_timer1)]
-                    () if irq::is_pending(::board::csr::TIMER1_INTERRUPT) =>
+                    () if irq::is_pending(csr::TIMER1_INTERRUPT) =>
                         profiler::sample(pc as usize),
                     _ => panic!("spurious irq {}", irq::pending_mask().trailing_zeros())
                 }
@@ -299,18 +304,23 @@ pub extern fn abort() {
 
 #[no_mangle]
 #[lang = "panic_fmt"]
-pub extern fn panic_fmt(args: core::fmt::Arguments, file: &'static str, line: u32) -> ! {
-    println!("panic at {}:{}: {}", file, line, args);
+pub extern fn panic_fmt(args: core::fmt::Arguments, file: &'static str,
+                        line: u32, column: u32) -> ! {
+    irq::set_ie(false);
+
+    println!("panic at {}:{}:{}: {}", file, line, column, args);
 
     println!("backtrace for software version {}:",
              include_str!(concat!(env!("OUT_DIR"), "/git-describe")));
-    let _ = backtrace_artiq::backtrace(|ip| {
-        println!("{:#08x}", ip);
+    let _ = unwind_backtrace::backtrace(|ip| {
+        // Backtrace gives us the return address, i.e. the address after the delay slot,
+        // but we're interested in the call instruction.
+        println!("{:#08x}", ip - 2 * 4);
     });
 
     if config::read_str("panic_reset", |r| r == Ok("1")) {
         println!("restarting...");
-        unsafe { board::boot::reset() }
+        unsafe { boot::reset() }
     } else {
         println!("halting.");
         println!("use `artiq_coreconfig write -s panic_reset 1` to restart instead");

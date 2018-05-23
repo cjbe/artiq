@@ -3,6 +3,8 @@ import logging
 import socket
 import struct
 
+from artiq.coredevice.comm import initialize_connection
+
 
 logger = logging.getLogger(__name__)
 
@@ -13,6 +15,11 @@ class Request(Enum):
     PullLog = 7
     SetLogFilter = 3
     SetUartLogFilter = 6
+
+    ConfigRead = 12
+    ConfigWrite = 13
+    ConfigRemove = 14
+    ConfigErase = 15
 
     StartProfiler = 9
     StopProfiler = 10
@@ -26,9 +33,12 @@ class Request(Enum):
 
 class Reply(Enum):
     Success = 1
+    Error = 6
     Unavailable = 4
 
     LogContent = 2
+
+    ConfigData = 7
 
     Profile = 5
 
@@ -44,22 +54,15 @@ class LogLevel(Enum):
     TRACE = 5
 
 
-def initialize_connection(host, port):
-    sock = socket.create_connection((host, port), 5.0)
-    sock.settimeout(None)
-    logger.debug("connected to host %s on port %d", host, port)
-    return sock
-
-
 class CommMgmt:
     def __init__(self, host, port=1380):
         self.host = host
         self.port = port
 
-    def open(self):
+    def open(self, **kwargs):
         if hasattr(self, "socket"):
             return
-        self.socket = initialize_connection(self.host, self.port)
+        self.socket = initialize_connection(self.host, self.port, **kwargs)
         self.socket.sendall(b"ARTIQ management\n")
 
     def close(self):
@@ -89,6 +92,9 @@ class CommMgmt:
     def _write_bytes(self, value):
         self._write_int32(len(value))
         self._write(value)
+
+    def _write_string(self, value):
+        self._write_bytes(value.encode("utf-8"))
 
     def _read(self, length):
         r = bytes()
@@ -150,6 +156,32 @@ class CommMgmt:
 
         self._write_header(Request.SetUartLogFilter)
         self._write_int8(getattr(LogLevel, level).value)
+        self._read_expect(Reply.Success)
+
+    def config_read(self, key):
+        self._write_header(Request.ConfigRead)
+        self._write_string(key)
+        self._read_expect(Reply.ConfigData)
+        return self._read_string()
+
+    def config_write(self, key, value):
+        self._write_header(Request.ConfigWrite)
+        self._write_string(key)
+        self._write_bytes(value)
+        ty = self._read_header()
+        if ty == Reply.Error:
+            raise IOError("Flash storage is full")
+        elif ty != Reply.Success:
+            raise IOError("Incorrect reply from device: {} (expected {})".
+                          format(ty, Reply.Success))
+
+    def config_remove(self, key):
+        self._write_header(Request.ConfigRemove)
+        self._write_string(key)
+        self._read_expect(Reply.Success)
+
+    def config_erase(self):
+        self._write_empty(Request.ConfigErase)
         self._read_expect(Reply.Success)
 
     def start_profiler(self, interval, edges_size, hits_size):

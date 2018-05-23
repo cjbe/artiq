@@ -15,9 +15,5 @@ build_artiq = { path = "../libbuild_artiq" }
 
 [dependencies]
 log = { version = "0.4", default-features = false }
-alloc_list = { path = "../liballoc_list" }
-board = { path = "../libboard", features = ["uart_console"] }
+board_misoc = { path = "../libboard_misoc", features = ["uart_console", "log"] }
 board_artiq = { path = "../libboard_artiq" }
-std_artiq = { path = "../libstd_artiq", features = ["alloc"] }
-logger_artiq = { path = "../liblogger_artiq" }
-drtioaux = { path = "../libdrtioaux" }

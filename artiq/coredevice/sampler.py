@@ -1,4 +1,3 @@
-
 from artiq.language.core import kernel, delay, portable
 from artiq.language.units import ns
 
@@ -16,17 +15,23 @@ SPI_CS_PGIA = 1  # separate SPI bus, CS used as RCLK
 
 
 @portable
-def adc_mu_to_volt(data, gain=0, v_ref=5.):
+def adc_mu_to_volt(data, gain=0):
     """Convert ADC data in machine units to Volts.
 
     :param data: 16 bit signed ADC word
     :param gain: PGIA gain setting (0: 1, ..., 3: 1000)
-    :param v_ref: Reference voltage in Volts
     :return: Voltage in Volts
     """
-    for i in range(gain):
-        v_ref /= 10.
-    volt_per_lsb = v_ref/(1 << 15)
+    if gain == 0:
+        volt_per_lsb = 20./(1 << 16)
+    elif gain == 1:
+        volt_per_lsb = 2./(1 << 16)
+    elif gain == 2:
+        volt_per_lsb = .2/(1 << 16)
+    elif gain == 3:
+        volt_per_lsb = .02/(1 << 16)
+    else:
+        raise ValueError("invalid gain")
     return data*volt_per_lsb
 
 
@@ -40,19 +45,23 @@ class Sampler:
     :param spi_pgia_device: PGIA SPI bus device name
     :param cnv_device: CNV RTIO TTLOut channel name
     :param div: SPI clock divider (default: 8)
+    :param gains: Initial value for PGIA gains shift register
+        (default: 0x0000). Knowledge of this state is not transferred
+        between experiments.
     :param core_device: Core device name
     """
-    kernel_invariants = {"bus_adc", "bus_pgia", "core", "cnv", "div", "v_ref"}
+    kernel_invariants = {"bus_adc", "bus_pgia", "core", "cnv", "div"}
 
     def __init__(self, dmgr, spi_adc_device, spi_pgia_device, cnv_device,
-                 div=8, core_device="core"):
+                 div=8, gains=0x0000, core_device="core"):
         self.bus_adc = dmgr.get(spi_adc_device)
+        self.bus_adc.update_xfer_duration_mu(div, 32)
         self.bus_pgia = dmgr.get(spi_pgia_device)
+        self.bus_pgia.update_xfer_duration_mu(div, 16)
         self.core = dmgr.get(core_device)
         self.cnv = dmgr.get(cnv_device)
         self.div = div
-        self.gains = 0x0000
-        self.v_ref = 10.  # 5 Volt reference, 0.5 AFE diff gain
+        self.gains = gains
 
     @kernel
     def init(self):
@@ -135,4 +144,4 @@ class Sampler:
         for i in range(n):
             channel = i + 8 - len(data)
             gain = (self.gains >> (channel*2)) & 0b11
-            data[i] = adc_mu_to_volt(adc_data[i], gain, self.v_ref)
+            data[i] = adc_mu_to_volt(adc_data[i], gain)

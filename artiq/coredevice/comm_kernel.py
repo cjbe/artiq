@@ -1,7 +1,5 @@
 import struct
 import logging
-import socket
-import sys
 import traceback
 import numpy
 from enum import Enum
@@ -9,67 +7,37 @@ from fractions import Fraction
 from collections import namedtuple
 
 from artiq.coredevice import exceptions
+from artiq.coredevice.comm import initialize_connection
 from artiq import __version__ as software_version
 
 
 logger = logging.getLogger(__name__)
 
 
-class _H2DMsgType(Enum):
-    LOG_REQUEST = 1
-    LOG_CLEAR = 2
-    LOG_FILTER = 13
+class Request(Enum):
+    SystemInfo = 3
 
-    SYSTEM_INFO_REQUEST = 3
-    SWITCH_CLOCK = 4
+    LoadKernel = 5
+    RunKernel = 6
 
-    LOAD_KERNEL = 5
-    RUN_KERNEL = 6
-
-    RPC_REPLY = 7
-    RPC_EXCEPTION = 8
-
-    FLASH_READ_REQUEST = 9
-    FLASH_WRITE_REQUEST = 10
-    FLASH_ERASE_REQUEST = 11
-    FLASH_REMOVE_REQUEST = 12
-
-    HOTSWAP = 14
+    RPCReply = 7
+    RPCException = 8
 
 
-class _D2HMsgType(Enum):
-    LOG_REPLY = 1
+class Reply(Enum):
+    SystemInfo = 2
 
-    SYSTEM_INFO_REPLY = 2
-    CLOCK_SWITCH_COMPLETED = 3
-    CLOCK_SWITCH_FAILED = 4
+    LoadCompleted = 5
+    LoadFailed = 6
 
-    LOAD_COMPLETED = 5
-    LOAD_FAILED = 6
+    KernelFinished = 7
+    KernelStartupFailed = 8
+    KernelException = 9
 
-    KERNEL_FINISHED = 7
-    KERNEL_STARTUP_FAILED = 8
-    KERNEL_EXCEPTION = 9
+    RPCRequest = 10
 
-    RPC_REQUEST = 10
-
-    FLASH_READ_REPLY = 11
-    FLASH_OK_REPLY = 12
-    FLASH_ERROR_REPLY = 13
-
-    WATCHDOG_EXPIRED = 14
-    CLOCK_FAILURE = 15
-
-    HOTSWAP_IMMINENT = 16
-
-
-class _LogLevel(Enum):
-    OFF = 0
-    ERROR = 1
-    WARN = 2
-    INFO = 3
-    DEBUG = 4
-    TRACE = 5
+    WatchdogExpired = 14
+    ClockFailure = 15
 
 
 class UnsupportedDevice(Exception):
@@ -85,35 +53,8 @@ class RPCReturnValueError(ValueError):
 RPCKeyword = namedtuple('RPCKeyword', ['name', 'value'])
 
 
-def set_keepalive(sock, after_idle, interval, max_fails):
-    if sys.platform.startswith("linux"):
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, after_idle)
-        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, interval)
-        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, max_fails)
-    elif sys.platform.startswith("win") or sys.platform.startswith("cygwin"):
-        # setting max_fails is not supported, typically ends up being 5 or 10
-        # depending on Windows version
-        sock.ioctl(socket.SIO_KEEPALIVE_VALS,
-                   (1, after_idle*1000, interval*1000))
-    else:
-        logger.warning("TCP keepalive not supported on platform '%s', ignored",
-                       sys.platform)
-
-
-def initialize_connection(host, port):
-    sock = socket.create_connection((host, port), 5.0)
-    sock.settimeout(None)
-    set_keepalive(sock, 3, 2, 3)
-    logger.debug("connected to host %s on port %d", host, port)
-    return sock
-
-
 class CommKernelDummy:
     def __init__(self):
-        pass
-
-    def switch_clock(self, external):
         pass
 
     def load(self, kernel_library):
@@ -128,12 +69,6 @@ class CommKernelDummy:
     def check_system_info(self):
         pass
 
-    def get_log(self):
-        return ""
-
-    def clear_log(self):
-        pass
-
 
 class CommKernel:
     warned_of_mismatch = False
@@ -143,10 +78,10 @@ class CommKernel:
         self.host = host
         self.port = port
 
-    def open(self):
+    def open(self, **kwargs):
         if hasattr(self, "socket"):
             return
-        self.socket = initialize_connection(self.host, self.port)
+        self.socket = initialize_connection(self.host, self.port, **kwargs)
         self.socket.sendall(b"ARTIQ coredev\n")
 
     def close(self):
@@ -186,7 +121,7 @@ class CommKernel:
 
         # Read message header.
         (raw_type, ) = struct.unpack("B", self.read(1))
-        self._read_type = _D2HMsgType(raw_type)
+        self._read_type = Reply(raw_type)
 
         logger.debug("receiving message: type=%r",
                      self._read_type)
@@ -276,10 +211,10 @@ class CommKernel:
         self.write(struct.pack(">ll", 0x5a5a5a5a, 0))
 
     def check_system_info(self):
-        self._write_empty(_H2DMsgType.SYSTEM_INFO_REQUEST)
+        self._write_empty(Request.SystemInfo)
 
         self._read_header()
-        self._read_expect(_D2HMsgType.SYSTEM_INFO_REPLY)
+        self._read_expect(Reply.SystemInfo)
         runtime_id = self._read_chunk(4)
         if runtime_id != b"AROR":
             raise UnsupportedDevice("Unsupported runtime ID: {}"
@@ -296,54 +231,18 @@ class CommKernel:
         if not finished_cleanly:
             logger.warning("Previous kernel did not cleanly finish")
 
-    def switch_clock(self, external):
-        self._write_header(_H2DMsgType.SWITCH_CLOCK)
-        self._write_int8(external)
-
-        self._read_empty(_D2HMsgType.CLOCK_SWITCH_COMPLETED)
-
-    def flash_storage_read(self, key):
-        self._write_header(_H2DMsgType.FLASH_READ_REQUEST)
-        self._write_string(key)
-
-        self._read_header()
-        self._read_expect(_D2HMsgType.FLASH_READ_REPLY)
-        return self._read_string()
-
-    def flash_storage_write(self, key, value):
-        self._write_header(_H2DMsgType.FLASH_WRITE_REQUEST)
-        self._write_string(key)
-        self._write_bytes(value)
-
-        self._read_header()
-        if self._read_type == _D2HMsgType.FLASH_ERROR_REPLY:
-            raise IOError("Flash storage is full")
-        else:
-            self._read_expect(_D2HMsgType.FLASH_OK_REPLY)
-
-    def flash_storage_erase(self):
-        self._write_empty(_H2DMsgType.FLASH_ERASE_REQUEST)
-
-        self._read_empty(_D2HMsgType.FLASH_OK_REPLY)
-
-    def flash_storage_remove(self, key):
-        self._write_header(_H2DMsgType.FLASH_REMOVE_REQUEST)
-        self._write_string(key)
-
-        self._read_empty(_D2HMsgType.FLASH_OK_REPLY)
-
     def load(self, kernel_library):
-        self._write_header(_H2DMsgType.LOAD_KERNEL)
+        self._write_header(Request.LoadKernel)
         self._write_bytes(kernel_library)
 
         self._read_header()
-        if self._read_type == _D2HMsgType.LOAD_FAILED:
+        if self._read_type == Reply.LoadFailed:
             raise LoadError(self._read_string())
         else:
-            self._read_expect(_D2HMsgType.LOAD_COMPLETED)
+            self._read_expect(Reply.LoadCompleted)
 
     def run(self):
-        self._write_empty(_H2DMsgType.RUN_KERNEL)
+        self._write_empty(Request.RunKernel)
         logger.debug("running kernel")
 
     _rpc_sentinel = object()
@@ -524,7 +423,7 @@ class CommKernel:
             result = service(*args, **kwargs)
             logger.debug("rpc service: %d %r %r = %r", service_id, args, kwargs, result)
 
-            self._write_header(_H2DMsgType.RPC_REPLY)
+            self._write_header(Request.RPCReply)
             self._write_bytes(return_tags)
             self._send_rpc_value(bytearray(return_tags), result, result, service)
         except RPCReturnValueError as exn:
@@ -532,7 +431,7 @@ class CommKernel:
         except Exception as exn:
             logger.debug("rpc service: %d %r %r ! %r", service_id, args, kwargs, exn)
 
-            self._write_header(_H2DMsgType.RPC_EXCEPTION)
+            self._write_header(Request.RPCException)
 
             if hasattr(exn, "artiq_core_exception"):
                 exn = exn.artiq_core_exception
@@ -600,14 +499,14 @@ class CommKernel:
     def serve(self, embedding_map, symbolizer, demangler):
         while True:
             self._read_header()
-            if self._read_type == _D2HMsgType.RPC_REQUEST:
+            if self._read_type == Reply.RPCRequest:
                 self._serve_rpc(embedding_map)
-            elif self._read_type == _D2HMsgType.KERNEL_EXCEPTION:
+            elif self._read_type == Reply.KernelException:
                 self._serve_exception(embedding_map, symbolizer, demangler)
-            elif self._read_type == _D2HMsgType.WATCHDOG_EXPIRED:
+            elif self._read_type == Reply.WatchdogExpired:
                 raise exceptions.WatchdogExpired
-            elif self._read_type == _D2HMsgType.CLOCK_FAILURE:
+            elif self._read_type == Reply.ClockFailure:
                 raise exceptions.ClockFailure
             else:
-                self._read_expect(_D2HMsgType.KERNEL_FINISHED)
+                self._read_expect(Reply.KernelFinished)
                 return

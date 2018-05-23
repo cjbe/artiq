@@ -1,7 +1,6 @@
-use std::io;
 use kernel_proto as kern;
-use sched::Io;
-use session::{kern_acknowledge, kern_send};
+use sched::{Io, Error as SchedError};
+use session::{kern_acknowledge, kern_send, Error};
 #[cfg(has_rtio_core)]
 use rtio_mgt;
 
@@ -10,7 +9,7 @@ mod drtio_i2c {
     use drtioaux;
 
     fn basic_reply(nodeno: u8) -> Result<(), ()> {
-        match drtioaux::hw::recv_timeout(nodeno, None) {
+        match drtioaux::recv_timeout(nodeno, None) {
             Ok(drtioaux::Packet::I2cBasicReply { succeeded }) => {
                 if succeeded { Ok(()) } else { Err(()) }
             }
@@ -27,7 +26,7 @@ mod drtio_i2c {
 
     pub fn start(nodeno: u8, busno: u8) -> Result<(), ()> {
         let request = drtioaux::Packet::I2cStartRequest { busno: busno };
-        if drtioaux::hw::send(nodeno, &request).is_err() {
+        if drtioaux::send(nodeno, &request).is_err() {
             return Err(())
         }
         basic_reply(nodeno)
@@ -35,7 +34,7 @@ mod drtio_i2c {
 
     pub fn restart(nodeno: u8, busno: u8) -> Result<(), ()> {
         let request = drtioaux::Packet::I2cRestartRequest { busno: busno };
-        if drtioaux::hw::send(nodeno, &request).is_err() {
+        if drtioaux::send(nodeno, &request).is_err() {
             return Err(())
         }
         basic_reply(nodeno)
@@ -43,7 +42,7 @@ mod drtio_i2c {
 
     pub fn stop(nodeno: u8, busno: u8) -> Result<(), ()> {
         let request = drtioaux::Packet::I2cStopRequest { busno: busno };
-        if drtioaux::hw::send(nodeno, &request).is_err() {
+        if drtioaux::send(nodeno, &request).is_err() {
             return Err(())
         }
         basic_reply(nodeno)
@@ -54,10 +53,10 @@ mod drtio_i2c {
             busno: busno,
             data: data
         };
-        if drtioaux::hw::send(nodeno, &request).is_err() {
+        if drtioaux::send(nodeno, &request).is_err() {
             return Err(())
         }
-        match drtioaux::hw::recv_timeout(nodeno, None) {
+        match drtioaux::recv_timeout(nodeno, None) {
             Ok(drtioaux::Packet::I2cWriteReply { succeeded, ack }) => {
                 if succeeded { Ok(ack) } else { Err(()) }
             }
@@ -77,10 +76,10 @@ mod drtio_i2c {
             busno: busno,
             ack: ack
         };
-        if drtioaux::hw::send(nodeno, &request).is_err() {
+        if drtioaux::send(nodeno, &request).is_err() {
             return Err(())
         }
-        match drtioaux::hw::recv_timeout(nodeno, None) {
+        match drtioaux::recv_timeout(nodeno, None) {
             Ok(drtioaux::Packet::I2cReadReply { succeeded, data }) => {
                 if succeeded { Ok(data) } else { Err(()) }
             }
@@ -179,7 +178,7 @@ mod drtio_spi {
     use drtioaux;
 
     fn basic_reply(nodeno: u8) -> Result<(), ()> {
-        match drtioaux::hw::recv_timeout(nodeno, None) {
+        match drtioaux::recv_timeout(nodeno, None) {
             Ok(drtioaux::Packet::SpiBasicReply { succeeded }) => {
                 if succeeded { Ok(()) } else { Err(()) }
             }
@@ -202,7 +201,7 @@ mod drtio_spi {
             div: div,
             cs: cs
         };
-        if drtioaux::hw::send(nodeno, &request).is_err() {
+        if drtioaux::send(nodeno, &request).is_err() {
             return Err(())
         }
         basic_reply(nodeno)
@@ -213,7 +212,7 @@ mod drtio_spi {
             busno: busno,
             data: data
         };
-        if drtioaux::hw::send(nodeno, &request).is_err() {
+        if drtioaux::send(nodeno, &request).is_err() {
             return Err(())
         }
         basic_reply(nodeno)
@@ -221,10 +220,10 @@ mod drtio_spi {
 
     pub fn read(nodeno: u8, busno: u8) -> Result<u32, ()> {
         let request = drtioaux::Packet::SpiReadRequest { busno: busno };
-        if drtioaux::hw::send(nodeno, &request).is_err() {
+        if drtioaux::send(nodeno, &request).is_err() {
             return Err(())
         }
-        match drtioaux::hw::recv_timeout(nodeno, None) {
+        match drtioaux::recv_timeout(nodeno, None) {
             Ok(drtioaux::Packet::SpiReadReply { succeeded, data }) => {
                 if succeeded { Ok(data) } else { Err(()) }
             }
@@ -291,7 +290,7 @@ mod spi {
     }
 }
 
-pub fn process_kern_hwreq(io: &Io, request: &kern::Message) -> io::Result<bool> {
+pub fn process_kern_hwreq(io: &Io, request: &kern::Message) -> Result<bool, Error<SchedError>> {
     match request {
         #[cfg(has_rtio_core)]
         &kern::RtioInitRequest => {

@@ -174,7 +174,7 @@ class Standalone(MiniSoC, AMPSoC):
 
         # AMC/RTM serwb
         serwb_pads = platform.request("amc_rtm_serwb")
-        serwb_phy_amc = serwb.phy.SERWBPHY(platform.device, serwb_pads, mode="master")
+        serwb_phy_amc = serwb.genphy.SERWBPHY(platform.device, serwb_pads, mode="master")
         self.submodules.serwb_phy_amc = serwb_phy_amc
         self.csr_devices.append("serwb_phy_amc")
 
@@ -389,7 +389,6 @@ class Satellite(BaseSoC):
         self.submodules += Microscope(platform.request("serial", 1),
                                       self.clk_freq)
 
-        self.submodules.rtio_clkmul = _RTIOClockMultiplier(platform, rtio_clk_freq)
         rtio_channels = []
         for i in range(4):
             phy = ttl_simple.Output(platform.request("user_led", i))

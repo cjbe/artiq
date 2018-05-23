@@ -6,21 +6,19 @@ from migen import *
 from migen.genlib.resetsync import AsyncResetSynchronizer
 from migen.genlib.cdc import MultiReg
 from migen.build.generic_platform import *
-from migen.build.xilinx.vivado import XilinxVivadoToolchain
-from migen.build.xilinx.ise import XilinxISEToolchain
-from migen.genlib.io import DifferentialOutput, DifferentialInput
+from migen.genlib.io import DifferentialOutput
 
 from misoc.interconnect.csr import *
 from misoc.cores import gpio
 from misoc.cores.a7_gtp import *
-from misoc.targets.kasli import (BaseSoC, MiniSoC,
-    soc_kasli_args, soc_kasli_argdict)
+from misoc.targets.kasli import (
+    BaseSoC, MiniSoC, soc_kasli_args, soc_kasli_argdict)
 from misoc.integration.builder import builder_args, builder_argdict
 
 from artiq.gateware.amp import AMPSoC
 from artiq.gateware import rtio
 from artiq.gateware.rtio.phy import (
-        ttl_simple, ttl_serdes_7series, spi2, servo as rtservo)
+    ttl_simple, ttl_serdes_7series, spi2, servo as rtservo)
 from artiq.gateware.suservo import servo, pads as servo_pads
 from artiq.gateware.drtio.transceiver import gtp_7series
 from artiq.gateware.drtio.siphaser import SiPhaser7Series
@@ -31,25 +29,22 @@ from artiq import __version__ as artiq_version
 
 
 class _RTIOCRG(Module, AutoCSR):
-    def __init__(self, platform, rtio_internal_clk):
-        self._clock_sel = CSRStorage()
+    def __init__(self, platform):
         self._pll_reset = CSRStorage(reset=1)
         self._pll_locked = CSRStatus()
         self.clock_domains.cd_rtio = ClockDomain()
         self.clock_domains.cd_rtiox4 = ClockDomain(reset_less=True)
 
-        rtio_external_clk = Signal()
-        clk_synth_se = Signal()
         clk_synth = platform.request("si5324_clkout_fabric")
+        clk_synth_se = Signal()
+        clk_synth_buffered = Signal()
         platform.add_period_constraint(clk_synth.p, 8.0)
         self.specials += [
             Instance("IBUFGDS",
                 p_DIFF_TERM="TRUE", p_IBUF_LOW_PWR="TRUE",
                 i_I=clk_synth.p, i_IB=clk_synth.n, o_O=clk_synth_se),
-            Instance("BUFG", i_I=clk_synth_se, o_O=rtio_external_clk),
+            Instance("BUFG", i_I=clk_synth_se, o_O=clk_synth_buffered),
         ]
-        platform.add_false_path_constraints(
-                rtio_external_clk, rtio_internal_clk)
 
         pll_locked = Signal()
         rtio_clk = Signal()
@@ -61,9 +56,9 @@ class _RTIOCRG(Module, AutoCSR):
 
                      p_REF_JITTER1=0.01,
                      p_CLKIN1_PERIOD=8.0, p_CLKIN2_PERIOD=8.0,
-                     i_CLKIN1=rtio_internal_clk, i_CLKIN2=rtio_external_clk,
+                     i_CLKIN2=clk_synth_buffered,
                      # Warning: CLKINSEL=0 means CLKIN2 is selected
-                     i_CLKINSEL=~self._clock_sel.storage,
+                     i_CLKINSEL=0,
 
                      # VCO @ 1GHz when using 125MHz input
                      p_CLKFBOUT_MULT=8, p_DIVCLK_DIVIDE=1,
@@ -125,7 +120,7 @@ class _StandaloneBase(MiniSoC, AMPSoC):
         self.config["SI5324_SOFT_RESET"] = None
 
     def add_rtio(self, rtio_channels):
-        self.submodules.rtio_crg = _RTIOCRG(self.platform, self.crg.cd_sys.clk)
+        self.submodules.rtio_crg = _RTIOCRG(self.platform)
         self.csr_devices.append("rtio_crg")
         fix_serdes_timing_path(self.platform)
         self.submodules.rtio_core = rtio.Core(rtio_channels)
@@ -214,6 +209,7 @@ def _sampler(eem, eem_aux=None):
                 Subsignal("sdob", Pins(_eem_pin(eem_aux, 2, "p"))),
                 Subsignal("sdoc", Pins(_eem_pin(eem_aux, 3, "p"))),
                 Subsignal("sdod", Pins(_eem_pin(eem_aux, 4, "p"))),
+                Misc("DIFF_TERM=TRUE"),
                 IOStandard("LVDS_25"),
             ),
             ("{}_adc_data_n".format(eem), 0,
@@ -222,6 +218,7 @@ def _sampler(eem, eem_aux=None):
                 Subsignal("sdob", Pins(_eem_pin(eem_aux, 2, "n"))),
                 Subsignal("sdoc", Pins(_eem_pin(eem_aux, 3, "n"))),
                 Subsignal("sdod", Pins(_eem_pin(eem_aux, 4, "n"))),
+                Misc("DIFF_TERM=TRUE"),
                 IOStandard("LVDS_25"),
             ),
         ]
@@ -630,7 +627,11 @@ class SYSU(_StandaloneBase):
         for i in range(40):
             eem_offset, port = divmod(i, 8)
             pads = platform.request("eem{}".format(2 + eem_offset), port)
-            phy = ttl_serdes_7series.InOut_8X(pads.p, pads.n)
+            if i < 4:
+                cls = ttl_serdes_7series.InOut_8X
+            else:
+                cls = ttl_serdes_7series.Output_8X
+            phy = cls(pads.p, pads.n)
             self.submodules += phy
             rtio_channels.append(rtio.Channel.from_phy(phy))
 
@@ -719,6 +720,160 @@ class MITLL(_StandaloneBase):
             phy = ttl_simple.Output(sfp_ctl.led)
             self.submodules += phy
             rtio_channels.append(rtio.Channel.from_phy(phy))
+
+        self.config["HAS_RTIO_LOG"] = None
+        self.config["RTIO_LOG_CHANNEL"] = len(rtio_channels)
+        rtio_channels.append(rtio.LogChannel())
+
+        self.add_rtio(rtio_channels)
+
+
+class USTC(_StandaloneBase):
+    def __init__(self, hw_rev=None, **kwargs):
+        if hw_rev is None:
+            hw_rev = "v1.1"
+        _StandaloneBase.__init__(self, hw_rev=hw_rev, **kwargs)
+
+        self.config["SI5324_AS_SYNTHESIZER"] = None
+        self.config["RTIO_FREQUENCY"] = "125.0"
+
+        platform = self.platform
+        # TODO: grabber on eem0->eemA
+        platform.add_extension(_urukul("eem2", "eem1"))
+        platform.add_extension(_urukul("eem4", "eem3"))
+        platform.add_extension(_dio("eem5"))
+        platform.add_extension(_dio("eem6"))
+        platform.add_extension(_dio("eem7"))
+
+        # EEM5-7: TTL
+        rtio_channels = []
+        for i in range(24):
+            eem_offset, port = divmod(i, 8)
+            pads = platform.request("eem{}".format(5 + eem_offset), port)
+            if i < 4:
+                cls = ttl_serdes_7series.InOut_8X
+            else:
+                cls = ttl_serdes_7series.Output_8X
+            phy = cls(pads.p, pads.n)
+            self.submodules += phy
+            rtio_channels.append(rtio.Channel.from_phy(phy))
+
+        # EEM2-4: Urukul
+        for eem in (2, 4):
+            phy = spi2.SPIMaster(self.platform.request("eem{}_spi_p".format(eem)),
+                    self.platform.request("eem{}_spi_n".format(eem)))
+            self.submodules += phy
+            rtio_channels.append(rtio.Channel.from_phy(phy, ififo_depth=4))
+
+            pads = platform.request("eem{}_dds_reset".format(eem))
+            self.specials += DifferentialOutput(0, pads.p, pads.n)
+
+            for signal in "io_update sw0 sw1 sw2 sw3".split():
+                pads = platform.request("eem{}_{}".format(eem, signal))
+                phy = ttl_serdes_7series.Output_8X(pads.p, pads.n)
+                self.submodules += phy
+                rtio_channels.append(rtio.Channel.from_phy(phy))
+
+        for i in (1, 2):
+            sfp_ctl = platform.request("sfp_ctl", i)
+            phy = ttl_simple.Output(sfp_ctl.led)
+            self.submodules += phy
+            rtio_channels.append(rtio.Channel.from_phy(phy))
+
+        self.config["HAS_RTIO_LOG"] = None
+        self.config["RTIO_LOG_CHANNEL"] = len(rtio_channels)
+        rtio_channels.append(rtio.LogChannel())
+
+        self.add_rtio(rtio_channels)
+
+
+class Tester(_StandaloneBase):
+    """
+    Configuration for CI tests. Contains the maximum number of different EEMs.
+    """
+    def __init__(self, hw_rev=None, **kwargs):
+        if hw_rev is None:
+            hw_rev = "v1.1"
+        _StandaloneBase.__init__(self, hw_rev=hw_rev, **kwargs)
+
+        self.config["SI5324_AS_SYNTHESIZER"] = None
+        # self.config["SI5324_EXT_REF"] = None
+        self.config["RTIO_FREQUENCY"] = "125.0"
+
+        platform = self.platform
+        platform.add_extension(_urukul("eem1", "eem0"))
+        platform.add_extension(_sampler("eem3", "eem2"))
+        platform.add_extension(_zotino("eem4"))
+        platform.add_extension(_dio("eem5"))
+
+        try:
+            # EEM clock fan-out from Si5324, not MMCX, only Kasli/v1.0
+            self.comb += platform.request("clk_sel").eq(1)
+        except ConstraintError:
+            pass
+
+        # EEM5: TTL
+        rtio_channels = []
+        for i in range(8):
+            pads = platform.request("eem5", i)
+            if i < 4:
+                cls = ttl_serdes_7series.InOut_8X
+            else:
+                cls = ttl_serdes_7series.Output_8X
+            phy = cls(pads.p, pads.n)
+            self.submodules += phy
+            rtio_channels.append(rtio.Channel.from_phy(phy))
+
+        # EEM0, EEM1: Urukul
+        phy = spi2.SPIMaster(self.platform.request("eem1_spi_p"),
+                self.platform.request("eem1_spi_n"))
+        self.submodules += phy
+        rtio_channels.append(rtio.Channel.from_phy(phy, ififo_depth=4))
+
+        pads = platform.request("eem1_dds_reset")
+        self.specials += DifferentialOutput(0, pads.p, pads.n)
+
+        for signal in "io_update sw0 sw1 sw2 sw3".split():
+            pads = platform.request("eem1_{}".format(signal))
+            phy = ttl_serdes_7series.Output_8X(pads.p, pads.n)
+            self.submodules += phy
+            rtio_channels.append(rtio.Channel.from_phy(phy))
+
+        # EEM2, EEM3: Sampler
+        phy = spi2.SPIMaster(self.platform.request("eem3_adc_spi_p"),
+                self.platform.request("eem3_adc_spi_n"))
+        self.submodules += phy
+        rtio_channels.append(rtio.Channel.from_phy(phy, ififo_depth=4))
+        phy = spi2.SPIMaster(self.platform.request("eem3_pgia_spi_p"),
+                self.platform.request("eem3_pgia_spi_n"))
+        self.submodules += phy
+        rtio_channels.append(rtio.Channel.from_phy(phy, ififo_depth=4))
+        pads = platform.request("eem3_cnv")
+        phy = ttl_serdes_7series.Output_8X(pads.p, pads.n)
+        self.submodules += phy
+        rtio_channels.append(rtio.Channel.from_phy(phy))
+        sdr = platform.request("eem3_sdr")
+        self.specials += DifferentialOutput(1, sdr.p, sdr.n)
+
+        # EEM4: Zotino
+        phy = spi2.SPIMaster(self.platform.request("eem4_spi_p"),
+                    self.platform.request("eem4_spi_n"))
+        self.submodules += phy
+        rtio_channels.append(rtio.Channel.from_phy(phy, ififo_depth=4))
+
+        for signal in "ldac_n clr_n".split():
+            pads = platform.request("eem4_{}".format(signal))
+            phy = ttl_serdes_7series.Output_8X(pads.p, pads.n)
+            self.submodules += phy
+            rtio_channels.append(rtio.Channel.from_phy(phy))
+
+        for i in (1, 2):
+            sfp_ctl = platform.request("sfp_ctl", i)
+            phy = ttl_simple.Output(sfp_ctl.led)
+            self.submodules += phy
+            rtio_channels.append(rtio.Channel.from_phy(phy))
+
+        print(len(rtio_channels))
 
         self.config["HAS_RTIO_LOG"] = None
         self.config["RTIO_LOG_CHANNEL"] = len(rtio_channels)
@@ -1037,7 +1192,8 @@ def main():
     soc_kasli_args(parser)
     parser.set_defaults(output_dir="artiq_kasli")
     parser.add_argument("-V", "--variant", default="opticlock",
-                        help="variant: opticlock/suservo/sysu/mitll/master/satellite "
+                        help="variant: opticlock/suservo/sysu/mitll/ustc/"
+                             "tester/master/satellite "
                              "(default: %(default)s)")
     args = parser.parse_args()
 
@@ -1050,6 +1206,10 @@ def main():
         cls = SYSU
     elif variant == "mitll":
         cls = MITLL
+    elif variant == "ustc":
+        cls = USTC
+    elif variant == "tester":
+        cls = Tester
     elif variant == "master":
         cls = Master
     elif variant == "satellite":

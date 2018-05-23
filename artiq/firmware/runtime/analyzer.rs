@@ -1,6 +1,6 @@
-use std::io::{self, Write};
-use board::{csr, cache};
-use sched::{Io, TcpListener, TcpStream};
+use io::{Write, Error as IoError};
+use board_misoc::{csr, cache};
+use sched::{Io, TcpListener, TcpStream, Error as SchedError};
 use analyzer_proto::*;
 
 const BUFFER_SIZE: usize = 512 * 1024;
@@ -35,7 +35,7 @@ fn disarm() {
     }
 }
 
-fn worker(stream: &mut TcpStream) -> io::Result<()> {
+fn worker(stream: &mut TcpStream) -> Result<(), IoError<SchedError>> {
     let data = unsafe { &BUFFER.data[..] };
     let overflow_occurred = unsafe { csr::rtio_analyzer::message_encoder_overflow_read() != 0 };
     let total_byte_count = unsafe { csr::rtio_analyzer::dma_byte_count_read() };

@@ -303,6 +303,7 @@ class BasicBlock(NamedValue):
 
     :ivar instructions: (list of :class:`Instruction`)
     """
+    _dump_loc = True
 
     def __init__(self, instructions, name=""):
         super().__init__(TBasicBlock(), name)
@@ -378,12 +379,12 @@ class BasicBlock(NamedValue):
         lines = ["{}:".format(escape_name(self.name))]
         if self.function is not None:
             lines[0] += " ; predecessors: {}".format(
-                ", ".join([escape_name(pred.name) for pred in self.predecessors()]))
+                ", ".join(sorted([escape_name(pred.name) for pred in self.predecessors()])))
 
         # Annotated instructions
         loc = None
         for insn in self.instructions:
-            if loc != insn.loc:
+            if self._dump_loc and loc != insn.loc:
                 loc = insn.loc
 
                 if loc is None:
@@ -409,7 +410,13 @@ class BasicBlock(NamedValue):
 class Argument(NamedValue):
     """
     A function argument.
+
+    :ivar loc: (:class:`pythonparser.source.Range` or None)
+        source location
     """
+    def __init__(self, typ, name):
+        super().__init__(typ, name)
+        self.loc = None
 
     def as_entity(self, type_printer):
         return self.as_operand(type_printer)

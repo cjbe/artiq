@@ -13,10 +13,15 @@ build_misoc = { path = "../libbuild_misoc" }
 build_artiq = { path = "../libbuild_artiq" }
 
 [dependencies]
+failure = { version = "0.1", default-features = false }
+failure_derive = { version = "0.1", default-features = false }
 bitflags = "1.0"
 byteorder = { version = "1.0", default-features = false }
+crc = { version = "1.7", default-features = false }
 log = { version = "0.4", default-features = false }
-board = { path = "../libboard" }
+io = { path = "../libio", features = ["byteorder"] }
+board_misoc = { path = "../libboard_misoc" }
+proto_artiq = { path = "../libproto_artiq" }
 
 [features]
 uart_console = []

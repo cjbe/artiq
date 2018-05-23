@@ -1,26 +1,11 @@
-use std::io::{self, Read};
-use std::btree_map::BTreeMap;
+use alloc::btree_map::BTreeMap;
 
-use sched::Io;
-use sched::{TcpListener, TcpStream};
-use board::{clock, csr};
+use io::Error as IoError;
+use moninj_proto::*;
+use sched::{Io, TcpListener, TcpStream, Error as SchedError};
+use board_misoc::{clock, csr};
 #[cfg(has_drtio)]
 use drtioaux;
-
-use moninj_proto::*;
-
-
-fn check_magic(stream: &mut TcpStream) -> io::Result<()> {
-    const MAGIC: &'static [u8] = b"ARTIQ moninj\n";
-
-    let mut magic: [u8; 13] = [0; 13];
-    stream.read_exact(&mut magic)?;
-    if magic != MAGIC {
-        Err(io::Error::new(io::ErrorKind::InvalidData, "unrecognized magic"))
-    } else {
-        Ok(())
-    }
-}
 
 #[cfg(has_rtio_moninj)]
 fn read_probe_local(channel: u16, probe: u8) -> u32 {
@@ -35,14 +20,14 @@ fn read_probe_local(channel: u16, probe: u8) -> u32 {
 #[cfg(has_drtio)]
 fn read_probe_drtio(nodeno: u8, channel: u16, probe: u8) -> u32 {
     let request = drtioaux::Packet::MonitorRequest { channel: channel, probe: probe };
-    match drtioaux::hw::send(nodeno, &request) {
+    match drtioaux::send(nodeno, &request) {
         Ok(_) => (),
         Err(e) => {
             error!("aux packet error ({})", e);
             return 0;
         }
     }
-    match drtioaux::hw::recv_timeout(nodeno, None) {
+    match drtioaux::recv_timeout(nodeno, None) {
         Ok(drtioaux::Packet::MonitorReply { value }) => return value,
         Ok(_) => error!("received unexpected aux packet"),
         Err(e) => error!("aux packet error ({})", e)
@@ -85,7 +70,7 @@ fn inject_drtio(nodeno: u8, channel: u16, overrd: u8, value: u8) {
         overrd: overrd,
         value: value
     };
-    match drtioaux::hw::send(nodeno, &request) {
+    match drtioaux::send(nodeno, &request) {
         Ok(_) => (),
         Err(e) => error!("aux packet error ({})", e)
     }
@@ -126,14 +111,14 @@ fn read_injection_status_drtio(nodeno: u8, channel: u16, overrd: u8) -> u8 {
         channel: channel,
         overrd: overrd
     };
-    match drtioaux::hw::send(nodeno, &request) {
+    match drtioaux::send(nodeno, &request) {
         Ok(_) => (),
         Err(e) => {
             error!("aux packet error ({})", e);
             return 0;
         }
     }
-    match drtioaux::hw::recv_timeout(nodeno, None) {
+    match drtioaux::recv_timeout(nodeno, None) {
         Ok(drtioaux::Packet::InjectionStatusReply { value }) => return value,
         Ok(_) => error!("received unexpected aux packet"),
         Err(e) => error!("aux packet error ({})", e)
@@ -160,11 +145,11 @@ fn read_injection_status(channel: u32, probe: u8) -> u8 {
     0
 }
 
-fn connection_worker(io: &Io, mut stream: &mut TcpStream) -> io::Result<()> {
+fn connection_worker(io: &Io, mut stream: &mut TcpStream) -> Result<(), Error<SchedError>> {
     let mut watch_list = BTreeMap::new();
     let mut next_check = 0;
 
-    check_magic(&mut stream)?;
+    read_magic(&mut stream)?;
     info!("new connection from {}", stream.remote_endpoint());
 
     loop {
@@ -200,7 +185,7 @@ fn connection_worker(io: &Io, mut stream: &mut TcpStream) -> io::Result<()> {
         if clock::get_ms() > next_check {
             for (&(channel, probe), previous) in watch_list.iter_mut() {
                 let current = read_probe(channel, probe);
-                if previous.is_none() || (previous.unwrap() != current) {
+                if previous.is_none() || previous.unwrap() != current {
                     let message = DeviceMessage::MonitorStatus {
                         channel: channel,
                         probe: probe,
@@ -216,7 +201,7 @@ fn connection_worker(io: &Io, mut stream: &mut TcpStream) -> io::Result<()> {
             next_check = clock::get_ms() + 200;
         }
 
-        io.relinquish().unwrap();
+        io.relinquish().map_err(|err| Error::Io(IoError::Other(err)))?;
     }
 }
 

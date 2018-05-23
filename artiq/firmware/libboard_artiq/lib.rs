@@ -1,17 +1,29 @@
-#![feature(asm, lang_items)]
+#![feature(asm, lang_items, never_type)]
 #![no_std]
 
+extern crate failure;
+#[cfg(has_drtio)]
+#[macro_use]
+extern crate failure_derive;
 #[macro_use]
 extern crate bitflags;
 extern crate byteorder;
+extern crate crc;
 #[macro_use]
 extern crate log;
-extern crate board;
+extern crate io;
+extern crate board_misoc;
+extern crate proto_artiq;
 
 pub mod pcr;
 
 pub mod i2c;
 pub mod spi;
+
+#[cfg(has_kernel_cpu)]
+pub mod mailbox;
+#[cfg(has_kernel_cpu)]
+pub mod rpc_queue;
 
 #[cfg(has_si5324)]
 pub mod si5324;
@@ -28,3 +40,6 @@ mod ad9154_reg;
 pub mod ad9154;
 #[cfg(has_allaki_atts)]
 pub mod hmc542;
+
+#[cfg(has_drtio)]
+pub mod drtioaux;

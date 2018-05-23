@@ -10,40 +10,67 @@ class SUServo(EnvExperiment):
             self.setattr_device("suservo0_ch{}".format(i))
 
     def run(self):
-        # self.led()
         self.init()
 
     def p(self, d):
-        for name, value in zip("ftw1 b1 pow cfg offset a1 ftw0 b0".split(), d):
-            print(name, hex(value))
+        mask = 1 << 18 - 1
+        for name, val in zip("ftw1 b1 pow cfg offset a1 ftw0 b0".split(), d):
+            val = -(val & mask) + (val & ~mask)
+            print("{}: {:#x} = {}".format(name, val, val))
+
+    @rpc(flags={"async"})
+    def p1(self, adc, asf, st):
+        print("ADC: {:10s}, ASF: {:10s}, clipped: {}".format(
+            "#"*int(adc), "#"*int(asf*10), (st >> 8) & 1), end="\r")
 
     @kernel
     def init(self):
         self.core.break_realtime()
         self.core.reset()
+        self.led()
 
         self.suservo0.init()
         delay(1*us)
         # ADC PGIA gain
-        self.suservo0.set_pgia_mu(0, 0)
+        for i in range(8):
+            self.suservo0.set_pgia_mu(i, 0)
+            delay(10*us)
         # DDS attenuator
-        self.suservo0.cpld0.set_att_mu(0, 64)
+        self.suservo0.cpld0.set_att(0, 10.)
         delay(1*us)
-        # Servo is done
+        # Servo is done and disabled
         assert self.suservo0.get_status() & 0xff == 2
-        delay(10*us)
 
-        # set up profile 0 on channel 0
-        self.suservo0_ch0.set_y_mu(0, 0)
-        self.suservo0_ch0.set_iir_mu(
-                profile=0, adc=0, a1=-0x800, b0=0x1000, b1=0, delay=0)
-        delay(10*us)
-        self.suservo0_ch0.set_dds_mu(
-                profile=0, ftw=0x12345667, offset=0x1000, pow=0xaa55)
-        # enable channel
+        # set up profile 0 on channel 0:
+        delay(120*us)
+        self.suservo0_ch0.set_y(
+            profile=0,
+            y=0.  # clear integrator
+        )
+        self.suservo0_ch0.set_iir(
+            profile=0,
+            adc=7,  # take data from Sampler channel 7
+            gain=-.1,  # -0.1 P gain
+            corner=70*Hz,  # very low corner frequency
+            limit=0.,  # unlimited integrator gain
+            delay=0.  # no IIR update delay after enabling
+        )
+        # setpoint 0.5 (5 V with above PGIA gain setting)
+        # 71 MHz
+        # 0 phase
+        self.suservo0_ch0.set_dds(
+            profile=0,
+            offset=-.5,  # 5 V with above PGIA settings
+            frequency=71*MHz,
+            phase=0.)
+        # enable RF, IIR updates and profile 0
         self.suservo0_ch0.set(en_out=1, en_iir=1, profile=0)
-        # enable servo iterations
-        self.suservo0.set_config(1)
+        # enable global servo iterations
+        self.suservo0.set_config(enable=1)
+
+        # check servo enabled
+        assert self.suservo0.get_status() & 0x01 == 1
+        delay(10*us)
 
         # read back profile data
         data = [0] * 8
@@ -51,40 +78,22 @@ class SUServo(EnvExperiment):
         self.p(data)
         delay(10*ms)
 
-        # check servo status
-        assert self.suservo0.get_status() & 0xff == 1
-        delay(10*us)
-
-        # reach back ADC data
-        assert self.suservo0.get_adc_mu(0) == 0
-        delay(10*us)
-
-        # read out IIR data
-        assert self.suservo0_ch0.get_y_mu(0) == 0x1ffff
-        delay(10*us)
-
-        assert self.suservo0.get_status() & 0xff00 == 0x0100
-        delay(10*us)
-
-        # repeatedly clear the IIR state/integrator
-        # with the ADC yielding 0's and given the profile configuration,
-        # this will lead to a slow ram up of the amplitude over about 40µs
-        # followed by saturation and repetition.
         while True:
-            self.suservo0_ch0.set(1, 0, 0)
-            delay(1*us)
-            assert self.suservo0.get_status() & 0xff00 == 0x0100
+            self.suservo0.set_config(0)
             delay(10*us)
-            assert self.suservo0.get_status() & 0xff00 == 0x0000
+            v = self.suservo0.get_adc(7)
+            delay(30*us)
+            w = self.suservo0_ch0.get_y(0)
+            delay(20*us)
+            x = self.suservo0.get_status()
             delay(10*us)
-            self.suservo0_ch0.set_y_mu(0, 0)
-            delay(1*us)
-            self.suservo0_ch0.set(1, 1, 0)
-            delay(60*us)
+            self.suservo0.set_config(1)
+            self.p1(v, w, x)
+            delay(20*ms)
 
     @kernel
     def led(self):
         self.core.break_realtime()
-        for i in range(10):
+        for i in range(3):
             self.led0.pulse(.1*s)
             delay(.1*s)

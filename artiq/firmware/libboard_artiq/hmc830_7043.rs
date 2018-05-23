@@ -11,7 +11,7 @@
  */
 
 mod clock_mux {
-    use board::csr;
+    use board_misoc::csr;
 
     const CLK_SRC_EXT_SEL : u8 = 1 << 0;
     const REF_CLK_SRC_SEL : u8 = 1 << 1;
@@ -28,7 +28,7 @@ mod clock_mux {
 }
 
 mod hmc830 {
-    use board::{csr, clock};
+    use board_misoc::{csr, clock};
 
     const HMC830_WRITES: [(u8, u32); 16] = [
         (0x0, 0x20),
@@ -52,8 +52,6 @@ mod hmc830 {
     fn spi_setup() {
         unsafe {
             while csr::converter_spi::idle_read() == 0 {}
-            // rising egde on CS since cs_polarity still 0
-            // selects "HMC Mode"
             csr::converter_spi::offline_write(0);
             csr::converter_spi::end_write(1);
             csr::converter_spi::cs_polarity_write(0b0001);
@@ -61,14 +59,21 @@ mod hmc830 {
             csr::converter_spi::clk_phase_write(0);
             csr::converter_spi::lsb_first_write(0);
             csr::converter_spi::half_duplex_write(0);
+            csr::converter_spi::length_write(32 - 1);
             csr::converter_spi::div_write(16 - 2);
             csr::converter_spi::cs_write(1 << csr::CONFIG_CONVERTER_SPI_HMC830_CS);
+        }
+    }
 
+    pub fn select_spi_mode() {
+        spi_setup();
+        unsafe {
+            // rising egde on CS since cs_polarity still 0
+            // selects "HMC Mode"
             // do a dummy cycle with cs still high to clear CS
             csr::converter_spi::length_write(0);
             csr::converter_spi::data_write(0);
             while csr::converter_spi::writable_read() == 0 {}
-
             csr::converter_spi::length_write(32 - 1);
         }
     }
@@ -107,31 +112,33 @@ mod hmc830 {
 
     pub fn init() -> Result<(), &'static str> {
         spi_setup();
-        info!("HMC830 configuration...");
+        info!("loading configuration...");
         for &(addr, data) in HMC830_WRITES.iter() {
             write(addr, data);
         }
+        info!("  ...done");
 
         let t = clock::get_ms();
         info!("waiting for lock...");
         while read(0x12) & 0x02 == 0 {
             if clock::get_ms() > t + 2000 {
-                error!("HMC830 lock timeout. Register dump:");
+                error!("  lock timeout. Register dump:");
                 for addr in 0x00..0x14 {
                     // These registers don't exist (in the data sheet at least)
                     if addr == 0x0d || addr == 0x0e { continue; }
-                    error!("[0x{:02x}] = 0x{:04x}", addr, read(addr));
+                    error!("  [0x{:02x}] = 0x{:04x}", addr, read(addr));
                 }
-                return Err("HMC830 lock timeout");
+                return Err("lock timeout");
             }
         }
+        info!("  ...locked");
 
         Ok(())
     }
 }
 
 pub mod hmc7043 {
-    use board::csr;
+    use board_misoc::csr;
 
     // To do: check which output channels we actually need
     const DAC_CLK_DIV: u32 = 2;
@@ -217,7 +224,7 @@ pub mod hmc7043 {
 
     pub fn shutdown() -> Result<(), &'static str> {
         spi_setup();
-        info!("HMC7043 shutdown...");
+        info!("shutting down");
         write(0x1, 0x1);   // Sleep mode
 
         Ok(())
@@ -225,7 +232,7 @@ pub mod hmc7043 {
 
     pub fn init() -> Result<(), &'static str> {
         spi_setup();
-        info!("HMC7043 configuration...");
+        info!("loading configuration...");
 
         write(0x0, 0x1);   // Software reset
         write(0x0, 0x0);
@@ -267,6 +274,8 @@ pub mod hmc7043 {
             write(channel_base + 0x8, 0x08)
         }
 
+        info!("  ...done");
+
         Ok(())
     }
 
@@ -291,7 +300,8 @@ pub mod hmc7043 {
 
 pub fn init() -> Result<(), &'static str> {
     clock_mux::init();
-    /* must be the first SPI init because of HMC830 SPI mode selection */
+    /* do not use other SPI devices before HMC830 SPI mode selection */
+    hmc830::select_spi_mode();
     hmc830::detect()?;
     hmc7043::detect()?;
     hmc7043::shutdown()?;
