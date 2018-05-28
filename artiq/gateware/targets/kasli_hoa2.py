@@ -20,7 +20,7 @@ from artiq.gateware import eem
 
 class Master(_MasterBase):
     def __init__(self, *args, **kwargs):
-        _MasterBase.__init__(self, *args, **kwargs)
+        _MasterBase.__init__(self, *args, rtio_clk_freq=125e6, **kwargs)
 
         platform = self.platform
 
@@ -48,7 +48,7 @@ class Master(_MasterBase):
 
 class Satellite(_SatelliteBase):
     def __init__(self, *args, **kwargs):
-        _SatelliteBase.__init__(self, *args, **kwargs)
+        _SatelliteBase.__init__(self, *args, rtio_clk_freq=125e6, **kwargs)
 
         platform = self.platform
 

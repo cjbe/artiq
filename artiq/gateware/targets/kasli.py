@@ -611,7 +611,7 @@ class _MasterBase(MiniSoC, AMPSoC):
         AMPSoC.__init__(self)
 
         platform = self.platform
-        rtio_clk_freq = 150e6
+        rtio_clk_freq = kwargs.get("rtio_clk_freq", 150e6)
 
         i2c = self.platform.request("i2c")
         self.submodules.i2c = gpio.GPIOTristate([i2c.scl, i2c.sda])
@@ -740,7 +740,7 @@ class _SatelliteBase(BaseSoC):
                  **kwargs)
 
         platform = self.platform
-        rtio_clk_freq = 150e6
+        rtio_clk_freq = kwargs.get("rtio_clk_freq", 150e6)
 
         disable_si5324_ibuf = Signal(reset=1)
         disable_si5324_ibuf.attr.add("no_retiming")
