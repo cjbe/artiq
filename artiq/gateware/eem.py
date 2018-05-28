@@ -3,7 +3,7 @@ from migen.build.generic_platform import *
 from migen.genlib.io import DifferentialOutput
 
 from artiq.gateware import rtio
-from artiq.gateware.rtio.phy import spi2
+from artiq.gateware.rtio.phy import spi2, ttl_simple
 
 
 def _eem_signal(i):
@@ -154,9 +154,6 @@ class Urukul(_EEM):
         target.submodules += phy
         target.rtio_channels.append(rtio.Channel.from_phy(phy, ififo_depth=4))
 
-        pads = target.platform.request("urukul{}_dds_reset".format(eem))
-        target.specials += DifferentialOutput(0, pads.p, pads.n)
-
         pads = target.platform.request("urukul{}_io_update".format(eem))
         phy = ttl_out_cls(pads.p, pads.n)
         target.submodules += phy
@@ -167,6 +164,12 @@ class Urukul(_EEM):
                 phy = ttl_out_cls(pads.p, pads.n)
                 target.submodules += phy
                 target.rtio_channels.append(rtio.Channel.from_phy(phy))
+
+        pads = target.platform.request("urukul{}_dds_reset".format(eem))
+        s = Signal()
+        target.specials += DifferentialOutput(s, pads.p, pads.n)
+        phy = ttl_simple.ClockGen(s)
+        target.rtio_channels.append(rtio.Channel.from_phy(phy))
 
 
 class Sampler(_EEM):
