@@ -37,7 +37,7 @@ class Master(_MasterBase):
         eem.DIO.add_std(self, 1,
             ttl_serdes_7series.InOut_8X, ttl_serdes_7series.InOut_8X)
         eem.Urukul.add_std(self, 3, 2, ttl_serdes_7series.Output_8X)
-        eem.Zotino.add_std(self, 4, ttl_simple.Output)
+        eem.Zotino.add_std(self, 4, ttl_serdes_7series.Output_8X)
 
         self.config["HAS_RTIO_LOG"] = None
         self.config["RTIO_LOG_CHANNEL"] = len(self.rtio_channels)
