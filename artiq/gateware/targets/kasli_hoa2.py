@@ -40,8 +40,8 @@ class Master(_MasterBase):
         eem.Zotino.add_std(self, 4, ttl_simple.Output)
 
         self.config["HAS_RTIO_LOG"] = None
-        self.config["RTIO_LOG_CHANNEL"] = len(rtio_channels)
-        rtio_channels.append(rtio.LogChannel())
+        self.config["RTIO_LOG_CHANNEL"] = len(self.rtio_channels)
+        self.rtio_channels.append(rtio.LogChannel())
 
         self.add_rtio(self.rtio_channels)
 
