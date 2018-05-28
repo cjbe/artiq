@@ -599,7 +599,7 @@ class _MasterBase(MiniSoC, AMPSoC):
     }
     mem_map.update(MiniSoC.mem_map)
 
-    def __init__(self, **kwargs):
+    def __init__(self, rtio_clk_freq=150e6, **kwargs):
         MiniSoC.__init__(self,
                          cpu_type="or1k",
                          sdram_controller_type="minicon",
@@ -611,7 +611,6 @@ class _MasterBase(MiniSoC, AMPSoC):
         AMPSoC.__init__(self)
 
         platform = self.platform
-        rtio_clk_freq = kwargs.get("rtio_clk_freq", 150e6)
 
         i2c = self.platform.request("i2c")
         self.submodules.i2c = gpio.GPIOTristate([i2c.scl, i2c.sda])
@@ -731,7 +730,7 @@ class _SatelliteBase(BaseSoC):
     }
     mem_map.update(BaseSoC.mem_map)
 
-    def __init__(self, **kwargs):
+    def __init__(self, , rtio_clk_freq=150e6, **kwargs):
         BaseSoC.__init__(self,
                  cpu_type="or1k",
                  sdram_controller_type="minicon",
@@ -740,7 +739,6 @@ class _SatelliteBase(BaseSoC):
                  **kwargs)
 
         platform = self.platform
-        rtio_clk_freq = kwargs.get("rtio_clk_freq", 150e6)
 
         disable_si5324_ibuf = Signal(reset=1)
         disable_si5324_ibuf.attr.add("no_retiming")
