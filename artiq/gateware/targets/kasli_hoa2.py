@@ -30,7 +30,7 @@ class Master(_MasterBase):
         except ConstraintError:
             pass
 
-        rtio_channels = []
+        self.rtio_channels = []
 
         eem.DIO.add_std(self, 0,
             ttl_serdes_7series.InOut_8X, ttl_serdes_7series.InOut_8X)
@@ -43,7 +43,7 @@ class Master(_MasterBase):
         self.config["RTIO_LOG_CHANNEL"] = len(rtio_channels)
         rtio_channels.append(rtio.LogChannel())
 
-        self.add_rtio(rtio_channels)
+        self.add_rtio(self.rtio_channels)
 
 
 class Satellite(_SatelliteBase):
@@ -58,12 +58,12 @@ class Satellite(_SatelliteBase):
         except ConstraintError:
             pass
 
-        rtio_channels = []
+        self.rtio_channels = []
 
         eem.Urukul.add_std(self, 1, 0, ttl_serdes_7series.Output_8X)
         eem.Urukul.add_std(self, 3, 2, ttl_serdes_7series.Output_8X)
 
-        self.add_rtio(rtio_channels)
+        self.add_rtio(self.rtio_channels)
 
 
 def main():
