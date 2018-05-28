@@ -730,7 +730,7 @@ class _SatelliteBase(BaseSoC):
     }
     mem_map.update(BaseSoC.mem_map)
 
-    def __init__(self, , rtio_clk_freq=150e6, **kwargs):
+    def __init__(self, rtio_clk_freq=150e6, **kwargs):
         BaseSoC.__init__(self,
                  cpu_type="or1k",
                  sdram_controller_type="minicon",
