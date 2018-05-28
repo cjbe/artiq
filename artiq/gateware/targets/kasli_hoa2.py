@@ -14,62 +14,8 @@ from artiq.gateware.rtio.phy import ttl_simple, ttl_serdes_7series, spi2
 from artiq.build_soc import build_artiq_soc
 from artiq import __version__ as artiq_version
 
-from artiq.gateware.targets.kasli import (_MasterBase, _SatelliteBase, _dio,
-    _urukul, _zotino)
-
-
-def add_dio(cls, eem):
-    cls.platform.add_extension(_dio(eem))
-    rtio_channels = []
-    for port in range(8):
-        pads = cls.platform.request(eem, port)
-        phy = ttl_serdes_7series.InOut_8X(pads.p, pads.n)
-        cls.submodules += phy
-        rtio_channels.append(rtio.Channel.from_phy(phy))
-    return rtio_channels
-
-
-def add_urukul(cls, eem, eem_aux):
-    cls.platform.add_extension(_urukul(eem, eem_aux))
-    rtio_channels = []
-
-    phy = spi2.SPIMaster(cls.platform.request(eem+"_spi_p"),
-            cls.platform.request(eem+"_spi_n"))
-    cls.submodules += phy
-    rtio_channels.append(rtio.Channel.from_phy(phy, ififo_depth=4))
-
-    pads = cls.platform.request(eem+"_dds_reset")
-    s = Signal()
-    cls.specials += DifferentialOutput(s, pads.p, pads.n)
-    phy = ttl_simple.ClockGen(s)
-    cls.submodules += phy
-    rtio_channels.append(rtio.Channel.from_phy(phy))
-
-    for signal in "io_update sw0 sw1 sw2 sw3".split():
-        pads = cls.platform.request(eem+"_{}".format(signal))
-        phy = ttl_serdes_7series.Output_8X(pads.p, pads.n)
-        cls.submodules += phy
-        rtio_channels.append(rtio.Channel.from_phy(phy))
-
-    return rtio_channels
-
-
-def add_zotino(cls, eem):
-    cls.platform.add_extension(_zotino(eem))
-    rtio_channels = []
-
-    phy = spi2.SPIMaster(cls.platform.request(eem+"_spi_p"),
-            cls.platform.request(eem+"_spi_n"))
-    cls.submodules += phy
-    rtio_channels.append(rtio.Channel.from_phy(phy, ififo_depth=4))
-
-    for signal in "ldac_n clr_n".split():
-        pads = cls.platform.request(eem+"_{}".format(signal))
-        phy = ttl_serdes_7series.Output_8X(pads.p, pads.n)
-        cls.submodules += phy
-        rtio_channels.append(rtio.Channel.from_phy(phy))
-
-    return rtio_channels
+from artiq.gateware.targets.kasli import (_MasterBase, _SatelliteBase)
+from artiq.gateware import eem
 
 
 class Master(_MasterBase):
@@ -86,10 +32,12 @@ class Master(_MasterBase):
 
         rtio_channels = []
 
-        rtio_channels += add_dio(self, "eem0")
-        rtio_channels += add_dio(self, "eem1")
-        rtio_channels += add_urukul(self, "eem3", "eem2")
-        rtio_channels += add_zotino(self, "eem4")
+        eem.DIO.add_std(self, 0,
+            ttl_serdes_7series.InOut_8X, ttl_serdes_7series.InOut_8X)
+        eem.DIO.add_std(self, 1,
+            ttl_serdes_7series.InOut_8X, ttl_serdes_7series.InOut_8X)
+        eem.Urukul.add_std(self, 3, 2, ttl_serdes_7series.Output_8X)
+        eem.Zotino.add_std(self, 4, ttl_simple.Output)
 
         self.config["HAS_RTIO_LOG"] = None
         self.config["RTIO_LOG_CHANNEL"] = len(rtio_channels)
@@ -112,8 +60,8 @@ class Satellite(_SatelliteBase):
 
         rtio_channels = []
 
-        rtio_channels += add_urukul(self, "eem1", "eem0")
-        rtio_channels += add_urukul(self, "eem3", "eem2")
+        eem.Urukul.add_std(self, 1, 0, ttl_serdes_7series.Output_8X)
+        eem.Urukul.add_std(self, 3, 2, ttl_serdes_7series.Output_8X)
 
         self.add_rtio(rtio_channels)
 
