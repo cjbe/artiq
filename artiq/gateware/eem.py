@@ -169,6 +169,7 @@ class Urukul(_EEM):
         s = Signal()
         target.specials += DifferentialOutput(s, pads.p, pads.n)
         phy = ttl_simple.ClockGen(s)
+        target.submodules += phy
         target.rtio_channels.append(rtio.Channel.from_phy(phy))
 
 
