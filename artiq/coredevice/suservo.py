@@ -1,4 +1,4 @@
-from artiq.language.core import kernel, delay, now_mu, delay_mu
+from artiq.language.core import kernel, delay, now_mu, delay_mu, portable
 from artiq.language.units import us, ns
 from artiq.coredevice.rtio import rtio_output, rtio_input_data
 from artiq.coredevice import spi2 as spi
@@ -15,8 +15,43 @@ T_CYCLE = (2*(8 + 64) + 2 + 1)*8*ns
 COEFF_SHIFT = 11
 
 
+@portable
+def y_mu_to_full_scale(y):
+    """Convert Servo Y data from machine units to units of full scale."""
+    return y*(1./(1 << COEFF_WIDTH - 1))
+
+
+@portable
+def adc_mu_to_volts(x, gain):
+    """Convert Servo ADC data from machine units to Volt."""
+    val = (x >> 1) & 0xffff
+    mask = 1 << 15
+    val = -(val & mask) + (val & ~mask)
+    return sampler.adc_mu_to_volt(val, gain)
+
+
 class SUServo:
-    """Sampler-Urukul Servo configuration device.
+    """Sampler-Urukul Servo parent and configuration device.
+
+    Sampler-Urukul Servo is a integrated device controlling one
+    8-channel ADC (Sampler) and two 4-channel DDS (Urukuls) with a DSP engine
+    connecting the ADC data and the DDS output amplitudes to enable
+    feedback. SUServo can for example be used to implement intensity
+    stabilization of laser beams with an AOM and a photodetector.
+
+    Additionally SUServo supports multiple preconfigured profiles per channel
+    and features like automatic integrator hold.
+
+    Notes:
+
+        * See the SUServo variant of the Kasli target for an example of how to
+          connect the gateware and the devices. Sampler and each Urukul need
+          two EEM connections.
+        * Ensure that both Urukuls are AD9910 variants and have the on-board
+          dip switches set to 1100 (first two on, last two off).
+        * Refer to the Sampler and Urukul documentation and the SUServo
+          example device database for runtime configuration of the devices
+          (PLLs, gains, clock routing etc.)
 
     :param channel: RTIO channel number
     :param pgia_device: Name of the Sampler PGIA gain setting SPI bus
@@ -49,7 +84,7 @@ class SUServo:
         self.channel = channel
         self.gains = gains
         self.ref_period_mu = self.core.seconds_to_mu(
-                self.core.coarse_ref_period)
+            self.core.coarse_ref_period)
         assert self.ref_period_mu == self.core.ref_multiplier
 
     @kernel
@@ -110,12 +145,15 @@ class SUServo:
     def set_config(self, enable):
         """Set SU Servo configuration.
 
-        Disabling takes up to 2 Servo cycles (~2.2 µs) to clear
-        the processing pipeline.
-
         This method advances the timeline by one Servo memory access.
+        It does not support RTIO event replacement.
 
-        :param enable: Enable Servo operation.
+        :param enable (int): Enable Servo operation. Enabling starts servo
+            iterations beginning with the ADC sampling stage. This also
+            provides a mean for synchronization of Servo updates to other RTIO
+            activity.
+            Disabling takes up to 2 Servo cycles (~2.2 µs) to clear the
+            processing pipeline.
         """
         self.write(CONFIG_ADDR, enable)
 
@@ -124,7 +162,16 @@ class SUServo:
         """Get current SU Servo status.
 
         This method does not advance the timeline but consumes all slack.
+
+        The ``done`` bit indicates that a SUServo cycle has completed.
+        It is pulsed for one RTIO cycle every SUServo cycle and asserted
+        continuously when the servo is not ``enabled`` and the pipeline has
+        drained (the last DDS update is done).
+
         This method returns and clears the clip indicator for all channels.
+        An asserted clip indicator corresponds to the servo having encountered
+        an input signal on an active channel that would have resulted in the
+        IIR state exceeding the output range.
 
         :return: Status. Bit 0: enabled, bit 1: done,
           bits 8-15: channel clip indicators.
@@ -167,14 +214,16 @@ class SUServo:
 
         This method does not advance the timeline but consumes all slack.
 
+        The PGIA gain setting must be known prior to using this method, either
+        by setting the gain (:meth:`set_pgia_mu`) or by supplying it
+        (:attr:`gains` or via the constructor/device database).
+
         :param adc: ADC channel number (0-7)
         :return: ADC voltage
         """
-        val = (self.get_adc_mu(channel) >> 1) & 0xffff
-        mask = 1 << 15
-        val = -(val & mask) + (val & ~mask)
+        val = self.get_adc_mu(channel)
         gain = (self.gains >> (channel*2)) & 0b11
-        return sampler.adc_mu_to_volt(val, gain)
+        return adc_mu_to_volts(val, gain)
 
 
 class Channel:
@@ -238,6 +287,8 @@ class Channel:
         :param frequency: DDS frequency in Hz
         :param offset: IIR offset (negative setpoint) in units of full scale.
             For positive ADC voltages as setpoints, this should be negative.
+            Due to rounding and representation as two's complement,
+            ``offset=1`` can not be represented while ``offset=-1`` can.
         :param phase: DDS phase in turns
         """
         if self.servo_channel < 4:
@@ -261,9 +312,9 @@ class Channel:
         Where:
 
             * :math:`y_n` and :math:`y_{n-1}` are the current and previous
-              filter outputs, clipped to :math:`[0, 1]`.
+              filter outputs, clipped to :math:`[0, 1[`.
             * :math:`x_n` and :math:`x_{n-1}` are the current and previous
-              filter inputs
+              filter inputs in :math:`[-1, 1[`.
             * :math:`o` is the offset
             * :math:`a_0` is the normalization factor :math:`2^{11}`
             * :math:`a_1` is the feedback gain
@@ -413,7 +464,7 @@ class Channel:
         :param profile: Profile number (0-31)
         :return: IIR filter output in Y0 units of full scale
         """
-        return self.get_y_mu(profile)*(1./(1 << COEFF_WIDTH - 1))
+        return y_mu_to_full_scale(self.get_y_mu(profile))
 
     @kernel
     def set_y_mu(self, profile, y):
