@@ -17,13 +17,13 @@ COEFF_SHIFT = 11
 
 @portable
 def y_mu_to_full_scale(y):
-    """Convert Servo Y data from machine units to units of full scale."""
+    """Convert servo Y data from machine units to units of full scale."""
     return y*(1./(1 << COEFF_WIDTH - 1))
 
 
 @portable
 def adc_mu_to_volts(x, gain):
-    """Convert Servo ADC data from machine units to Volt."""
+    """Convert servo ADC data from machine units to Volt."""
     val = (x >> 1) & 0xffff
     mask = 1 << 15
     val = -(val & mask) + (val & ~mask)
@@ -36,20 +36,21 @@ class SUServo:
     Sampler-Urukul Servo is a integrated device controlling one
     8-channel ADC (Sampler) and two 4-channel DDS (Urukuls) with a DSP engine
     connecting the ADC data and the DDS output amplitudes to enable
-    feedback. SUServo can for example be used to implement intensity
-    stabilization of laser beams with an AOM and a photodetector.
+    feedback. SU Servo can for example be used to implement intensity
+    stabilization of laser beams with an amplifier and AOM driven by Urukul
+    and a photodetector connected to Sampler.
 
-    Additionally SUServo supports multiple preconfigured profiles per channel
+    Additionally SU Servo supports multiple preconfigured profiles per channel
     and features like automatic integrator hold.
 
     Notes:
 
-        * See the SUServo variant of the Kasli target for an example of how to
+        * See the SU Servo variant of the Kasli target for an example of how to
           connect the gateware and the devices. Sampler and each Urukul need
           two EEM connections.
         * Ensure that both Urukuls are AD9910 variants and have the on-board
           dip switches set to 1100 (first two on, last two off).
-        * Refer to the Sampler and Urukul documentation and the SUServo
+        * Refer to the Sampler and Urukul documentation and the SU Servo
           example device database for runtime configuration of the devices
           (PLLs, gains, clock routing etc.)
 
@@ -89,9 +90,10 @@ class SUServo:
 
     @kernel
     def init(self):
-        """Initialize the Servo, Sampler and both Urukuls.
+        """Initialize the servo, Sampler and both Urukuls.
 
-        Leaves the Servo disabled (see :meth:`set_config`), resets all DDS.
+        Leaves the servo disabled (see :meth:`set_config`), resets and
+        configures all DDS.
 
         Urukul initialization is performed blindly as there is no readback from
         the DDS or the CPLDs.
@@ -120,7 +122,7 @@ class SUServo:
 
     @kernel
     def write(self, addr, value):
-        """Write to Servo memory.
+        """Write to servo memory.
 
         This method advances the timeline by one coarse RTIO cycle.
 
@@ -132,7 +134,7 @@ class SUServo:
 
     @kernel
     def read(self, addr):
-        """Read from Servo memory.
+        """Read from servo memory.
 
         This method does not advance the timeline but consumes all slack.
 
@@ -145,14 +147,16 @@ class SUServo:
     def set_config(self, enable):
         """Set SU Servo configuration.
 
-        This method advances the timeline by one Servo memory access.
+        This method advances the timeline by one servo memory access.
         It does not support RTIO event replacement.
 
-        :param enable (int): Enable Servo operation. Enabling starts servo
-            iterations beginning with the ADC sampling stage. This also
-            provides a mean for synchronization of Servo updates to other RTIO
-            activity.
-            Disabling takes up to 2 Servo cycles (~2.2 µs) to clear the
+        :param enable (int): Enable servo operation. Enabling starts servo
+            iterations beginning with the ADC sampling stage. The first DDS
+            update will happen about two servo cycles (~2.3 µs) after enabling
+            the servo. The delay is deterministic.
+            This also provides a mean for synchronization of servo updates to
+            other RTIO activity.
+            Disabling takes up to two servo cycles (~2.3 µs) to clear the
             processing pipeline.
         """
         self.write(CONFIG_ADDR, enable)
@@ -163,8 +167,8 @@ class SUServo:
 
         This method does not advance the timeline but consumes all slack.
 
-        The ``done`` bit indicates that a SUServo cycle has completed.
-        It is pulsed for one RTIO cycle every SUServo cycle and asserted
+        The ``done`` bit indicates that a SU Servo cycle has completed.
+        It is pulsed for one RTIO cycle every SU Servo cycle and asserted
         continuously when the servo is not ``enabled`` and the pipeline has
         drained (the last DDS update is done).
 
@@ -246,10 +250,13 @@ class Channel:
     def set(self, en_out, en_iir=0, profile=0):
         """Operate channel.
 
-        This method does not advance the timeline.
-        Output RF switch setting takes effect immediately.
-        IIR updates take place once the RF switch has been enabled for the
-        configured delay and the profile setting has been stable.
+        This method does not advance the timeline. Output RF switch setting
+        takes effect immediately and is independent of any other activity
+        (profile settings, other channels). The RF switch behaves like
+        ``TTLOut``. RTIO event replacement is supported. IIR updates take place
+        once the RF switch has been enabled for the configured delay and the
+        profile setting has been stable. Profile changes take between one and
+        two servo cycles to reach the DDS.
 
         :param en_out: RF switch enable
         :param en_iir: IIR updates enable
@@ -279,7 +286,7 @@ class Channel:
     def set_dds(self, profile, frequency, offset, phase=0.):
         """Set profile DDS coefficients.
 
-        This method advances the timeline by four Servo memory accesses.
+        This method advances the timeline by four servo memory accesses.
         Profile parameter changes are not synchronized. Activate a different
         profile or stop the servo to ensure synchronous changes.
 
@@ -332,7 +339,7 @@ class Channel:
         :param b1: 18 bit signed B1 coefficient (old,
             X1 coefficient, feed forward, proportional gain)
         :param dly: IIR update suppression time. In units of IIR cycles
-            (~1.2 µs, 0-255)
+            (~1.2 µs, 0-255).
         """
         base = (self.servo_channel << 8) | (profile << 3)
         self.servo.write(base + 3, adc | (dly << 8))
@@ -341,10 +348,10 @@ class Channel:
         self.servo.write(base + 7, b0)
 
     @kernel
-    def set_iir(self, profile, adc, gain, corner=0., limit=0., delay=0.):
+    def set_iir(self, profile, adc, kp, ki=0., g=0., delay=0.):
         """Set profile IIR coefficients.
 
-        This method advances the timeline by four Servo memory accesses.
+        This method advances the timeline by four servo memory accesses.
         Profile parameter changes are not synchronized. Activate a different
         profile or stop the servo to ensure synchronous changes.
 
@@ -354,81 +361,74 @@ class Channel:
         coefficient quantization errors):
 
         .. math::
-            H(s) = K \\frac{1 + \\frac{s}{\\omega_0}}
-                {\\frac{1}{g} + \\frac{s}{\\omega_0}}
+            H(s) = k_p + \\frac{k_i}{s + \\frac{k_i}{g}}
 
         Where:
             * :math:`s = \\sigma + i\\omega` is the complex frequency
-            * :math:`K` is the proportional gain
-            * :math:`\\omega_0 = 2\\pi f_0` is the integrator corner frequency
+            * :math:`k_p` is the proportional gain
+            * :math:`k_i` is the integrator gain
             * :math:`g` is the integrator gain limit
 
         :param profile: Profile number (0-31)
         :param adc: ADC channel to take IIR input from (0-7)
-        :param gain: Proportional gain (1). This is usually negative (closed
+        :param kp: Proportional gain (1). This is usually negative (closed
             loop, positive ADC voltage, positive setpoint). When 0, this
-            implements a pure I controller with unit gain frequency at
-            `corner` (use the sign of `corner` for overall gain sign).
-        :param corner: Integrator corner frequency (Hz). When 0 (the default)
-            this implements a pure P controller.
-        :param limit: Integrator gain limit (1). When 0 (the default) the
-            integrator gain limit is infinite. Positive.
+            implements a pure I controller.
+        :param ki: Integrator gain (rad/s). When 0 (the default)
+            this implements a pure P controller. Same sign as ``kp``.
+        :param g: Integrator gain limit (1). When 0 (the default) the
+            integrator gain limit is infinite. Same sign as ``ki``.
         :param delay: Delay (in seconds, 0-300 µs) before allowing IIR updates
-            after invoking :meth:`set`.
+            after invoking :meth:`set`. This is rounded to the nearest number
+            of servo cycles (~1.2 µs). Since the RF switch (:meth:`set`) can be
+            opened at any time relative to the servo cycle, the first DDS
+            update that carries updated IIR data will occur approximately
+            between ``delay + 1 cycle`` and ``delay + 2 cycles`` after
+            :meth:`set`.
         """
         B_NORM = 1 << COEFF_SHIFT + 1
         A_NORM = 1 << COEFF_SHIFT
-        PI_TS = 3.1415927*T_CYCLE
         COEFF_MAX = 1 << COEFF_WIDTH - 1
 
-        gain *= B_NORM
-        corner *= PI_TS
-
-        if corner == 0.:
+        kp *= B_NORM
+        if ki == 0.:
             # pure P
-            a1_ = 0
-            b1_ = 0
-            b0_ = int(round(gain))
+            a1 = 0
+            b1 = 0
+            b0 = int(round(kp))
         else:
-            a1_ = A_NORM
-            if gain == 0.:
-                # pure I
-                b0 = (2*B_NORM)*corner
-                b1_ = 0
+            # I or PI
+            ki *= B_NORM*T_CYCLE/2.
+            if g == 0.:
+                c = 1.
+                a1 = A_NORM
             else:
-                # PI
-                k = gain*corner
-                b1 = k - gain
-                b0 = k + gain
-                if limit != 0.:
-                    # PI with limit
-                    q = corner/limit
-                    qr = 1./(1. + q)
-                    a1_ = int(round(a1_*(1. - q)*qr))
-                    b0 *= qr
-                    b1 *= qr
-                b1_ = int(round(b1))
-            b0_ = int(round(b0))
+                c = 1./(1. + ki/(g*B_NORM))
+                a1 = int(round((2.*c - 1.)*A_NORM))
+            b0 = int(round(kp + ki*c))
+            b1 = int(round(kp + (ki - 2.*kp)*c))
+            if b1 == -b0:
+                raise ValueError("low integrator gain and/or gain limit")
 
-            if b1_ == -b0_:
-                raise ValueError("low corner, gain, limit")
-
-        if (b0_ >= COEFF_MAX or b0_ < -COEFF_MAX or
-                b1_ >= COEFF_MAX or b1_ < -COEFF_MAX):
-            raise ValueError("high corner, gain, limit")
+        if (b0 >= COEFF_MAX or b0 < -COEFF_MAX or
+                b1 >= COEFF_MAX or b1 < -COEFF_MAX):
+            raise ValueError("high gains")
 
         dly = int(round(delay/T_CYCLE))
-        self.set_iir_mu(profile, adc, a1_, b0_, b1_, dly)
+        self.set_iir_mu(profile, adc, a1, b0, b1, dly)
 
     @kernel
     def get_profile_mu(self, profile, data):
         """Retrieve profile data.
 
-        The data is returned in the `data` argument as:
-        `[ftw >> 16, b1, pow, adc | (delay << 8), offset, a1, ftw, b0]`.
+        Profile data is returned in the ``data`` argument in machine units
+        packed as: ``[ftw >> 16, b1, pow, adc | (delay << 8), offset, a1,
+        ftw & 0xffff, b0]``.
+
+        .. seealso:: The individual fields are described in
+            :meth:`set_iir_mu` and :meth:`set_dds_mu`.
 
         This method advances the timeline by 32 µs and consumes all slack.
-        Profile data is returned 
 
         :param profile: Profile number (0-31)
         :param data: List of 8 integers to write the profile data into
@@ -473,11 +473,11 @@ class Channel:
         The IIR state is also know as the "integrator", or the DDS amplitude
         scale factor. It is 18 bits wide and unsigned.
 
-        This method must not be used when the Servo
-        could be writing to the same location. Either deactivate the profile,
-        or deactivate IIR updates, or disable Servo iterations.
+        This method must not be used when the servo could be writing to the
+        same location. Either deactivate the profile, or deactivate IIR
+        updates, or disable servo iterations.
 
-        This method advances the timeline by one Servo memory access.
+        This method advances the timeline by one servo memory access.
 
         :param profile: Profile number (0-31)
         :param y: 17 bit unsigned Y0
@@ -493,11 +493,11 @@ class Channel:
         The IIR state is also know as the "integrator", or the DDS amplitude
         scale factor. It is 18 bits wide and unsigned.
 
-        This method must not be used when the Servo
-        could be writing to the same location. Either deactivate the profile,
-        or deactivate IIR updates, or disable Servo iterations.
+        This method must not be used when the servo could be writing to the
+        same location. Either deactivate the profile, or deactivate IIR
+        updates, or disable servo iterations.
 
-        This method advances the timeline by one Servo memory access.
+        This method advances the timeline by one servo memory access.
 
         :param profile: Profile number (0-31)
         :param y: IIR state in units of full scale
