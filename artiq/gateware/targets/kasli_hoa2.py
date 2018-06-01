@@ -62,6 +62,7 @@ class Satellite(_SatelliteBase):
 
         eem.Urukul.add_std(self, 1, 0, ttl_serdes_7series.Output_8X)
         eem.Urukul.add_std(self, 3, 2, ttl_serdes_7series.Output_8X)
+        eem.Sampler.add_std(self, 5, 4, ttl_serdes_7series.Output_8X)
 
         self.add_rtio(self.rtio_channels)
 
