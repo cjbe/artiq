@@ -65,6 +65,9 @@ class Satellite(_SatelliteBase):
             eems_urukul0=(1, 0), eems_urukul1=(3, 2),
             t_rtt=15+4)
 
+        eem.DIO.add_std(self, 7,
+            ttl_serdes_7series.InOut_8X, ttl_serdes_7series.InOut_8X)
+
         self.add_rtio(self.rtio_channels)
 
 
