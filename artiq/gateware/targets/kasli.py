@@ -719,7 +719,9 @@ class _SatelliteBase(BaseSoC):
         self.submodules.siphaser = SiPhaser7Series(
             si5324_clkin=platform.request("si5324_clkin"),
             si5324_clkout_fabric=platform.request("si5324_clkout_fabric"),
-            ref_clk=self.crg.clk125_div2, ref_div2=True)
+            ref_clk=self.crg.clk125_div2, ref_div2=True,
+            rtio_clk_freq=rtio_clk_freq)
+
         platform.add_false_path_constraints(
             self.crg.cd_sys.clk, self.siphaser.mmcm_freerun_output)
         self.csr_devices.append("siphaser")
