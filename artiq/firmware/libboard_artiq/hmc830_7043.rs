@@ -146,6 +146,7 @@ pub mod hmc7043 {
     const DAC_CLK_DIV: u32 = 2;
     const FPGA_CLK_DIV: u32 = 8;
     const SYSREF_DIV: u32 = 128;
+    const HMC_SYSREF_DIV: u32 = SYSREF_DIV*8; // Must be <= 4MHz
 
     // enabled, divider, analog phase shift, digital phase shift
     const OUTPUT_CONFIG: [(bool, u32, u8, u8); 14] = [
@@ -224,10 +225,17 @@ pub mod hmc7043 {
         Ok(())
     }
 
-    pub fn shutdown() -> Result<(), &'static str> {
+    pub fn enable() -> Result<(), &'static str> {
+        info!("enabling hmc7043");
+
+        unsafe {
+            csr::hmc7043_reset::out_write(0);
+        }
+
         spi_setup();
-        info!("shutting down");
-        write(0x1, 0x1);   // Sleep mode
+        write(0x0, 0x1);   // Software reset
+        write(0x0, 0x0);   // Normal operation
+        write(0x1, 0x48);  // mute all outputs
 
         Ok(())
     }
@@ -236,11 +244,6 @@ pub mod hmc7043 {
         spi_setup();
         info!("loading configuration...");
 
-        write(0x0, 0x1);   // Software reset
-        write(0x0, 0x0);
-
-        write(0x1, 0x40);  // Enable high-performace/low-noise mode
-        write(0x3, 0x10);  // Disable SYSREF timer
         write(0xA, 0x06);  // Disable the REFSYNCIN input
         write(0xB, 0x07);  // Enable the CLKIN input as LVPECL
         write(0x50, 0x1f); // Disable GPO pin
@@ -254,18 +257,21 @@ pub mod hmc7043 {
                    (1 << 4) |
                    (1 << 5));
 
+        write(0x5c, (HMC_SYSREF_DIV & 0xff) as u8);  // Set SYSREF timer divider
+        write(0x5d, ((HMC_SYSREF_DIV & 0x0f) >> 8) as u8);
+
         for channel in 0..14 {
             let channel_base = 0xc8 + 0x0a*(channel as u16);
             let (enabled, divider, aphase, dphase) = OUTPUT_CONFIG[channel];
 
             if enabled {
                 // Only clock channels need to be high-performance
-                if (channel % 2) == 0 { write(channel_base, 0x91); }
-                else { write(channel_base, 0x11); }
+                if (channel % 2) == 0 { write(channel_base, 0xd1); }
+                else { write(channel_base, 0x51); }
             }
             else { write(channel_base, 0x10); }
-            write(channel_base + 0x1, (divider & 0x0ff) as u8);
-            write(channel_base + 0x2, ((divider & 0x700) >> 8) as u8);
+            write(channel_base + 0x1, (divider & 0xff) as u8);
+            write(channel_base + 0x2, ((divider & 0x0f) >> 8) as u8);
             write(channel_base + 0x3, aphase & 0x1f);
             write(channel_base + 0x4, dphase & 0x1f);
 
@@ -275,6 +281,11 @@ pub mod hmc7043 {
 
             write(channel_base + 0x8, 0x08)
         }
+
+        write(0x1, 0x4a);  // Reset dividers and FSMs
+        write(0x1, 0x48);
+        write(0x1, 0xc8);  // Synchronize dividers
+        write(0x1, 0x40);  // Unmute, high-performace/low-noise mode
 
         info!("  ...done");
 
@@ -305,8 +316,9 @@ pub fn init() -> Result<(), &'static str> {
     /* do not use other SPI devices before HMC830 SPI mode selection */
     hmc830::select_spi_mode();
     hmc830::detect()?;
-    hmc7043::detect()?;
-    hmc7043::shutdown()?;
     hmc830::init()?;
+
+    hmc7043::enable()?;
+    hmc7043::detect()?;
     hmc7043::init()
 }

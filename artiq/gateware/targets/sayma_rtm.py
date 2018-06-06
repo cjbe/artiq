@@ -31,7 +31,7 @@ class CRG(Module):
         serwb_refclk_bufr = Signal()
         serwb_refclk_bufg = Signal()
         self.specials += Instance("BUFR", i_I=self.serwb_refclk, o_O=serwb_refclk_bufr)
-        self.specials += Instance("BUFG", i_I=serwb_refclk_bufr, o_O=serwb_refclk_bufg)  
+        self.specials += Instance("BUFG", i_I=serwb_refclk_bufr, o_O=serwb_refclk_bufg)
 
         pll_locked = Signal()
         pll_fb = Signal()
@@ -110,6 +110,7 @@ class SaymaRTM(Module):
         csr_devices = []
 
         self.submodules.crg = CRG(platform)
+
         clk_freq = 125e6
 
         self.submodules.rtm_magic = RTMMagic()
@@ -174,7 +175,9 @@ class SaymaRTM(Module):
             platform.request("ad9154_spi", 0),
             platform.request("ad9154_spi", 1)))
         csr_devices.append("converter_spi")
-        self.comb += platform.request("hmc7043_reset").eq(0)
+        self.submodules.hmc7043_reset = gpio.GPIOOut(
+            platform.request("hmc7043_reset"), reset_out=1)
+        csr_devices.append("hmc7043_reset")
 
         # AMC/RTM serwb
         serwb_pads = platform.request("amc_rtm_serwb")
