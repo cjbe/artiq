@@ -194,13 +194,12 @@ class Standalone(MiniSoC, AMPSoC):
             slave_fpga_cfg.init_b,
             slave_fpga_cfg.program_b,
         ])
-        self.csr_devices.append("slave_fpga_cfg")
-        # self.config["HAS_SLAVE_FPGA"] = None
+        # self.csr_devices.append("slave_fpga_cfg")
         self.config["SLAVE_FPGA_GATEWARE"] = 0x200000
 
         # AMC/RTM serwb
         serwb_pads = platform.request("amc_rtm_serwb")
-        serwb_phy_amc = serwb.phy.SERWBPHY(platform.device, serwb_pads, mode="master")
+        serwb_phy_amc = serwb.genphy.SERWBPHY(platform.device, serwb_pads, mode="master")
         self.submodules.serwb_phy_amc = serwb_phy_amc
         self.csr_devices.append("serwb_phy_amc")
 
