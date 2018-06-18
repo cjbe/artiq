@@ -124,7 +124,9 @@ class SaymaRTM(Module):
         self.submodules.clock_mux = gpio.GPIOOut(Cat(
             platform.request("clk_src_ext_sel"),
             platform.request("ref_clk_src_sel"),
-            platform.request("dac_clk_src_sel")))
+            platform.request("dac_clk_src_sel"),
+            platform.request("ref_lo_clk_sel")),
+            reset_out=0b0111)
         csr_devices.append("clock_mux")
 
         # UART loopback
@@ -166,8 +168,6 @@ class SaymaRTM(Module):
         # HMC clock chip and DAC control
         self.comb += [
             platform.request("ad9154_rst_n").eq(1),
-            platform.request("ad9154_txen", 0).eq(0b11),
-            platform.request("ad9154_txen", 1).eq(0b11)
         ]
 
         self.submodules.converter_spi = spi2.SPIMaster(spi2.SPIInterface(
@@ -181,7 +181,7 @@ class SaymaRTM(Module):
 
         # AMC/RTM serwb
         serwb_pads = platform.request("amc_rtm_serwb")
-        platform.add_period_constraint(serwb_pads.clk_p, 8.)
+        platform.add_period_constraint(serwb_pads.clk, 8.)
         serwb_phy_rtm = serwb.genphy.SERWBPHY(platform.device, serwb_pads, mode="slave")
         self.submodules.serwb_phy_rtm = serwb_phy_rtm
         self.comb += [
@@ -214,7 +214,7 @@ class SaymaRTM(Module):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="ARTIQ device binary builder for Kasli systems")
+        description="Sayma RTM gateware builder")
     parser.add_argument("--output-dir", default="artiq_sayma/rtm_gateware",
                         help="output directory for generated "
                              "source files and binaries")

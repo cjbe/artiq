@@ -4,13 +4,15 @@ mod clock_mux {
     const CLK_SRC_EXT_SEL : u8 = 1 << 0;
     const REF_CLK_SRC_SEL : u8 = 1 << 1;
     const DAC_CLK_SRC_SEL : u8 = 1 << 2;
+    const REF_LO_CLK_SEL  : u8 = 1 << 3;
 
     pub fn init() {
         unsafe {
             csr::clock_mux::out_write(
                 1*CLK_SRC_EXT_SEL |  // use ext clk from sma
                 1*REF_CLK_SRC_SEL |
-                1*DAC_CLK_SRC_SEL);
+                1*DAC_CLK_SRC_SEL |
+                0*REF_LO_CLK_SEL);
         }
     }
 }
@@ -161,22 +163,22 @@ pub mod hmc7043 {
     const SYSREF_DIV: u32 = 128;              // 9.375MHz
     const HMC_SYSREF_DIV: u32 = SYSREF_DIV*8; // 1.171875MHz (must be <= 4MHz)
 
-    // enabled, divider, analog phase shift, digital phase shift
-    const OUTPUT_CONFIG: [(bool, u32, u8, u8); 14] = [
-        (true, DAC_CLK_DIV, 0x0, 0x0),  // 0: DAC2_CLK
-        (true, SYSREF_DIV, 0x0, 0x0),   // 1: DAC2_SYSREF
-        (true, DAC_CLK_DIV, 0x0, 0x0),  // 2: DAC1_CLK
-        (true, SYSREF_DIV, 0x0, 0x0),   // 3: DAC1_SYSREF
-        (false, 0, 0x0, 0x0),           // 4: ADC2_CLK
-        (false, 0, 0x0, 0x0),           // 5: ADC2_SYSREF
-        (false, 0, 0x0, 0x0),           // 6: GTP_CLK2
-        (true, SYSREF_DIV, 0x0, 0x0),   // 7: FPGA_DAC_SYSREF
-        (true, FPGA_CLK_DIV, 0x0, 0x0), // 8: GTP_CLK1
-        (false, 0, 0x0, 0x0),           // 9: AMC_MASTER_AUX_CLK
-        (false, 0, 0x0, 0x0),           // 10: RTM_MASTER_AUX_CLK
-        (false, 0, 0x0, 0x0),           // 11: FPGA_ADC_SYSREF
-        (false, 0, 0x0, 0x0),           // 12: ADC1_CLK
-        (false, 0, 0x0, 0x0),           // 13: ADC1_SYSREF
+    // enabled, divider, analog phase shift, digital phase shift, output config
+    const OUTPUT_CONFIG: [(bool, u32, u8, u8, u8); 14] = [
+        (true, DAC_CLK_DIV, 0x0, 0x0, 0x08),  // 0: DAC2_CLK
+        (true, SYSREF_DIV, 0x0, 0x0, 0x08),   // 1: DAC2_SYSREF
+        (true, DAC_CLK_DIV, 0x0, 0x0, 0x08),  // 2: DAC1_CLK
+        (true, SYSREF_DIV, 0x0, 0x0, 0x08),   // 3: DAC1_SYSREF
+        (false, 0, 0x0, 0x0, 0x08),           // 4: ADC2_CLK
+        (false, 0, 0x0, 0x0, 0x08),           // 5: ADC2_SYSREF
+        (false, 0, 0x0, 0x0, 0x08),           // 6: GTP_CLK2
+        (true, SYSREF_DIV, 0x0, 0x2, 0x10),   // 7: FPGA_DAC_SYSREF, LVDS
+        (true, FPGA_CLK_DIV, 0x0, 0x0, 0x08), // 8: GTP_CLK1
+        (false, 0, 0x0, 0x0, 0x10),           // 9: AMC_MASTER_AUX_CLK
+        (false, 0, 0x0, 0x0, 0x10),           // 10: RTM_MASTER_AUX_CLK
+        (false, 0, 0x0, 0x0, 0x10),           // 11: FPGA_ADC_SYSREF, LVDS
+        (false, 0, 0x0, 0x0, 0x08),           // 12: ADC1_CLK
+        (false, 0, 0x0, 0x0, 0x08),           // 13: ADC1_SYSREF
         ];
 
 
@@ -265,15 +267,14 @@ pub mod hmc7043 {
         write(0x4, (1 << 0) |
                    (1 << 1) |
                    (1 << 3) |
-                   (1 << 4) |
-                   (1 << 5));
+                   (1 << 4));
 
         write(0x5c, (HMC_SYSREF_DIV & 0xff) as u8);  // Set SYSREF timer divider
         write(0x5d, ((HMC_SYSREF_DIV & 0x0f) >> 8) as u8);
 
         for channel in 0..14 {
             let channel_base = 0xc8 + 0x0a*(channel as u16);
-            let (enabled, divider, aphase, dphase) = OUTPUT_CONFIG[channel];
+            let (enabled, divider, aphase, dphase, outcfg) = OUTPUT_CONFIG[channel];
 
             if enabled {
                 // Only clock channels need to be high-performance
@@ -293,7 +294,7 @@ pub mod hmc7043 {
             }
             else { write(channel_base + 0x7, 0x01); }
 
-            write(channel_base + 0x8, 0x08)
+            write(channel_base + 0x8, outcfg)
         }
 
         write(0x1, 0x4a);  // Reset dividers and FSMs
