@@ -672,15 +672,21 @@ fn dac_cfg(dacno: u8) -> Result<(), &'static str> {
 }
 
 fn dac_cfg_retry(dacno: u8) -> Result<(), &'static str> {
-    for i in 0..99 {
+    let mut attempt =  0;
+    loop {
+        attempt += 1;
         dac_reset(dacno);
         let outcome = dac_cfg(dacno);
         match outcome {
             Ok(_) => return outcome,
-            Err(e) => warn!("AD9154-{} config attempt #{} failed ({}), retrying", dacno, i, e)
+            Err(e) => {
+                warn!("AD9154-{} config attempt #{} failed ({})", dacno, attempt, e);
+                if attempt >= 10 {
+                    return outcome;
+                }
+            }
         }
     }
-    dac_cfg(dacno)
 }
 
 fn dac_sysref_scan(dacno: u8) {
@@ -720,25 +726,31 @@ fn dac_sysref_cfg(dacno: u8, phase: u16) {
     hmc7043::cfg_dac_sysref(dacno, phase);
 }
 
-pub fn init() -> Result<(), &'static str> {
+fn init_dac(dacno: u8) -> Result<(), &'static str> {
+    let dacno = dacno as u8;
+    // Reset the DAC, detect and configure it
+    dac_reset(dacno);
+    dac_detect(dacno)?;
+    dac_cfg_retry(dacno)?;
+    // Run the PRBS, STPL and SYSREF scan tests
+    dac_prbs(dacno)?;
+    dac_stpl(dacno, 4, 2)?;
+    dac_sysref_scan(dacno);
+    // Set SYSREF phase and reconfigure the DAC
+    dac_sysref_cfg(dacno, 88);
+    dac_cfg_retry(dacno)?;
+    Ok(())
+}
+
+pub fn init() {
     // Release the JESD clock domain reset late, as we need to
     // set up clock chips before.
     jesd_unreset();
 
     for dacno in 0..csr::AD9154.len() {
-        let dacno = dacno as u8;
-        // Reset the DAC, detect and configure it
-        dac_reset(dacno);
-        dac_detect(dacno)?;
-        dac_cfg_retry(dacno)?;
-        // Run the PRBS, STPL and SYSREF scan tests
-        dac_prbs(dacno)?;
-        dac_stpl(dacno, 4, 2)?;
-        dac_sysref_scan(dacno);
-        // Set SYSREF phase and reconfigure the DAC
-        dac_sysref_cfg(dacno, 88);
-        dac_cfg_retry(dacno)?;
+        match init_dac(dacno as u8) {
+            Ok(_) => (),
+            Err(e) => error!("failed to initialize AD9154-{}: {}", dacno, e)
+        }
     }
-
-    Ok(())
 }
