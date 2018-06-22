@@ -155,7 +155,7 @@ mod hmc830 {
 }
 
 pub mod hmc7043 {
-    use board_misoc::csr;
+    use board_misoc::{csr, clock};
 
     // All frequencies assume 1.2GHz HMC830 output
     const DAC_CLK_DIV: u32 = 2;               // 600MHz
@@ -163,24 +163,23 @@ pub mod hmc7043 {
     const SYSREF_DIV: u32 = 128;              // 9.375MHz
     const HMC_SYSREF_DIV: u32 = SYSREF_DIV*8; // 1.171875MHz (must be <= 4MHz)
 
-    // enabled, divider, analog phase shift, digital phase shift, output config
-    const OUTPUT_CONFIG: [(bool, u32, u8, u8, u8); 14] = [
-        (true, DAC_CLK_DIV, 0x0, 0x0, 0x08),  // 0: DAC2_CLK
-        (true, SYSREF_DIV, 0x0, 0x0, 0x08),   // 1: DAC2_SYSREF
-        (true, DAC_CLK_DIV, 0x0, 0x0, 0x08),  // 2: DAC1_CLK
-        (true, SYSREF_DIV, 0x0, 0x0, 0x08),   // 3: DAC1_SYSREF
-        (false, 0, 0x0, 0x0, 0x08),           // 4: ADC2_CLK
-        (false, 0, 0x0, 0x0, 0x08),           // 5: ADC2_SYSREF
-        (false, 0, 0x0, 0x0, 0x08),           // 6: GTP_CLK2
-        (true, SYSREF_DIV, 0x0, 0x2, 0x10),   // 7: FPGA_DAC_SYSREF, LVDS
-        (true, FPGA_CLK_DIV, 0x0, 0x0, 0x08), // 8: GTP_CLK1
-        (false, 0, 0x0, 0x0, 0x10),           // 9: AMC_MASTER_AUX_CLK
-        (false, 0, 0x0, 0x0, 0x10),           // 10: RTM_MASTER_AUX_CLK
-        (false, 0, 0x0, 0x0, 0x10),           // 11: FPGA_ADC_SYSREF, LVDS
-        (false, 0, 0x0, 0x0, 0x08),           // 12: ADC1_CLK
-        (false, 0, 0x0, 0x0, 0x08),           // 13: ADC1_SYSREF
-        ];
-
+    // enabled, divider, output config
+    const OUTPUT_CONFIG: [(bool, u32, u8); 14] = [
+        (true,  DAC_CLK_DIV,  0x08),  // 0: DAC2_CLK
+        (true,  SYSREF_DIV,   0x08),  // 1: DAC2_SYSREF
+        (true,  DAC_CLK_DIV,  0x08),  // 2: DAC1_CLK
+        (true,  SYSREF_DIV,   0x08),  // 3: DAC1_SYSREF
+        (false, 0,            0x08),  // 4: ADC2_CLK
+        (false, 0,            0x08),  // 5: ADC2_SYSREF
+        (true,  FPGA_CLK_DIV, 0x08),  // 6: GTP_CLK2
+        (true,  SYSREF_DIV,   0x10),  // 7: FPGA_DAC_SYSREF, LVDS
+        (true,  FPGA_CLK_DIV, 0x08),  // 8: GTP_CLK1
+        (false, 0,            0x10),  // 9: AMC_MASTER_AUX_CLK
+        (false, 0,            0x10),  // 10: RTM_MASTER_AUX_CLK
+        (false, 0,            0x10),  // 11: FPGA_ADC_SYSREF, LVDS
+        (false, 0,            0x08),  // 12: ADC1_CLK
+        (false, 0,            0x08),  // 13: ADC1_SYSREF
+    ];
 
     fn spi_setup() {
         unsafe {
@@ -227,10 +226,16 @@ pub mod hmc7043 {
         }
     }
 
-    pub fn detect() -> Result<(), &'static str> {
+    pub const CHIP_ID: u32 = 0xf17904;
+
+    pub fn get_id() -> u32 {
         spi_setup();
-        let id = (read(0x78) as u32) << 16 | (read(0x79) as u32) << 8 | read(0x7a) as u32;
-        if id != 0xf17904 {
+        (read(0x78) as u32) << 16 | (read(0x79) as u32) << 8 | read(0x7a) as u32
+    }
+
+    pub fn detect() -> Result<(), &'static str> {
+        let id = get_id();
+        if id != CHIP_ID {
             error!("invalid HMC7043 ID: 0x{:08x}", id);
             return Err("invalid HMC7043 identification");
         } else {
@@ -241,11 +246,12 @@ pub mod hmc7043 {
     }
 
     pub fn enable() {
-        info!("enabling hmc7043");
+        info!("enabling HMC7043");
 
         unsafe {
             csr::hmc7043_reset::out_write(0);
         }
+        clock::spin_us(10_000);
 
         spi_setup();
         write(0x0, 0x1);   // Software reset
@@ -272,27 +278,34 @@ pub mod hmc7043 {
         write(0x5c, (HMC_SYSREF_DIV & 0xff) as u8);  // Set SYSREF timer divider
         write(0x5d, ((HMC_SYSREF_DIV & 0x0f) >> 8) as u8);
 
-        for channel in 0..14 {
+        for channel in 0..OUTPUT_CONFIG.len() {
             let channel_base = 0xc8 + 0x0a*(channel as u16);
-            let (enabled, divider, aphase, dphase, outcfg) = OUTPUT_CONFIG[channel];
+            let (enabled, divider, outcfg) = OUTPUT_CONFIG[channel];
 
             if enabled {
-                // Only clock channels need to be high-performance
-                if (channel % 2) == 0 { write(channel_base, 0xd1); }
-                else { write(channel_base, 0x51); }
+                if channel % 2 == 0 {
+                    // DCLK channel: enable high-performance mode
+                    write(channel_base, 0xd1);
+                } else {
+                    // SYSREF channel: disable hi-perf mode, enable slip
+                    write(channel_base, 0x71);
+                }
+            } else {
+                write(channel_base, 0x10);
             }
-            else { write(channel_base, 0x10); }
             write(channel_base + 0x1, (divider & 0xff) as u8);
             write(channel_base + 0x2, ((divider & 0x0f) >> 8) as u8);
-            write(channel_base + 0x3, aphase & 0x1f);
-            write(channel_base + 0x4, dphase & 0x1f);
 
-            // bypass analog phase shift on clock channels to reduce noise
-            if (channel % 2) == 0 {
-                if divider != 0 { write(channel_base + 0x7, 0x00); }  // enable divider
-                else  { write(channel_base + 0x7, 0x03); } // bypass divider for lowest noise
+            // bypass analog phase shift on DCLK channels to reduce noise
+            if channel % 2 == 0 {
+                if divider != 0 {
+                    write(channel_base + 0x7, 0x00); // enable divider
+                } else {
+                    write(channel_base + 0x7, 0x03); // bypass divider for lowest noise
+                }
+            } else {
+                write(channel_base + 0x7, 0x01);
             }
-            else { write(channel_base + 0x7, 0x01); }
 
             write(channel_base + 0x8, outcfg)
         }
@@ -300,28 +313,92 @@ pub mod hmc7043 {
         write(0x1, 0x4a);  // Reset dividers and FSMs
         write(0x1, 0x48);
         write(0x1, 0xc8);  // Synchronize dividers
-        write(0x1, 0x40);  // Unmute, high-performace/low-noise mode
+        write(0x1, 0x40);  // Unmute, high-performance/low-noise mode
 
         info!("  ...done");
     }
 
-    pub fn cfg_dac_sysref(dacno: u8, phase: u16) {
-        spi_setup();
+    pub fn sysref_offset_dac(dacno: u8, phase_offset: u16) {
         /*  Analog delay resolution: 25ps
          *  Digital delay resolution: 1/2 input clock cycle = 416ps for 1.2GHz
          *  16*25ps = 400ps: limit analog delay to 16 steps instead of 32.
          */
+        let analog_delay = (phase_offset % 17) as u8;
+        let digital_delay = (phase_offset / 17) as u8;
+        spi_setup();
         if dacno == 0 {
-            write(0x00d5, (phase & 0xf) as u8);
-            write(0x00d6, ((phase >> 4) & 0x1f) as u8);
+            write(0x00d5, analog_delay);
+            write(0x00d6, digital_delay);
         } else if dacno == 1 {
-            write(0x00e9, (phase & 0xf) as u8);
-            write(0x00ea, ((phase >> 4) & 0x1f) as u8);
+            write(0x00e9, analog_delay);
+            write(0x00ea, digital_delay);
         } else {
             unimplemented!();
         }
     }
 
+    fn sysref_offset_fpga(phase_offset: u16) {
+        let analog_delay = (phase_offset % 17) as u8;
+        let digital_delay = (phase_offset / 17) as u8;
+        spi_setup();
+        write(0x0111, analog_delay);
+        write(0x0112, digital_delay);
+    }
+
+    fn sysref_slip() {
+        spi_setup();
+        write(0x0002, 0x02);
+        write(0x0002, 0x00);
+    }
+
+    fn sysref_sample() -> bool {
+        unsafe { csr::sysref_sampler::sample_result_read() == 1 }
+    }
+
+    pub fn sysref_rtio_align(phase_offset: u16) {
+        info!("aligning SYSREF with RTIO...");
+
+        let mut slips0 = 0;
+        let mut slips1 = 0;
+        // meet setup/hold (assuming FPGA timing margins are OK)
+        sysref_offset_fpga(phase_offset);
+        // if we are already in the 1 zone, get out of it
+        while sysref_sample() {
+            sysref_slip();
+            slips0 += 1;
+        }
+        // get to the edge of the 0->1 transition (our final setpoint)
+        while !sysref_sample() {
+            sysref_slip();
+            slips1 += 1;
+        }
+        info!("  ...done ({}/{} slips), verifying timing margin", slips0, slips1);
+
+        let mut margin_plus = None;
+        for d in 0..phase_offset {
+            sysref_offset_fpga(phase_offset - d);
+            if !sysref_sample() {
+                margin_plus = Some(d);
+                break;
+            }
+        }
+
+        // meet setup/hold
+        sysref_offset_fpga(phase_offset);
+
+        if margin_plus.is_some() {
+            let margin_plus = margin_plus.unwrap();
+            // one phase slip (period of the 1.2GHz input clock)
+            let period = 2*17; // approximate: 2 digital coarse delay steps
+            let margin_minus = if period > margin_plus { period - margin_plus } else { 0 };
+            info!("  margin at FPGA: -{} +{}", margin_minus, margin_plus);
+            if margin_minus < 10 || margin_plus < 10 {
+                error!("SYSREF margin at FPGA is too small");
+            }
+        } else {
+            error!("unable to determine SYSREF margin at FPGA");
+        }
+    }
 }
 
 pub fn init() -> Result<(), &'static str> {
@@ -339,6 +416,9 @@ pub fn init() -> Result<(), &'static str> {
 
     hmc830::check_locked()?;
 
+    if hmc7043::get_id() == hmc7043::CHIP_ID {
+        error!("HMC7043 detected while in reset (board rework missing?)");
+    }
     hmc7043::enable();
     hmc7043::detect()?;
     hmc7043::init();

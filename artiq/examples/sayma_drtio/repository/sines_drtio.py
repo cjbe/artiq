@@ -1,14 +1,19 @@
 from artiq.experiment import *
 
 
-class SAWGTest(EnvExperiment):
+class SAWGTestDRTIO(EnvExperiment):
     def build(self):
         self.setattr_device("core")
         self.setattr_device("ttl_sma_out")
-        self.sawgs = [self.get_device("sawg"+str(i)) for i in range(8)]
+        self.sawgs = [self.get_device("sawg"+str(i)) for i in range(16)]
 
     @kernel
     def run(self):
+        core_log("waiting for DRTIO ready...")
+        while not self.core.get_drtio_link_status(0):
+            pass
+        core_log("OK")
+
         self.core.reset()
 
         for sawg in self.sawgs:
