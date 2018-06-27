@@ -20,6 +20,7 @@ class UltrascaleCRG(Module, AutoCSR):
     fabric_freq = int(125e6)
 
     def __init__(self, platform, use_rtio_clock=False):
+        self.ibuf_disable = CSRStorage(reset=1)
         self.jreset = CSRStorage(reset=1)
         self.jref = Signal()
         self.refclk = Signal()
@@ -29,7 +30,7 @@ class UltrascaleCRG(Module, AutoCSR):
         refclk_pads = platform.request("dac_refclk", 1)
         platform.add_period_constraint(refclk_pads.p, 1e9/self.refclk_freq)
         self.specials += [
-            Instance("IBUFDS_GTE3", i_CEB=self.jreset.storage, p_REFCLK_HROW_CK_SEL=0b00,
+            Instance("IBUFDS_GTE3", i_CEB=self.ibuf_disable.storage, p_REFCLK_HROW_CK_SEL=0b00,
                      i_I=refclk_pads.p, i_IB=refclk_pads.n,
                      o_O=self.refclk, o_ODIV2=refclk2),
             AsyncResetSynchronizer(self.cd_jesd, self.jreset.storage),
@@ -42,16 +43,19 @@ class UltrascaleCRG(Module, AutoCSR):
 
         jref = platform.request("dac_sysref")
         jref_se = Signal()
+        jref_r = Signal()
         self.specials += [
             Instance("IBUFDS_IBUFDISABLE",
                 p_USE_IBUFDISABLE="TRUE", p_SIM_DEVICE="ULTRASCALE",
-                i_IBUFDISABLE=self.jreset.storage,
+                i_IBUFDISABLE=self.ibuf_disable.storage,
                 i_I=jref.p, i_IB=jref.n,
                 o_O=jref_se),
             # SYSREF normally meets s/h at the FPGA, except during margin
             # scan and before full initialization.
             # Be paranoid and use a double-register anyway.
-            MultiReg(jref_se, self.jref, "jesd")
+            Instance("FD", i_C=ClockSignal("jesd"), i_D=jref_se, o_Q=jref_r,
+                     attr={("IOB", "TRUE")}),
+            Instance("FD", i_C=ClockSignal("jesd"), i_D=jref_r, o_Q=self.jref)
         ]
 
 
@@ -104,5 +108,5 @@ class SysrefSampler(Module, AutoCSR):
         self.sample_result = CSRStatus()
 
         sample = Signal()
-        self.sync.rtio += If(coarse_ts[:4] == 0, sample.eq(jref))
+        self.sync.jesd += If(coarse_ts[:4] == 0, sample.eq(jref))
         self.specials += MultiReg(sample, self.sample_result.status)
