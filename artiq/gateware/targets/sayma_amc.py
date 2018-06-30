@@ -552,7 +552,7 @@ class Satellite(BaseSoC, RTMCommon):
 
         self.comb += platform.request("sfp_tx_disable", 0).eq(0)
         self.submodules.drtio_transceiver = gth_ultrascale.GTH(
-            clock_pads=platform.request("si5324_clkout"),
+            clock_pads=platform.request("dac_refclk", 0),
             data_pads=[platform.request("sfp", 0)],
             sys_clk_freq=self.clk_freq,
             rtio_clk_freq=rtio_clk_freq)
@@ -573,7 +573,7 @@ class Satellite(BaseSoC, RTMCommon):
         self.config["RTIO_FREQUENCY"] = str(rtio_clk_freq/1e6)
         self.submodules.siphaser = SiPhaser7Series(
             si5324_clkin=platform.request("si5324_clkin"),
-            si5324_clkout_fabric=platform.request("si5324_clkout_fabric"))
+            si5324_clkout_fabric=platform.request("adc_sysref"))
         platform.add_platform_command("set_property CLOCK_DEDICATED_ROUTE FALSE [get_nets {mmcm_ps}]",
             mmcm_ps=self.siphaser.mmcm_ps_output)
         platform.add_false_path_constraints(

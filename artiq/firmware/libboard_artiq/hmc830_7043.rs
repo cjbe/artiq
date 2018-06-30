@@ -158,13 +158,13 @@ pub mod hmc7043 {
     use board_misoc::{csr, clock};
 
     // All frequencies assume 1.2GHz HMC830 output
-    const DAC_CLK_DIV: u32 = 2;               // 600MHz
-    const FPGA_CLK_DIV: u32 = 8;              // 150MHz
-    const SYSREF_DIV: u32 = 128;              // 9.375MHz
-    const HMC_SYSREF_DIV: u32 = SYSREF_DIV*8; // 1.171875MHz (must be <= 4MHz)
+    pub const DAC_CLK_DIV: u16 = 2;               // 600MHz
+    pub const FPGA_CLK_DIV: u16 = 8;              // 150MHz
+    pub const SYSREF_DIV: u16 = 128;              // 9.375MHz
+    pub const HMC_SYSREF_DIV: u16 = SYSREF_DIV*8; // 1.171875MHz (must be <= 4MHz)
 
     // enabled, divider, output config
-    const OUTPUT_CONFIG: [(bool, u32, u8); 14] = [
+    const OUTPUT_CONFIG: [(bool, u16, u8); 14] = [
         (true,  DAC_CLK_DIV,  0x08),  // 0: DAC2_CLK
         (true,  SYSREF_DIV,   0x08),  // 1: DAC2_SYSREF
         (true,  DAC_CLK_DIV,  0x08),  // 2: DAC1_CLK
@@ -176,7 +176,7 @@ pub mod hmc7043 {
         (true,  FPGA_CLK_DIV, 0x08),  // 8: GTP_CLK1
         (false, 0,            0x10),  // 9: AMC_MASTER_AUX_CLK
         (false, 0,            0x10),  // 10: RTM_MASTER_AUX_CLK
-        (false, 0,            0x10),  // 11: FPGA_ADC_SYSREF, LVDS
+        (true,  FPGA_CLK_DIV, 0x10),  // 11: FPGA_ADC_SYSREF, LVDS -- repurposed for siphaser
         (false, 0,            0x08),  // 12: ADC1_CLK
         (false, 0,            0x08),  // 13: ADC1_SYSREF
     ];
@@ -355,7 +355,7 @@ pub mod hmc7043 {
         unsafe { csr::sysref_sampler::sample_result_read() == 1 }
     }
 
-    pub fn sysref_rtio_align(phase_offset: u16) {
+    pub fn sysref_rtio_align(phase_offset: u16, expected_align: u16) {
         info!("aligning SYSREF with RTIO...");
 
         let mut slips0 = 0;
@@ -366,32 +366,42 @@ pub mod hmc7043 {
         while sysref_sample() {
             sysref_slip();
             slips0 += 1;
+            if slips0 > 1024 {
+                error!("  failed to reach 1->0 transition");
+                break;
+            }
         }
         // get to the edge of the 0->1 transition (our final setpoint)
         while !sysref_sample() {
             sysref_slip();
             slips1 += 1;
-        }
-        info!("  ...done ({}/{} slips), verifying timing margin", slips0, slips1);
-
-        let mut margin_plus = None;
-        for d in 0..phase_offset {
-            sysref_offset_fpga(phase_offset - d);
-            if !sysref_sample() {
-                margin_plus = Some(d);
+            if slips1 > 1024 {
+                error!("  failed to reach 0->1 transition");
                 break;
             }
         }
+        info!("  ...done ({}/{} slips)", slips0, slips1);
+        if (slips0 + slips1) % expected_align != 0 {
+            error!("  unexpected slip alignment");
+        }
 
+        let mut margin_minus = None;
+        for d in 0..phase_offset {
+            sysref_offset_fpga(phase_offset - d);
+            if !sysref_sample() {
+                margin_minus = Some(d);
+                break;
+            }
+        }
         // meet setup/hold
         sysref_offset_fpga(phase_offset);
 
-        if margin_plus.is_some() {
-            let margin_plus = margin_plus.unwrap();
+        if margin_minus.is_some() {
+            let margin_minus = margin_minus.unwrap();
             // one phase slip (period of the 1.2GHz input clock)
             let period = 2*17; // approximate: 2 digital coarse delay steps
-            let margin_minus = if period > margin_plus { period - margin_plus } else { 0 };
-            info!("  margin at FPGA: -{} +{}", margin_minus, margin_plus);
+            let margin_plus = if period > margin_minus { period - margin_minus } else { 0 };
+            info!("  margins at FPGA: -{} +{}", margin_minus, margin_plus);
             if margin_minus < 10 || margin_plus < 10 {
                 error!("SYSREF margin at FPGA is too small");
             }

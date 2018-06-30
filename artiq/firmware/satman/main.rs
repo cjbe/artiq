@@ -263,9 +263,9 @@ fn drtio_link_rx_up() -> bool {
 
 const SIPHASER_PHASE: u16 = 32;
 #[cfg(has_ad9154)]
-const SYSREF_PHASE_FPGA: u16 = 32;
+const SYSREF_PHASE_FPGA: u16 = 53;
 #[cfg(has_ad9154)]
-const SYSREF_PHASE_DAC: u16 = 61;
+const SYSREF_PHASE_DAC: u16 = 64;
 
 #[no_mangle]
 pub extern fn main() -> i32 {
@@ -283,15 +283,15 @@ pub extern fn main() -> i32 {
 
     i2c::init();
     si5324::setup(&SI5324_SETTINGS, si5324::Input::Ckin1).expect("cannot initialize Si5324");
+    #[cfg(has_hmc830_7043)]
+    /* must be the first SPI init because of HMC830 SPI mode selection */
+    hmc830_7043::init().expect("cannot initialize HMC830/7043");
     unsafe {
         csr::drtio_transceiver::stable_clkin_write(1);
     }
 
-    #[cfg(has_hmc830_7043)]
-    /* must be the first SPI init because of HMC830 SPI mode selection */
-    hmc830_7043::init().expect("cannot initialize HMC830/7043");
     #[cfg(has_ad9154)]
-    board_artiq::ad9154::init(SYSREF_PHASE_FPGA, SYSREF_PHASE_DAC);
+    let mut ad9154_initialized = false;
     #[cfg(has_allaki_atts)]
     board_artiq::hmc542::program_all(8/*=4dB*/);
 
@@ -302,6 +302,13 @@ pub extern fn main() -> i32 {
         info!("link is up, switching to recovered clock");
         si5324::siphaser::select_recovered_clock(true).expect("failed to switch clocks");
         si5324::siphaser::calibrate_skew(SIPHASER_PHASE).expect("failed to calibrate skew");
+        #[cfg(has_ad9154)]
+        {
+            if !ad9154_initialized {
+                board_artiq::ad9154::init(SYSREF_PHASE_FPGA, SYSREF_PHASE_DAC);
+                ad9154_initialized = true;
+            }
+        }
         drtioaux::reset(0);
         drtio_reset(false);
         drtio_reset_phy(false);
@@ -311,7 +318,10 @@ pub extern fn main() -> i32 {
             #[cfg(has_hmc830_7043)]
             {
                 if drtio_tsc_loaded() {
-                    hmc830_7043::hmc7043::sysref_rtio_align(SYSREF_PHASE_FPGA);
+                    // Expected alignment: 1 RTIO clock period
+                    hmc830_7043::hmc7043::sysref_rtio_align(
+                        SYSREF_PHASE_FPGA,
+                        hmc830_7043::hmc7043::FPGA_CLK_DIV);
                 }
             }
         }
