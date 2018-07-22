@@ -7,6 +7,7 @@ from artiq.master.worker_db import DeviceManager, DatasetManager
 from artiq.language.environment import ProcessArgumentManager
 from artiq.coredevice.core import CompileError
 from artiq.tools import *
+from artiq.compiler.targets import CortexA9Target
 
 
 logger = logging.getLogger(__name__)
@@ -26,6 +27,13 @@ def get_argparser():
 
     parser.add_argument("-o", "--output", default=None,
                         help="output file")
+
+    parser.add_argument("-t", "--target", default=None,
+                        help="processor target")
+
+    parser.add_argument("-s", "--static", action="store_true",
+                        help="link statically")
+
     parser.add_argument("file", metavar="FILE",
                         help="file containing the experiment to compile")
     parser.add_argument("arguments", metavar="ARGUMENTS",
@@ -53,15 +61,24 @@ def main():
         core_name = exp.run.artiq_embedded.core_name
         core = getattr(exp_inst, core_name)
 
+        if args.target:
+            if args.target == "zynq":
+                target = CortexA9Target()
+            else:
+                raise Exception("Target unknown")
+        else:
+            target = None
+
         object_map, kernel_library, _, _ = \
             core.compile(exp.run, [exp_inst], {},
-                         attribute_writeback=False, print_as_rpc=False)
+                         attribute_writeback=False, print_as_rpc=False,
+                         target=target, static=args.static)
     except CompileError as error:
         return
     finally:
         device_mgr.close_devices()
 
-    if object_map.has_rpc():
+    if not args.static and object_map.has_rpc():
         raise ValueError("Experiment must not use RPC")
 
     output = args.output

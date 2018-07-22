@@ -89,7 +89,8 @@ class Core:
         self.comm.close()
 
     def compile(self, function, args, kwargs, set_result=None,
-                attribute_writeback=True, print_as_rpc=True):
+                attribute_writeback=True, print_as_rpc=True, target=None,
+                static=False):
         try:
             engine = _DiagnosticEngine(all_errors_are_fatal=True)
 
@@ -101,9 +102,13 @@ class Core:
             module = Module(stitcher,
                 ref_period=self.ref_period,
                 attribute_writeback=attribute_writeback)
-            target = OR1KTarget()
+            if target is None:
+                target = OR1KTarget()
 
-            library = target.compile_and_link([module])
+            library = target.compile_and_link([module], static=static)
+            if static:
+                return [], library, [], []
+
             stripped_library = target.strip(library)
 
             return stitcher.embedding_map, stripped_library, \

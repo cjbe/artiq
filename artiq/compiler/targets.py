@@ -77,6 +77,7 @@ class Target:
         provided by the target, e.g. ``"printf"``.
     """
     triple = "unknown"
+    tool_triple = None
     data_layout = ""
     features = []
     print_function = "printf"
@@ -168,26 +169,45 @@ class Target:
 
         return llmachine.emit_object(llmodule)
 
-    def link(self, objects):
+    def link(self, objects, static=False):
         """Link the relocatable objects into a shared library for this target."""
-        with RunTool([self.triple + "-ld", "-shared", "--eh-frame-hdr"] +
-                     ["{{obj{}}}".format(index) for index in range(len(objects))] +
-                     ["-o", "{output}"],
-                     output=None,
-                     **{"obj{}".format(index): obj for index, obj in enumerate(objects)}) \
-                as results:
-            library = results["output"].read()
 
-            _dump(os.getenv("ARTIQ_DUMP_ELF"), "Shared library", ".elf",
-                  lambda: library)
+        triple = self.tool_triple if self.tool_triple else self.triple
 
-            return library
+        if static:
+            # Build a static object
+            with tempfile.TemporaryDirectory() as tmpdirname:
+                obj_paths = []
+                out_path = os.path.join(tmpdirname,"out.a")
 
-    def compile_and_link(self, modules):
-        return self.link([self.assemble(self.compile(module)) for module in modules])
+                for i, obj in enumerate(objects):
+                    opath = os.path.join(tmpdirname,"{}.o".format(i))
+                    obj_paths.append(opath)
+                    with open(opath, "wb") as f:
+                        f.write(obj)
+                subprocess.run([triple + "-ar", "rcs", out_path]+obj_paths)
+                with open(out_path, "rb") as f:
+                    library = f.read()
+        else:
+            with RunTool([triple + "-ld", "-shared", "--eh-frame-hdr"] +
+                         ["{{obj{}}}".format(index) for index in range(len(objects))] +
+                         ["-o", "{output}"],
+                         output=None,
+                         **{"obj{}".format(index): obj for index, obj in enumerate(objects)}) \
+                    as results:
+                library = results["output"].read()
+
+                _dump(os.getenv("ARTIQ_DUMP_ELF"), "Shared library", ".elf",
+                      lambda: library)
+
+        return library
+
+    def compile_and_link(self, modules, static=False):
+        return self.link([self.assemble(self.compile(module)) for module in modules], static=static)
 
     def strip(self, library):
-        with RunTool([self.triple + "-strip", "--strip-debug", "{library}", "-o", "{output}"],
+        triple = self.tool_triple if self.tool_triple else self.triple
+        with RunTool([triple + "-strip", "--strip-debug", "{library}", "-o", "{output}"],
                      library=library, output=None) \
                 as results:
             return results["output"].read()
@@ -245,4 +265,11 @@ class OR1KTarget(Target):
     data_layout = "E-m:e-p:32:32-i8:8:8-i16:16:16-i64:32:32-" \
                   "f64:32:32-v64:32:32-v128:32:32-a0:0:32-n32"
     features = ["mul", "div", "ffl1", "cmov", "addc"]
+    print_function = "core_log"
+
+class CortexA9Target(Target):
+    triple = "armv7-unknown-linux-gnueabihf"
+    tool_triple = "arm-linux-gnueabihf"
+    data_layout = "e-m:e-p:32:32-i64:64-v128:64:128-a:0:32-n32-S64"
+    features = ["vfp3"]
     print_function = "core_log"
