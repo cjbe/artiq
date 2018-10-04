@@ -427,6 +427,7 @@ pub unsafe extern fn reraise() -> ! {
 
 // Stub implementations for the functions the panic_unwind crate expects to be provided.
 // These all do nothing in libunwind, but aren't built for OR1K.
+#[cfg(target_arch = "or1k")]
 pub mod stubs {
     #![allow(bad_style, unused_variables)]
 
