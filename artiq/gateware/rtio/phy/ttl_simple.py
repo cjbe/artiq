@@ -33,13 +33,6 @@ class Output(Module):
         else:
             self.specials += DifferentialOutput(pad_o, pad, pad_n)
 
-        if pad_n is None:
-            self.comb += pad.eq(pad_o)
-        else:
-            self.specials += Instance("OBUFDS",
-                                      i_I=pad_o,
-                                      o_O=pad, o_OB=pad_n)
-
 
 class Input(Module):
     def __init__(self, pad, pad_n=None):
